@@ -1,0 +1,34 @@
+{
+  "bundler": "vite",
+  "projectName": "orqestra",
+  "mode": "file-router",
+  "typescript": true,
+  "packageManager": "pnpm",
+  "includeExamples": false,
+  "tailwind": true,
+  "projectPreset": "default",
+  "routerOnly": false,
+  "addOnOptions": {
+    "drizzle": {
+      "database": "postgresql"
+    }
+  },
+  "git": false,
+  "install": true,
+  "intent": true,
+  "version": 1,
+  "framework": "react",
+  "chosenAddOns": [
+    "biome",
+    "nitro",
+    "compiler",
+    "drizzle",
+    "form",
+    "paraglide",
+    "shadcn",
+    "t3env",
+    "table",
+    "better-auth",
+    "tanstack-query"
+  ]
+}
