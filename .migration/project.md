@@ -13,7 +13,7 @@
 
 ## Left alone
 
-- `clsx` / `tailwind-merge` are still installed but nothing in src imports them any more. Not removed.
+- `clsx` / `tailwind-merge`: removed later (`cn` replaces both and has no dependencies of its own).
 - No cmdk/vaul/sonner/input-otp/calendar/chart wrappers exist.
 
 ## Behavior changes
