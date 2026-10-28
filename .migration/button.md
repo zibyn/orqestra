@@ -17,4 +17,4 @@
 
 ## Verify by hand
 
-1985353{QA[button]}
+- Tab to a button: focus ring shows. Enter/Space trigger it. A disabled button ignores clicks.

@@ -17,4 +17,4 @@
 
 ## Verify by hand
 
-1985353{QA[slider]}
+- Drag the thumb and use the arrow keys; check that onValueChange fires while dragging and onValueCommitted fires on release.

@@ -17,4 +17,4 @@
 
 ## Verify by hand
 
-1985353{QA[label]}
+- Clicking the label focuses its htmlFor control.

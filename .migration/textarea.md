@@ -17,4 +17,4 @@
 
 ## Verify by hand
 
-1985353{QA[textarea]}
+- Type multiple lines; the field auto-grows (field-sizing-content); focus ring shows.

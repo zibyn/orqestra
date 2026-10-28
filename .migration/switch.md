@@ -17,4 +17,4 @@
 
 ## Verify by hand
 
-1985353{QA[switch]}
+- Click it and press Space; the checked/unchecked styles flip; a disabled switch does nothing.

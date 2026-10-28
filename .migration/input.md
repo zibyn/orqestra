@@ -17,4 +17,4 @@
 
 ## Verify by hand
 
-1985353{QA[input]}
+- Type in it, Tab focuses it with a ring, the aria-invalid style shows red.

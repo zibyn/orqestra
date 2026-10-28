@@ -17,4 +17,4 @@
 
 ## Verify by hand
 
-1985353{QA[select]}
+- Open with mouse and keyboard; arrow keys + typeahead move focus; Enter selects; Esc closes and focus returns to the trigger. Check the popup lines up with the trigger (Base UI aligns the selected item over the trigger by default).
