@@ -1,17 +1,55 @@
 import { randomUUID } from "node:crypto";
+import { db, type Tx } from "@orqestra/db";
+import { conversation, inbox, message, subagent } from "@orqestra/db/schema";
 import { createPostgresBackend, Queue } from "bullmq";
-import { and, asc, count, desc, eq, exists, inArray } from "drizzle-orm";
-import {
-	AGENT_RUNS_QUEUE,
-	db,
-	lockRoot,
-	MAX_SUBAGENTS,
-	notify,
-	requestStop,
-	SUBAGENT_RUNS_QUEUE,
-	type Tx,
-} from "./index.ts";
-import { conversation, inbox, message, subagent } from "./schema.ts";
+import { and, asc, count, desc, eq, exists, inArray, sql } from "drizzle-orm";
+
+/** Locks the row of a Conversation's root (a Subagent's parent, else itself): every Run start and finish decides under it. */
+export const lockRoot = (tx: Tx, conversationId: string) =>
+	tx.execute(
+		sql`select 1 from ${conversation} where ${conversation.id} = (select coalesce(${conversation.parentId}, ${conversation.id}) from ${conversation} where ${conversation.id} = ${conversationId}) for update`,
+	);
+
+/** Subagents of one parent Conversation running at once; more wait their turn. */
+export const MAX_SUBAGENTS = 4;
+
+/** BullMQ queues with one job `{ conversationId }` per Run: top-level Conversations', and Subagents' apart so these cannot starve them. */
+export const AGENT_RUNS_QUEUE = "agent-runs";
+export const SUBAGENT_RUNS_QUEUE = "subagent-runs";
+
+/** NOTIFY channel carrying a Conversation's ConversationEvents (worker -> web SSE). */
+export const conversationChannel = (conversationId: string) =>
+	`conversation_${conversationId}`;
+
+/** NOTIFY channel whose payload is the id of the Conversation whose run should stop (web -> worker). */
+export const STOP_CHANNEL = "conversation_stop";
+
+/** Sends a ConversationEvent to the pages showing this Conversation; a Subagent's events go to its parent's id. */
+export const notify = (conversationId: string, event: ConversationEvent) =>
+	db.execute(
+		sql`select pg_notify(${conversationChannel(conversationId)}, ${JSON.stringify(event)})`,
+	);
+
+/** Asks whichever worker runs these Conversations' Runs to abort them. */
+export const requestStop = (conversationIds: string[]) =>
+	Promise.all(
+		conversationIds.map((id) =>
+			db.execute(sql`select pg_notify(${STOP_CHANNEL}, ${id})`),
+		),
+	);
+
+// `subagent` is the subagent row id when the streaming reply is a Subagent's; without it, the Conversation's own
+export type ConversationEvent =
+	| { type: "start"; subagent?: string } // an Agent reply began streaming
+	| {
+			type: "delta";
+			kind: "text" | "thinking";
+			index: number;
+			delta: string;
+			subagent?: string;
+	  }
+	| { type: "end"; subagent?: string } // that reply finished, saved or failed: reload, then drop its live copy
+	| { type: "saved" }; // messages, title, status or compaction changed in the db: reload them
 
 // How Runs start and end, shared by the web app (User messages, stops) and the worker (Subagents, Notifications).
 

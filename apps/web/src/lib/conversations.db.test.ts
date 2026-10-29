@@ -9,7 +9,7 @@ import {
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { type AgentDefinition, messageText } from "@orqestra/config";
-import type { ConversationEvent } from "@orqestra/db";
+import type { ConversationEvent } from "@orqestra/conversations";
 import { createPostgresBackend, Worker } from "bullmq";
 import {
 	afterAll,
@@ -25,12 +25,13 @@ import {
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
 if (url) process.env.DATABASE_URL = url;
-const { db, AGENT_RUNS_QUEUE, STOP_CHANNEL } = await import("@orqestra/db");
+const { db } = await import("@orqestra/db");
 const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
 const { config } = await import("#/lib/config");
-const conversations = await import("#/lib/conversations");
-const runs = await import("@orqestra/db/runs");
+const { conversations } = await import("#/lib/conversations");
+const runs = await import("@orqestra/conversations/runs");
+const { AGENT_RUNS_QUEUE, STOP_CHANNEL } = runs;
 // the worker runs in-process so the test drives the real queue -> worker -> NOTIFY path
 const { startAgentWorker, providerLimiter } = await import(
 	"../../../worker/src/run.ts"
@@ -78,15 +79,13 @@ const fauxAgent: AgentDefinition = {
 };
 const userId = "u1";
 
-// Reads SSE events from a Response body until `until` returns true
+// Reads SSE events from a stream until `until` returns true
 async function collect(
-	response: Response,
+	stream: ReadableStream,
 	until: (events: ConversationEvent[]) => boolean,
 	onEvent?: (event: ConversationEvent) => void,
 ) {
-	const reader = response
-		.body!.pipeThrough(new TextDecoderStream())
-		.getReader();
+	const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
 	const events: ConversationEvent[] = [];
 	let buffer = "";
 	while (!until(events)) {
@@ -204,20 +203,19 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			fauxAssistantMessage("A greeting"),
 		]);
 
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "hi",
 		});
-		const response = await conversations.conversationEvents(
+		const response = await conversations.subscribe(
 			userId,
 			id,
 			new AbortController().signal,
 		);
-		expect(response?.headers.get("content-type")).toBe("text/event-stream");
 		// the reply starts only once the SSE stream is listening
 		release();
 		const events = await collect(
-			response as Response,
+			response as ReadableStream,
 			(es) => es.some((e) => e.type === "start") && es.at(-1)?.type === "saved",
 		);
 
@@ -225,7 +223,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		expect(text(events, "text")).toBe("Hello there");
 
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.title === "A greeting",
 		);
 		expect(view?.status).toBe("idle");
@@ -246,29 +244,29 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		const long = "word ".repeat(2000);
 		faux.setResponses([fauxAssistantMessage(long), fauxAssistantMessage("T")]);
 
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "write a lot",
 		});
-		const response = await conversations.conversationEvents(
+		const response = await conversations.subscribe(
 			userId,
 			id,
 			new AbortController().signal,
 		);
 		let stopped = false;
 		await collect(
-			response as Response,
+			response as ReadableStream,
 			(es) => es.at(-1)?.type === "saved",
 			(e) => {
 				if (e.type === "delta" && !stopped) {
 					stopped = true;
-					void conversations.stopRun(userId, id);
+					void conversations.stop(userId, id);
 				}
 			},
 		);
 
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.messages.length === 2 && v.status !== "running",
 		);
 		const reply = view?.messages[1].message as AssistantMessage;
@@ -276,7 +274,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		expect(JSON.stringify(reply.content).length).toBeLessThan(long.length);
 		// a stopped first reply still names the Conversation
 		await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.title === "T",
 		);
 	});
@@ -301,23 +299,23 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			},
 		]);
 		// the suite's worker runs one job at a time, so the second Conversation waits
-		const busy = await conversations.sendMessage(userId, {
+		const busy = await conversations.send(userId, {
 			agentId: "faux",
 			text: "a",
 		});
 		await waitFor(async () => replying, Boolean);
-		const queued = await conversations.sendMessage(userId, {
+		const queued = await conversations.send(userId, {
 			agentId: "faux",
 			text: "b",
 		});
-		await conversations.stopRun(userId, queued);
+		await conversations.stop(userId, queued);
 		release();
 
 		await waitFor(
-			() => conversations.getConversation(userId, busy),
+			() => conversations.get(userId, busy),
 			(v) => v?.status === "idle" && v.title === "T",
 		);
-		const view = await conversations.getConversation(userId, queued);
+		const view = await conversations.get(userId, queued);
 		expect(view?.status).toBe("idle");
 		expect(view?.messages.map((m) => m.message.role)).toEqual(["user"]);
 		expect(ranQueued).toBe(false);
@@ -353,15 +351,15 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				return fauxAssistantMessage("should not run");
 			},
 		]);
-		await conversations.sendMessage(userId, {
+		await conversations.send(userId, {
 			conversationId: conv.id,
 			text: "next?",
 		});
 		await waitFor(async () => compacting, Boolean);
-		await conversations.stopRun(userId, conv.id);
+		await conversations.stop(userId, conv.id);
 
 		const view = await waitFor(
-			() => conversations.getConversation(userId, conv.id),
+			() => conversations.get(userId, conv.id),
 			(v) => v?.status !== "running",
 		);
 		expect(view?.status).toBe("idle");
@@ -377,12 +375,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				errorMessage: "boom",
 			}),
 		]);
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "hi",
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "failed",
 		);
 		expect(view?.messages.map((m) => m.message.role)).toEqual(["user"]);
@@ -414,12 +412,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			},
 		]);
 
-		await conversations.sendMessage(userId, {
+		await conversations.send(userId, {
 			conversationId: conv.id,
 			text: "next?",
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, conv.id),
+			() => conversations.get(userId, conv.id),
 			(v) => v?.status === "idle",
 		);
 		expect(seen).toContain("SUMMARY OF EARLIER");
@@ -445,12 +443,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			fauxAssistantMessage("Pi is an agent"),
 			fauxAssistantMessage("T"),
 		]);
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "what is pi?",
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.title === "T",
 		);
 		expect(view?.messages.map((m) => m.message.role)).toEqual([
@@ -486,23 +484,23 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				},
 			],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "research pi",
 		});
 		// the parent's reply is done while its Subagent still works
 		const replied = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.messages.length === 4,
 		);
 		expect(replied?.subagents[0].outcome).toBe("running");
 		// the sidebar marks a Conversation whose Subagents still work in the background
-		expect(await conversations.listConversations(userId)).toMatchObject([
+		expect(await conversations.list(userId)).toMatchObject([
 			{ id, background: true },
 		]);
 		release();
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.messages.length === 6,
 		);
 		expect(view?.messages.map((m) => m.message.role)).toEqual([
@@ -534,21 +532,17 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		expect(view?.subagents[0]).not.toHaveProperty("messages");
 		const sub = view?.subagents[0].id as string;
 		expect(
-			(await conversations.getSubagentMessages(userId, sub))?.map(
-				(m) => m.role,
-			),
+			(await conversations.subagentTranscript(userId, sub))?.map((m) => m.role),
 		).toEqual(["user", "assistant"]);
-		expect(await conversations.getSubagentMessages("u2", sub)).toBeUndefined();
+		expect(await conversations.subagentTranscript("u2", sub)).toBeUndefined();
 		// the Notification knows which Subagent it came from, so it can open that panel
 		expect(view?.messages[4].subagentId).toBe(sub);
 		// the parent is idle with no Subagent left in the background
-		expect(await conversations.listConversations(userId)).toMatchObject([
+		expect(await conversations.list(userId)).toMatchObject([
 			{ id, background: false },
 		]);
 		// a Subagent's Conversation is reached through its parent only
-		expect(await conversations.listConversations(userId)).toMatchObject([
-			{ id },
-		]);
+		expect(await conversations.list(userId)).toMatchObject([{ id }]);
 	});
 
 	it("streams a Subagent's reply over SSE under its row id", async () => {
@@ -571,21 +565,21 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				},
 			],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "research pi",
 		});
-		const response = await conversations.conversationEvents(
+		const response = await conversations.subscribe(
 			userId,
 			id,
 			new AbortController().signal,
 		);
 		release();
-		const events = await collect(response as Response, (es) =>
+		const events = await collect(response as ReadableStream, (es) =>
 			es.some((e) => e.type === "end" && e.subagent),
 		);
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.messages.length === 6,
 		);
 		const sub = view?.subagents[0].id;
@@ -623,12 +617,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				},
 			],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "dig deep",
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.messages.length === 6,
 		);
 		expect(JSON.stringify(last)).toContain("step limit");
@@ -676,12 +670,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				},
 			],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "look",
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) =>
 				v?.status === "idle" &&
 				v.messages.at(-1)?.message.role === "assistant" &&
@@ -707,26 +701,26 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			],
 			sub: [hang, hang],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "go",
 		});
 		// the parent's reply is done, and the Subagent it did not stop works on
 		const replied = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.title === "T" && v.subagents[0]?.outcome === "stopped",
 		);
 		expect(replied?.status).toBe("idle");
 		expect(replied?.subagents[1].outcome).toBe("running");
 
-		await conversations.stopRun(userId, id);
+		await conversations.stop(userId, id);
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.subagents[1]?.outcome === "stopped",
 		);
 		// a stopped Subagent's Notification waits for the User's next message instead of waking the parent
 		await new Promise((r) => setTimeout(r, 300));
-		const after = await conversations.getConversation(userId, id);
+		const after = await conversations.get(userId, id);
 		expect(after?.status).toBe("idle");
 		expect(
 			after?.messages.filter((m) => m.message.role === "assistant"),
@@ -752,12 +746,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			],
 			sub: [hang, hang],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "go",
 		});
 		const replied = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) =>
 				v?.status === "idle" &&
 				v.title === "T" &&
@@ -768,7 +762,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		await conversations.stopSubagent("u2", one.id);
 		await conversations.stopSubagent(userId, one.id);
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.subagents[0]?.outcome === "stopped",
 		);
 		expect(view?.subagents[1]).toMatchObject({
@@ -776,7 +770,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			outcome: "running",
 		});
 		expect(view?.status).toBe("idle");
-		await conversations.stopRun(userId, id);
+		await conversations.stop(userId, id);
 	});
 
 	it("delivers a Notification that arrives while the parent runs between its steps, without another Run", async () => {
@@ -805,12 +799,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			],
 			sub: [fauxAssistantMessage("found: pi.dev")],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "research pi",
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.title === "T",
 		);
 		expect(view?.messages.map((m) => m.message.role)).toEqual([
@@ -850,12 +844,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				},
 			],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "research",
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.messages.length === 10,
 		);
 		// it continues with what it did before
@@ -884,12 +878,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				}),
 			],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "research",
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.messages.length === 6,
 		);
 		const notified = JSON.stringify(view?.messages[4].message.content);
@@ -923,12 +917,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			],
 			sub: Array.from({ length: MAX_SUBAGENTS + 1 }, () => gated),
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "go",
 		});
 		const busy = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.subagents.length === MAX_SUBAGENTS + 1,
 		);
 		expect(busy?.subagents.map((s) => s.outcome)).toEqual([
@@ -937,7 +931,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		]);
 		release();
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) =>
 				v?.status === "idle" &&
 				v.subagents.every((s) => s.outcome === "completed") &&
@@ -963,12 +957,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			],
 			sub: Array.from({ length: 16 }, () => fauxAssistantMessage("done")),
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "go",
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) =>
 				v?.status === "idle" &&
 				v.subagents.length === 16 &&
@@ -1018,12 +1012,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				...Array.from({ length: 3 }, () => fauxAssistantMessage("done")),
 			],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "go",
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) =>
 				v?.status === "idle" &&
 				v.subagents.length === 2 &&
@@ -1065,26 +1059,26 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				...Array.from({ length: MAX_SUBAGENTS }, () => hang),
 			],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "go",
 		});
 		const replied = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) =>
 				v?.status === "idle" &&
 				v.title === "T" &&
 				v.subagents.length === MAX_SUBAGENTS + 1,
 		);
 		expect(replied?.subagents[0].outcome).toBe("queued");
-		await conversations.stopRun(userId, id);
+		await conversations.stop(userId, id);
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => !!v?.subagents.every((s) => s.outcome === "stopped"),
 		);
 		// it never starts again by itself
 		await new Promise((r) => setTimeout(r, 300));
-		const after = await conversations.getConversation(userId, id);
+		const after = await conversations.get(userId, id);
 		expect(after?.subagents.map((s) => s.outcome)).toEqual(
 			view?.subagents.map((s) => s.outcome),
 		);
@@ -1120,19 +1114,19 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 					fauxAssistantMessage("done"),
 				),
 			});
-			const id = await conversations.sendMessage(userId, {
+			const id = await conversations.send(userId, {
 				agentId: "faux",
 				text: "go",
 			});
 			const view = await waitFor(
-				() => conversations.getConversation(userId, id),
+				() => conversations.get(userId, id),
 				(v) =>
 					v?.status === "idle" &&
 					v.subagents.at(-1)?.outcome === "failed" &&
 					v.messages.at(-1)?.message.role === "assistant",
 			);
 			await new Promise((r) => setTimeout(r, 300));
-			const after = await conversations.getConversation(userId, id);
+			const after = await conversations.get(userId, id);
 			expect(after?.subagents.map((s) => s.outcome)).toEqual([
 				...Array(MAX_SUBAGENTS).fill("completed"),
 				"failed",
@@ -1184,19 +1178,19 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			],
 			sub: [gated, gated],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "go",
 		});
 		await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.title === "T",
 		);
 		const [other] = await db
 			.insert(schema.conversation)
 			.values({ userId, agentId: "faux", titleEdited: true })
 			.returning();
-		await conversations.sendMessage(userId, {
+		await conversations.send(userId, {
 			conversationId: other.id,
 			text: "hold on",
 		});
@@ -1208,7 +1202,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		);
 		unblock();
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.messages.length === 7,
 		);
 		expect(view?.messages.slice(4).map((m) => m.message.role)).toEqual([
@@ -1266,19 +1260,19 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			fauxAssistantMessage("done"),
 			fauxAssistantMessage("ok"),
 		]);
-		const response = await conversations.conversationEvents(
+		const response = await conversations.subscribe(
 			userId,
 			parent.id,
 			new AbortController().signal,
 		);
 		await runs.ensureRun(child.id);
-		const events = await collect(response as Response, (es) =>
+		const events = await collect(response as ReadableStream, (es) =>
 			es.some((e) => e.type === "start"),
 		);
 		// the compaction showed before the reply began
 		expect(events.map((e) => e.type)).toEqual(["saved", "start"]);
 		await waitFor(
-			() => conversations.getConversation(userId, parent.id),
+			() => conversations.get(userId, parent.id),
 			(v) => v?.status === "idle" && v.messages.length === 2,
 		);
 	});
@@ -1290,33 +1284,33 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				fauxAssistantMessage("answer"),
 			],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "write a lot",
 		});
-		const response = await conversations.conversationEvents(
+		const response = await conversations.subscribe(
 			userId,
 			id,
 			new AbortController().signal,
 		);
 		let sent: Promise<void> | undefined;
 		await collect(
-			response as Response,
+			response as ReadableStream,
 			(es) => es.some((e) => e.type === "delta"),
 			(e) => {
 				if (e.type === "delta" && !sent)
 					sent = (async () => {
-						await conversations.sendMessage(userId, {
+						await conversations.send(userId, {
 							conversationId: id,
 							text: "also this",
 						});
-						await conversations.stopRun(userId, id);
+						await conversations.stop(userId, id);
 					})();
 			},
 		);
 		await sent;
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.messages.length === 4,
 		);
 		expect(
@@ -1382,17 +1376,17 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			],
 			sub: [hang],
 		});
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "research",
 		});
 		await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "failed" && v.subagents[0]?.outcome === "running",
 		);
-		await conversations.retryRun(userId, id);
+		await conversations.retry(userId, id);
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle",
 		);
 		expect(view?.messages.map((m) => m.message.role)).toEqual([
@@ -1420,13 +1414,10 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				wake: true,
 			})),
 		);
-		const started = await Promise.all([
-			conversations.ensureRun(id),
-			conversations.ensureRun(id),
-		]);
+		const started = await Promise.all([runs.ensureRun(id), runs.ensureRun(id)]);
 		expect(started.filter(Boolean)).toHaveLength(1);
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.title === "T",
 		);
 		expect(
@@ -1463,17 +1454,17 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			},
 			fauxAssistantMessage("T"),
 		]);
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "first",
 		});
 		await waitFor(async () => replying, Boolean);
-		await conversations.sendMessage(userId, {
+		await conversations.send(userId, {
 			conversationId: id,
 			text: "also this",
 		});
 		// queued, not yet delivered
-		const queued = await conversations.getConversation(userId, id);
+		const queued = await conversations.get(userId, id);
 		expect(queued?.messages.at(-1)).toMatchObject({
 			message: { role: "user", content: "also this" },
 		});
@@ -1481,7 +1472,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		release();
 
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.title === "T",
 		);
 		expect(seen).toEqual(["first", "also this"]);
@@ -1496,21 +1487,17 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 
 	it("hides a Conversation from everyone but its owner", async () => {
 		faux.setResponses([fauxAssistantMessage("hi"), fauxAssistantMessage("T")]);
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "hi",
 		});
 		await db
 			.insert(schema.user)
 			.values({ id: "admin", name: "A", email: "a@x.io", role: "admin" });
-		expect(await conversations.getConversation("admin", id)).toBeUndefined();
-		expect(await conversations.listConversations("admin")).toEqual([]);
+		expect(await conversations.get("admin", id)).toBeUndefined();
+		expect(await conversations.list("admin")).toEqual([]);
 		expect(
-			await conversations.conversationEvents(
-				"admin",
-				id,
-				new AbortController().signal,
-			),
+			await conversations.subscribe("admin", id, new AbortController().signal),
 		).toBeUndefined();
 	});
 
@@ -1535,8 +1522,8 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			fauxAssistantMessage("T"),
 		]);
 		const ids = [
-			await conversations.sendMessage(userId, { agentId: "faux", text: "a" }),
-			await conversations.sendMessage(userId, { agentId: "faux", text: "b" }),
+			await conversations.send(userId, { agentId: "faux", text: "a" }),
+			await conversations.send(userId, { agentId: "faux", text: "b" }),
 		];
 		// both replies are underway before either may finish
 		await waitFor(
@@ -1546,7 +1533,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		release();
 		for (const id of ids)
 			await waitFor(
-				() => conversations.getConversation(userId, id),
+				() => conversations.get(userId, id),
 				(v) => v?.status === "idle" && v.title === "T",
 			);
 		await stopWorker();
@@ -1577,7 +1564,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			concurrency: 1,
 		});
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.title === "T",
 		);
 		expect(view?.messages.map((m) => m.message.role)).toEqual([
@@ -1610,14 +1597,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		// the start queues it after the worker's requeue did
 		await runs.enqueue(id);
 		await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle" && v.title === "T",
 		);
 		// a second job would find nothing to reply to and fail the Conversation
 		await new Promise((r) => setTimeout(r, 500));
-		expect((await conversations.getConversation(userId, id))?.status).toBe(
-			"idle",
-		);
+		expect((await conversations.get(userId, id))?.status).toBe("idle");
 	});
 
 	it("fails a run whose worker crashed, so it can be retried", async () => {
@@ -1634,7 +1619,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			createPostgresBackend,
 		);
 		faux.setResponses([fauxAssistantMessage("retried")]);
-		const id = await conversations.sendMessage(userId, {
+		const id = await conversations.send(userId, {
 			agentId: "faux",
 			text: "hi",
 		});
@@ -1646,12 +1631,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			concurrency: 1,
 		});
 		await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "failed",
 		);
-		await conversations.retryRun(userId, id);
+		await conversations.retry(userId, id);
 		const view = await waitFor(
-			() => conversations.getConversation(userId, id),
+			() => conversations.get(userId, id),
 			(v) => v?.status === "idle",
 		);
 		expect(view?.messages.map((m) => m.message.role)).toEqual([

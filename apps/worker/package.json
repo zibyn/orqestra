@@ -13,6 +13,7 @@
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@earendil-works/pi-mcp": "1.4.0",
     "@orqestra/config": "workspace:*",
+    "@orqestra/conversations": "workspace:*",
     "@orqestra/db": "workspace:*",
     "bullmq": "^6.5.0",
     "pg": "^8.23.1"

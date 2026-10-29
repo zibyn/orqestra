@@ -38,6 +38,9 @@ importers:
       '@orqestra/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@orqestra/conversations':
+        specifier: workspace:*
+        version: link:../../packages/conversations
       '@orqestra/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -192,6 +195,9 @@ importers:
       '@orqestra/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@orqestra/conversations':
+        specifier: workspace:*
+        version: link:../../packages/conversations
       '@orqestra/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -237,11 +243,42 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
-  packages/db:
+  packages/conversations:
     dependencies:
+      '@earendil-works/pi-ai':
+        specifier: 1.4.0
+        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.6.7)
+      '@orqestra/config':
+        specifier: workspace:*
+        version: link:../config
+      '@orqestra/db':
+        specifier: workspace:*
+        version: link:../db
       bullmq:
         specifier: ^6.5.0
         version: 6.5.0(ioredis@6.0.0)(pg@8.23.1)
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.3
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/db:
+    dependencies:
       drizzle-orm:
         specifier: ^0.45.1
         version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)

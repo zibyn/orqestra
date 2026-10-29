@@ -14,17 +14,13 @@ import {
 } from "@orqestra/config";
 import { scrape, search } from "@orqestra/config/search";
 import {
-	and,
 	type ConversationEvent,
-	db,
-	desc,
-	eq,
+	ensureRun,
 	lockRoot,
 	MAX_SUBAGENTS,
-	sql,
-	type Tx,
-} from "@orqestra/db";
-import { ensureRun, stopSubagents } from "@orqestra/db/runs";
+	stopSubagents,
+} from "@orqestra/conversations/runs";
+import { and, db, desc, eq, sql, type Tx } from "@orqestra/db";
 import {
 	conversation,
 	inbox,
