@@ -6,15 +6,19 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/config";
 import {
-	AGENT_RUNS_QUEUE,
 	type ConversationEvent,
 	conversationChannel,
 	db,
-	drain,
 	lockRoot,
-	MAX_SUBAGENTS,
 	STOP_CHANNEL,
 } from "@orqestra/db";
+import {
+	drain,
+	enqueue,
+	ensureRun,
+	runQueue,
+	stopSubagents,
+} from "@orqestra/db/runs";
 import {
 	compaction,
 	conversation,
@@ -22,38 +26,12 @@ import {
 	message,
 	subagent,
 } from "@orqestra/db/schema";
-import { createPostgresBackend, Queue } from "bullmq";
-import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pg from "pg";
 import { config } from "#/lib/config";
 
 // Server-only Conversation logic, keyed by the signed-in user's id; server functions wrap it in conversation-fns.ts.
 // Every query is scoped to that user: nobody else, Admins included, can see a Conversation.
-
-const newQueue = () =>
-	new Queue(
-		AGENT_RUNS_QUEUE,
-		{ connection: { connectionString: process.env.DATABASE_URL as string } },
-		createPostgresBackend,
-	);
-let queue: ReturnType<typeof newQueue> | undefined;
-
-async function enqueue(conversationId: string) {
-	queue ??= newQueue();
-	try {
-		await queue.add(
-			"run",
-			{ conversationId },
-			{ removeOnComplete: true, removeOnFail: 1000 },
-		);
-	} catch (error) {
-		await db
-			.update(conversation)
-			.set({ status: "failed" })
-			.where(eq(conversation.id, conversationId));
-		throw error;
-	}
-}
 
 const owned = (userId: string, id: string) =>
 	db.query.conversation.findFirst({
@@ -162,8 +140,7 @@ export async function getConversation(userId: string, id: string) {
 		title: conv.title,
 		status: conv.status,
 		// the Agent was removed from config or has no Model left
-		// shortcut: a Subagent's Conversation (agentId null) reads as read-only until resolveTurn takes the general worker
-		readOnly: !conv.agentId || !resolveTurn(await config.get(), conv.agentId),
+		readOnly: !resolveTurn(await config.get(), conv.agentId),
 		messages: [...messages, ...pending].map((m) => ({
 			...m,
 			message: m.message as Message,
@@ -182,50 +159,7 @@ export class ConversationError extends Error {
 	override name = "ConversationError";
 }
 
-/**
- * Starts a Run for a Conversation that has none, a wake input in its inbox and room to run (a Subagent waits for a free slot);
- * decided under its root's lock, so inputs arriving together start one Run. True when it started one.
- */
-export async function ensureRun(conversationId: string) {
-	const started = await db.transaction(async (tx) => {
-		await lockRoot(tx, conversationId);
-		const conv = await tx.query.conversation.findFirst({
-			where: eq(conversation.id, conversationId),
-		});
-		if (!conv || conv.status === "running") return false;
-		const [wake] = await tx
-			.select({ id: inbox.id })
-			.from(inbox)
-			.where(
-				and(eq(inbox.conversationId, conversationId), eq(inbox.wake, true)),
-			)
-			.limit(1);
-		if (!wake) return false;
-		if (conv.parentId) {
-			const [{ running }] = await tx
-				.select({ running: count() })
-				.from(subagent)
-				.where(
-					and(
-						eq(subagent.parentId, conv.parentId),
-						eq(subagent.outcome, "running"),
-					),
-				);
-			if (running >= MAX_SUBAGENTS) return false;
-			await tx
-				.update(subagent)
-				.set({ outcome: "running" })
-				.where(eq(subagent.conversationId, conversationId));
-		}
-		await tx
-			.update(conversation)
-			.set({ status: "running" })
-			.where(eq(conversation.id, conversationId));
-		return true;
-	});
-	if (started) await enqueue(conversationId);
-	return started;
-}
+export { ensureRun };
 
 /** Puts a user message in the inbox (starting a Conversation when there is no id) and has the Agent reply. */
 export async function sendMessage(
@@ -287,9 +221,9 @@ export async function sendMessage(
 export async function retryRun(userId: string, id: string) {
 	const conv = await owned(userId, id);
 	if (!conv) return;
-	if (!conv.agentId || !resolveTurn(await config.get(), conv.agentId))
+	if (!resolveTurn(await config.get(), conv.agentId))
 		throw new ConversationError("This Agent is offline");
-	await db.transaction(async (tx) => {
+	const dropped = await db.transaction(async (tx) => {
 		const claimed = await tx
 			.update(conversation)
 			.set({ status: "running" })
@@ -300,19 +234,31 @@ export async function retryRun(userId: string, id: string) {
 		await tx.execute(
 			sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
 		);
-		await tx.execute(
-			sql`delete from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id})`,
-		);
+		return (
+			await tx.execute<{ id: string }>(
+				sql`delete from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id}) returning id`,
+			)
+		).rows;
 	});
+	// their Runs stop; with their Conversation gone they save nothing more
+	await stopAll(dropped.map((d) => d.id));
 	await enqueue(id);
 }
 
-/** Drops this Conversation's run while it is still queued, or else asks whichever worker runs it to abort it. */
+const stopAll = (ids: string[]) =>
+	Promise.all(
+		ids.map((id) => db.execute(sql`select pg_notify(${STOP_CHANNEL}, ${id})`)),
+	);
+
+/**
+ * Drops this Conversation's run while it is still queued, or else asks whichever worker runs it to abort it.
+ * Its Subagents stop too, without waking it.
+ */
 export async function stopRun(userId: string, id: string) {
 	if (!(await owned(userId, id))) return;
-	queue ??= newQueue();
+	await stopSubagents(id);
 	// shortcut: scans every waiting job, fine while the queue stays short; key jobs by Conversation if it grows
-	for (const job of await queue.getWaiting()) {
+	for (const job of await runQueue().getWaiting()) {
 		if (job.data.conversationId !== id) continue;
 		// fails when a worker took the job meanwhile; the NOTIFY below then reaches it
 		const removed = await job.remove().then(
@@ -344,9 +290,14 @@ export async function renameConversation(
 }
 
 export async function deleteConversation(userId: string, id: string) {
-	await db
-		.delete(conversation)
-		.where(and(eq(conversation.id, id), eq(conversation.userId, userId)));
+	if (!(await owned(userId, id))) return;
+	const children = await db
+		.select({ id: conversation.id })
+		.from(conversation)
+		.where(eq(conversation.parentId, id));
+	await db.delete(conversation).where(eq(conversation.id, id));
+	// its Subagents went with it (cascade); their Runs stop
+	await stopAll(children.map((c) => c.id));
 }
 
 /**

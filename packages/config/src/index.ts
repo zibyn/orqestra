@@ -290,6 +290,26 @@ export function resolveThinking(
 	};
 }
 
+/** System prompt of the general worker. */
+export const GENERAL_WORKER =
+	"You carry out one task for another agent, starting without any prior context. Work through it with the tools you have, then reply with a complete, self-contained answer: it is all the other agent will see.";
+
+/** The built-in Agent a Subagent without a template runs as: any enabled Model, every Tool. */
+const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
+	id: "",
+	name: "General worker",
+	description: "",
+	instructions: GENERAL_WORKER,
+	models: models.map(modelRef),
+	allModels: true,
+	defaultModel: models[0] ? modelRef(models[0]) : "",
+	thinking: {},
+	tools: [...toolName.options],
+	pickable: false,
+	default: false,
+	unavailableModels: [],
+});
+
 /**
  * The Agent, Model and thinking level for the next message of a Conversation.
  * A pick the Agent no longer allows falls back to its default.
@@ -297,10 +317,14 @@ export function resolveThinking(
  */
 export function resolveTurn(
 	config: Pick<OrqestraConfig, "agents" | "models">,
-	agentId: string,
+	/** null: the general worker, a Subagent started without a template. */
+	agentId: string | null,
 	picked: { model?: string; thinking?: ThinkingLevel } = {},
 ) {
-	const agent = config.agents.find((a) => a.id === agentId);
+	const agent =
+		agentId === null
+			? generalWorker(config.models)
+			: config.agents.find((a) => a.id === agentId);
 	if (!agent?.models.length) return undefined;
 	const ref =
 		picked.model && agent.models.includes(picked.model)

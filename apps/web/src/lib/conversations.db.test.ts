@@ -25,7 +25,7 @@ import {
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
 if (url) process.env.DATABASE_URL = url;
-const { db, AGENT_RUNS_QUEUE } = await import("@orqestra/db");
+const { db, AGENT_RUNS_QUEUE, STOP_CHANNEL } = await import("@orqestra/db");
 const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
 const { config } = await import("#/lib/config");
@@ -34,7 +34,8 @@ const conversations = await import("#/lib/conversations");
 const { startAgentWorker, providerLimiter } = await import(
 	"../../../worker/src/run.ts"
 );
-const { MAX_SUBAGENT_STEPS } = await import("../../../worker/src/tools.ts");
+const { MAX_SUBAGENT_STEPS, MAX_SUBAGENTS, MAX_SUBAGENTS_PER_TURN } =
+	await import("../../../worker/src/tools.ts");
 
 const faux = fauxProvider({
 	provider: "faux",
@@ -176,6 +177,10 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 	afterEach(() => vi.unstubAllGlobals());
 
 	beforeEach(async () => {
+		// Subagents may outlive a test: stop them so they neither linger nor hold up stopping the worker
+		await db.execute(
+			sql`select pg_notify(${STOP_CHANNEL}, id::text) from conversation where status = 'running'`,
+		);
 		await db.execute(sql`truncate "user" cascade`);
 		await db
 			.insert(schema.user)
@@ -458,20 +463,25 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		expect(JSON.stringify(result.content)).toContain("https://pi.dev");
 	});
 
-	it("hands a task to a Subagent that starts fresh and returns its final answer when waited for", async () => {
+	it("wakes the parent with a Notification when a Subagent finishes after the parent's reply", async () => {
 		const seen: { messages: { role: string; toolsAdded?: unknown }[] }[] = [];
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
 		script({
 			parent: [
 				fauxAssistantMessage(
 					fauxToolCall("subagent", { tasks: [{ brief: "find pi" }] }),
 				),
-				fauxAssistantMessage(fauxToolCall("subagent_wait", {})),
-				fauxAssistantMessage("Done"),
+				fauxAssistantMessage("I asked a subagent and will report back"),
+				fauxAssistantMessage("pi is at pi.dev"),
 			],
 			sub: [
-				(context) => {
+				async (context) => {
 					seen.push(context as (typeof seen)[number]);
-					return fauxAssistantMessage("pi is at pi.dev");
+					await gate;
+					return fauxAssistantMessage("found: pi.dev");
 				},
 			],
 		});
@@ -479,29 +489,34 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			agentId: "faux",
 			text: "research pi",
 		});
+		// the parent's reply is done while its Subagent still works
+		const replied = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "idle" && v.messages.length === 4,
+		);
+		expect(replied?.subagents[0].status).toBe("running");
+		release();
 		const view = await waitFor(
 			() => conversations.getConversation(userId, id),
-			(v) => v?.title === "T",
+			(v) => v?.status === "idle" && v.messages.length === 6,
 		);
-		// the Subagent saw only the brief, not the Conversation, and cannot start Subagents in turn
-		const [system, ...rest] = seen[0].messages;
-		expect(rest).toMatchObject([{ role: "user", content: "find pi" }]);
-		expect(JSON.stringify(system.toolsAdded)).not.toContain("subagent");
 		expect(view?.messages.map((m) => m.message.role)).toEqual([
 			"user",
 			"assistant",
 			"toolResult",
 			"assistant",
-			"toolResult",
+			"user",
 			"assistant",
 		]);
 		const started = view?.messages[2].message as ToolResultMessage;
 		expect(JSON.stringify(started.content)).toContain("Started subagent 1");
-		const waited = view?.messages[4].message as ToolResultMessage;
-		expect(JSON.stringify(waited.content)).toContain(
-			'<result subagent=\\"1\\" status=\\"completed\\">\\npi is at pi.dev',
+		expect(view?.messages[4].message.content).toContain(
+			'<task-notification subagent="1" status="completed">\nfound: pi.dev',
 		);
-		// its whole process is kept under the call that started it
+		// the Subagent saw only the brief, not the Conversation, and cannot start Subagents in turn
+		const [system, ...rest] = seen[0].messages;
+		expect(rest).toMatchObject([{ role: "user", content: "find pi" }]);
+		expect(JSON.stringify(system.toolsAdded)).not.toContain("subagent");
 		expect(view?.subagents).toMatchObject([
 			{
 				toolCallId: started.toolCallId,
@@ -527,7 +542,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				fauxAssistantMessage(
 					fauxToolCall("subagent", { tasks: [{ brief: "find pi" }] }),
 				),
-				fauxAssistantMessage(fauxToolCall("subagent_wait", {})),
+				fauxAssistantMessage("Started"),
 				fauxAssistantMessage("Done"),
 			],
 			sub: [
@@ -552,7 +567,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		);
 		const view = await waitFor(
 			() => conversations.getConversation(userId, id),
-			(v) => v?.title === "T",
+			(v) => v?.status === "idle" && v.messages.length === 6,
 		);
 		const sub = view?.subagents[0].id;
 		const mine = events.filter((e) => "subagent" in e && e.subagent === sub);
@@ -573,7 +588,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				fauxAssistantMessage(
 					fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }),
 				),
-				fauxAssistantMessage(fauxToolCall("subagent_wait", {})),
+				fauxAssistantMessage("Digging"),
 				fauxAssistantMessage("Done"),
 			],
 			sub: [
@@ -595,12 +610,12 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		});
 		const view = await waitFor(
 			() => conversations.getConversation(userId, id),
-			(v) => v?.title === "T",
+			(v) => v?.status === "idle" && v.messages.length === 6,
 		);
 		expect(JSON.stringify(last)).toContain("step limit");
-		const waited = view?.messages[4].message as ToolResultMessage;
-		expect(JSON.stringify(waited.content)).toContain('status=\\"partial\\"');
-		expect(JSON.stringify(waited.content)).toContain("what I found");
+		const notified = JSON.stringify(view?.messages[4].message.content);
+		expect(notified).toContain('status=\\"partial\\"');
+		expect(notified).toContain("what I found");
 		expect(view?.subagents[0].status).toBe("partial");
 	});
 
@@ -627,7 +642,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				),
 				() => {
 					release();
-					return fauxAssistantMessage(fauxToolCall("subagent_wait", {}));
+					return fauxAssistantMessage("Looking");
 				},
 				fauxAssistantMessage("Done"),
 			],
@@ -648,13 +663,19 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		});
 		const view = await waitFor(
 			() => conversations.getConversation(userId, id),
-			(v) => v?.title === "T",
+			(v) =>
+				v?.status === "idle" &&
+				v.messages.at(-1)?.message.role === "assistant" &&
+				v.subagents[0]?.status === "completed" &&
+				v.messages.length === 8,
 		);
 		expect(JSON.stringify(second)).toContain("also check the docs");
-		expect(view?.subagents[0].status).toBe("completed");
+		expect(JSON.stringify(view?.messages[6].message.content)).toContain(
+			"checked",
+		);
 	});
 
-	it("stops a Subagent on request, and those still running once the reply is done", async () => {
+	it("stops a Subagent on request, and all of them, without waking the parent, when the User stops", async () => {
 		script({
 			parent: [
 				fauxAssistantMessage(
@@ -663,7 +684,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 					}),
 				),
 				fauxAssistantMessage(fauxToolCall("subagent_stop", { numbers: [1] })),
-				fauxAssistantMessage("Done"),
+				fauxAssistantMessage("Two keeps going"),
 			],
 			sub: [hang, hang],
 		});
@@ -671,19 +692,273 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			agentId: "faux",
 			text: "go",
 		});
+		// the parent's reply is done, and the Subagent it did not stop works on
+		const replied = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.title === "T" && v.subagents[0]?.status === "stopped",
+		);
+		expect(replied?.status).toBe("idle");
+		expect(replied?.subagents[1].status).toBe("running");
+
+		await conversations.stopRun(userId, id);
 		const view = await waitFor(
 			() => conversations.getConversation(userId, id),
-			(v) => v?.title === "T",
+			(v) => v?.subagents[1]?.status === "stopped",
 		);
-		const stopped = view?.messages[4].message as ToolResultMessage;
-		expect(JSON.stringify(stopped.content)).toContain(
-			'<result subagent=\\"1\\" status=\\"stopped\\">',
+		// a stopped Subagent's Notification waits for the User's next message instead of waking the parent
+		await new Promise((r) => setTimeout(r, 300));
+		const after = await conversations.getConversation(userId, id);
+		expect(after?.status).toBe("idle");
+		expect(
+			after?.messages.filter((m) => m.message.role === "assistant"),
+		).toHaveLength(
+			view?.messages.filter((m) => m.message.role === "assistant").length ?? 0,
 		);
-		expect(view?.status).toBe("idle");
-		expect(view?.subagents.map((s) => s.status)).toEqual([
-			"stopped",
-			"stopped",
+		expect(
+			after?.messages.filter((m) =>
+				JSON.stringify(m.message.content).includes('status=\\"stopped\\"'),
+			),
+		).toHaveLength(2);
+	});
+
+	it("delivers a Notification that arrives while the parent runs between its steps, without another Run", async () => {
+		vi.stubGlobal(
+			"fetch",
+			async () => new Response(JSON.stringify({ results: [] })),
+		);
+		let seen = "";
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", { tasks: [{ brief: "find pi" }] }),
+				),
+				// keeps the parent's Run going until its Subagent has finished
+				async () => {
+					await waitFor(
+						() => db.select().from(schema.subagent),
+						(rows) => rows[0]?.outcome === "completed",
+					);
+					return fauxAssistantMessage(fauxToolCall("search", { query: "pi" }));
+				},
+				(context) => {
+					seen = JSON.stringify(context.messages.at(-1));
+					return fauxAssistantMessage("pi is at pi.dev");
+				},
+			],
+			sub: [fauxAssistantMessage("found: pi.dev")],
+		});
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "research pi",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "idle" && v.title === "T",
+		);
+		expect(view?.messages.map((m) => m.message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"assistant",
+			"toolResult",
+			"user",
+			"assistant",
 		]);
+		expect(seen).toContain("task-notification");
+	});
+
+	it("continues a finished Subagent that is messaged, which then notifies the parent again", async () => {
+		let second = "";
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", { tasks: [{ brief: "find pi" }] }),
+				),
+				fauxAssistantMessage("Asked"),
+				fauxAssistantMessage(
+					fauxToolCall("subagent_message", {
+						number: 1,
+						message: "now find tau",
+					}),
+				),
+				fauxAssistantMessage("Asked again"),
+				fauxAssistantMessage("pi and tau found"),
+			],
+			sub: [
+				fauxAssistantMessage("found: pi.dev"),
+				(context) => {
+					second = JSON.stringify(context.messages);
+					return fauxAssistantMessage("found: tau.dev");
+				},
+			],
+		});
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "research",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "idle" && v.messages.length === 10,
+		);
+		// it continues with what it did before
+		expect(second).toContain("find pi");
+		expect(second).toContain("found: pi.dev");
+		expect(second).toContain("now find tau");
+		expect(JSON.stringify(view?.messages[8].message.content)).toContain(
+			"found: tau.dev",
+		);
+		expect(view?.subagents[0].status).toBe("completed");
+	});
+
+	it("wakes the parent when a Subagent fails", async () => {
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", { tasks: [{ brief: "find pi" }] }),
+				),
+				fauxAssistantMessage("Asked"),
+				fauxAssistantMessage("It failed, I will look myself"),
+			],
+			sub: [
+				fauxAssistantMessage("half", {
+					stopReason: "error",
+					errorMessage: "boom",
+				}),
+			],
+		});
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "research",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "idle" && v.messages.length === 6,
+		);
+		const notified = JSON.stringify(view?.messages[4].message.content);
+		expect(notified).toContain('status=\\"failed\\"');
+		expect(notified).toContain("boom");
+		expect(view?.subagents[0].status).toBe("failed");
+	});
+
+	it(`runs at most ${MAX_SUBAGENTS} Subagents of a parent at once, the rest when one finishes`, async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		const gated = async () => {
+			await gate;
+			return fauxAssistantMessage("done");
+		};
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", {
+						tasks: Array.from({ length: MAX_SUBAGENTS + 1 }, (_, i) => ({
+							brief: `task ${i + 1}`,
+						})),
+					}),
+				),
+				fauxAssistantMessage("Asked"),
+				...Array.from({ length: MAX_SUBAGENTS + 1 }, () =>
+					fauxAssistantMessage("ok"),
+				),
+			],
+			sub: Array.from({ length: MAX_SUBAGENTS + 1 }, () => gated),
+		});
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "go",
+		});
+		const busy = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "idle" && v.subagents.length === MAX_SUBAGENTS + 1,
+		);
+		expect(busy?.subagents.map((s) => s.status)).toEqual([
+			...Array(MAX_SUBAGENTS).fill("running"),
+			"queued",
+		]);
+		release();
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) =>
+				v?.status === "idle" &&
+				v.subagents.every((s) => s.status === "completed") &&
+				v.messages.filter((m) =>
+					JSON.stringify(m.message.content).includes("task-notification"),
+				).length ===
+					MAX_SUBAGENTS + 1 &&
+				v.messages.at(-1)?.message.role === "assistant",
+		);
+		expect(view?.messages.every((m) => m.id > 0)).toBe(true);
+	});
+
+	it(`refuses to start more than ${MAX_SUBAGENTS_PER_TURN} Subagents since the User's last message`, async () => {
+		const eight = Array.from({ length: 8 }, (_, i) => ({ brief: `t${i}` }));
+		script({
+			parent: [
+				fauxAssistantMessage(fauxToolCall("subagent", { tasks: eight })),
+				fauxAssistantMessage(fauxToolCall("subagent", { tasks: eight })),
+				fauxAssistantMessage(
+					fauxToolCall("subagent", { tasks: [{ brief: "one more" }] }),
+				),
+				...Array.from({ length: 40 }, () => fauxAssistantMessage("ok")),
+			],
+			sub: Array.from({ length: 16 }, () => fauxAssistantMessage("done")),
+		});
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "go",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) =>
+				v?.status === "idle" &&
+				v.subagents.length === 16 &&
+				v.subagents.every((s) => s.status === "completed"),
+		);
+		// Notifications may land between the calls
+		const results = view?.messages
+			.map((m) => m.message)
+			.filter((m): m is ToolResultMessage => m.role === "toolResult");
+		expect(results?.map((r) => r.isError)).toEqual([false, false, true]);
+		const refused = results?.[2];
+		expect(JSON.stringify(refused?.content)).toContain(
+			"do the rest of the work yourself",
+		);
+	}, 15_000);
+
+	it("stops and drops, on retry, the Subagents the failed reply started", async () => {
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", { tasks: [{ brief: "find pi" }] }),
+				),
+				fauxAssistantMessage("half", {
+					stopReason: "error",
+					errorMessage: "boom",
+				}),
+				fauxAssistantMessage("retried"),
+			],
+			sub: [hang],
+		});
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "research",
+		});
+		await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "failed" && v.subagents[0]?.status === "running",
+		);
+		await conversations.retryRun(userId, id);
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "idle",
+		);
+		expect(view?.messages.map((m) => m.message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
+		expect(view?.subagents).toEqual([]);
 	});
 
 	it("starts one Run for two wake inputs that arrive together, and delivers both", async () => {
@@ -781,6 +1056,37 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		stopWorker = await startAgentWorker(config.get, url as string, {
 			concurrency: 1,
 		});
+	});
+
+	it("queues again, when the worker starts, a Run left running without a job", async () => {
+		await stopWorker();
+		faux.setResponses([
+			fauxAssistantMessage("back"),
+			fauxAssistantMessage("T"),
+		]);
+		// as after a crash between saving a Run's start and queueing it
+		const [{ id }] = await db
+			.insert(schema.conversation)
+			.values({ userId, agentId: "faux", status: "running" })
+			.returning({ id: schema.conversation.id });
+		await db.insert(schema.inbox).values({
+			conversationId: id,
+			message: { role: "user", content: "hi", timestamp: Date.now() },
+			model: "faux/faux-1",
+			thinkingLevel: "off",
+			wake: true,
+		});
+		stopWorker = await startAgentWorker(config.get, url as string, {
+			concurrency: 1,
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "idle" && v.title === "T",
+		);
+		expect(view?.messages.map((m) => m.message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
 	});
 
 	it("fails a run whose worker crashed, so it can be retried", async () => {
