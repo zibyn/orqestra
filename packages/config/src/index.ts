@@ -267,3 +267,29 @@ export function resolveThinking(
 		default: preferred ?? offered.find((l) => l !== "off") ?? offered[0],
 	};
 }
+
+/**
+ * The Agent, Model and thinking level for the next message of a Conversation.
+ * A pick the Agent no longer allows falls back to its default.
+ * Returns undefined when the Agent was removed from config: the Conversation is then read-only.
+ */
+export function resolveTurn(
+	config: Pick<OrqestraConfig, "agents" | "models">,
+	agentId: string,
+	picked: { model?: string; thinking?: ThinkingLevel } = {},
+) {
+	const agent = config.agents.find((a) => a.id === agentId);
+	if (!agent) return undefined;
+	const ref =
+		picked.model && agent.models.includes(picked.model)
+			? picked.model
+			: agent.defaultModel;
+	// loadConfig only keeps Agents whose Models are configured
+	const model = config.models.find((m) => modelRef(m) === ref) as Model<Api>;
+	const levels = resolveThinking(agent.thinking, model);
+	const thinking =
+		picked.thinking && levels.allowed.includes(picked.thinking)
+			? picked.thinking
+			: levels.default;
+	return { agent, model, thinking };
+}

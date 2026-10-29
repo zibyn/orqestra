@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadConfig, resolveThinking } from "./index";
+import { loadConfig, resolveThinking, resolveTurn } from "./index";
 
 const deepseekOnly = {
 	providers: { deepseek: { apiKey: "$DEEPSEEK_API_KEY" } },
@@ -271,5 +271,47 @@ describe("resolveThinking", () => {
 
 	it("ignores a configured default the Model cannot use", () => {
 		expect(resolveThinking({ default: "low" }, proOnly).default).toBe("high");
+	});
+});
+
+describe("resolveTurn", () => {
+	const twoModels = `---\nname: G\ndescription: d\ndefault: true\nmodels: [deepseek/deepseek-flash, deepseek/deepseek-v4-pro]\n---\nhi`;
+	const load = () => loadConfig(configDir({ general: twoModels }));
+
+	it("uses the Agent's default Model and thinking level when nothing is picked", async () => {
+		const turn = resolveTurn(await load(), "general");
+		expect(turn?.model.id).toBe("deepseek-flash");
+		expect(turn?.thinking).toBe("low");
+		expect(turn?.agent.id).toBe("general");
+	});
+
+	it("keeps an allowed Model and thinking level picked for the message", async () => {
+		const turn = resolveTurn(await load(), "general", {
+			model: "deepseek/deepseek-v4-pro",
+			thinking: "max",
+		});
+		expect(turn?.model.id).toBe("deepseek-v4-pro");
+		expect(turn?.thinking).toBe("max");
+	});
+
+	it("falls back to the default Model once the picked one leaves the allowed list", async () => {
+		const turn = resolveTurn(await load(), "general", {
+			model: "deepseek/removed-model",
+			thinking: "high",
+		});
+		expect(turn?.model.id).toBe("deepseek-flash");
+		expect(turn?.thinking).toBe("high");
+	});
+
+	it("falls back to the Model's default level when the picked one is not offered", async () => {
+		const turn = resolveTurn(await load(), "general", {
+			model: "deepseek/deepseek-v4-pro",
+			thinking: "low",
+		});
+		expect(turn?.thinking).toBe("high");
+	});
+
+	it("returns nothing once the Agent is removed from config, so the Conversation is read-only", async () => {
+		expect(resolveTurn(await load(), "deleted-agent")).toBeUndefined();
 	});
 });
