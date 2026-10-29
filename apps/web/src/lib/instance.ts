@@ -33,7 +33,7 @@ export const getLoginOptions = createServerFn().handler(async () => ({
 	memberPassword: canUsePassword({ role: "user" }, await passwordPolicy()),
 }));
 
-async function requireAdmin() {
+export async function requireAdmin() {
 	const session = await auth.api.getSession({ headers: getRequestHeaders() });
 	if (!isAdmin(session?.user)) throw new Error("Forbidden");
 }

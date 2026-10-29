@@ -15,7 +15,31 @@ pnpm dev
 - `apps/worker` — BullMQ worker on the Postgres backend (Bun, uses `DATABASE_URL`; tables in the `bullmq` schema). `pnpm worker`.
 - `packages/db` — Drizzle schema + client. `pnpm db:push` etc.
 
+- `packages/config` — loads Providers, Models and Agent Definitions from `config/`; used by both web and worker.
+
 Env vars live in the root `.env.local`, shared by all packages.
+
+## 如何添加一个 Agent
+
+配置目录默认是仓库根目录的 `config/`，可用 `ORQESTRA_CONFIG_DIR` 指向别处。web 和 worker 在启动时加载同一份配置，修改后需要重启；配置有误时两边都会启动失败，并在报错中给出文件和字段。
+
+1. 确认要用的模型在 `config/models.json` 中（pi 的 [models.json 格式](https://pi.dev/schemas/models.schema.json)）。`apiKey` 只能写环境变量引用，如 `"$DEEPSEEK_API_KEY"`，然后在 `.env.local` 里设置该变量。
+2. 新建 `config/agents/<id>.md`，文件名就是 Agent 的 id。frontmatter 之后的正文是指令（system prompt）：
+
+   ```markdown
+   ---
+   name: Translator
+   description: Translates between Chinese and English.
+   models: [deepseek/deepseek-flash]   # 可选，不写则所有已配置的模型都可用
+   defaultModel: deepseek/deepseek-flash # 可选，默认 models[0]，再退到 ORQESTRA_DEFAULT_MODEL
+   thinking: { default: low, allowed: [off, low, high] } # 可选，不写 allowed 则允许模型支持的所有档位
+   compaction: { reserveTokens: 16384, keepRecentTokens: 20000 } # 可选，覆盖 pi 默认值
+   ---
+   You translate the user's text between Chinese and English.
+   ```
+
+3. 所有 Agent 中必须恰好有一个写 `default: true`（新建 Conversation 时默认选中）。
+4. 重启 web 和 worker，在 `/console/agents` 查看结果。
 
 # Building For Production
 

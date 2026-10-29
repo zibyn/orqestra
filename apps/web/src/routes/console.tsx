@@ -34,6 +34,9 @@ function Console() {
 				>
 					Settings
 				</Link>
+				<Link to="/console/agents" activeProps={{ className: "font-semibold" }}>
+					Agents
+				</Link>
 			</nav>
 			<Outlet />
 		</main>

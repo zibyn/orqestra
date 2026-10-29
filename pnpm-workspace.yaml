@@ -7,3 +7,5 @@ allowBuilds:
   lightningcss: true
   better-sqlite3: true
   msgpackr-extract: false
+  '@google/genai': false
+  protobufjs: false
