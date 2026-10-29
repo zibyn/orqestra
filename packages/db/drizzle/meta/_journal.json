@@ -64,6 +64,13 @@
       "when": 1793275993142,
       "tag": "0008_run_job_and_subagent_budget",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793288120897,
+      "tag": "0009_mcp_servers",
+      "breakpoints": true
     }
   ]
 }

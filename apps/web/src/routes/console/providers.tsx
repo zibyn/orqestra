@@ -1,6 +1,7 @@
 import {
 	type SearchProviderId,
 	searchProviders,
+	slugify,
 	toolName,
 } from "@orqestra/config/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
@@ -11,6 +12,14 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Switch } from "#/components/ui/switch";
+import type { McpTestResult } from "#/lib/mcp-connection";
+import {
+	deleteMcpServer,
+	getMcpServers,
+	type McpSaveError,
+	saveMcpServer,
+	setMcpServerEnabled,
+} from "#/lib/mcp-servers";
 import {
 	deleteProvider,
 	getProviders,
@@ -29,11 +38,12 @@ import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/console/providers")({
 	loader: async () => {
-		const [providers, search] = await Promise.all([
+		const [providers, search, mcpServers] = await Promise.all([
 			getProviders(),
 			getSearchProviders(),
+			getMcpServers(),
 		]);
-		return { ...providers, search };
+		return { ...providers, search, mcpServers };
 	},
 	component: Providers,
 });
@@ -48,7 +58,7 @@ const errorText = (error: unknown) =>
 	error instanceof Error ? error.message : m.request_failed();
 
 function Providers() {
-	const { catalog, configured, search } = Route.useLoaderData();
+	const { catalog, configured, search, mcpServers } = Route.useLoaderData();
 	const unconfigured = catalog.filter(
 		(c) => !configured.some((p) => p.id === c.id),
 	);
@@ -71,6 +81,7 @@ function Providers() {
 				</div>
 			)}
 			<SearchProviders data={search} />
+			<McpServers servers={mcpServers} />
 		</section>
 	);
 }
@@ -469,5 +480,297 @@ function SearchProviders({ data }: { data: SearchData }) {
 			)}
 			{error && <p className="text-sm text-destructive">{error}</p>}
 		</>
+	);
+}
+
+type McpServer = Awaited<ReturnType<typeof getMcpServers>>[number];
+
+/** MCP Servers with their write-only header values. */
+function McpServers({ servers }: { servers: McpServer[] }) {
+	const router = useRouter();
+	const [busy, setBusy] = useState<string>();
+	const [error, setError] = useState("");
+
+	async function act(key: string, action: () => Promise<unknown>) {
+		setBusy(key);
+		try {
+			await action();
+			setError("");
+			await router.invalidate();
+		} catch (e) {
+			setError(errorText(e));
+		} finally {
+			setBusy(undefined);
+		}
+	}
+
+	return (
+		<>
+			<h2 className="mt-4 text-lg font-semibold">{m.mcp_servers()}</h2>
+			<p className="text-sm text-muted-foreground">{m.mcp_servers_hint()}</p>
+			{servers.map((s) => (
+				<div
+					key={s.id}
+					className="flex flex-col gap-4 rounded-lg border p-4 text-sm"
+				>
+					<div className="flex items-center justify-between gap-2">
+						<h3 className="font-medium">
+							{s.name} <code className={inlineCode}>{s.id}</code>
+						</h3>
+						<div className="flex items-center gap-3">
+							<Switch
+								id={`mcp-${s.id}-enabled`}
+								checked={s.enabled}
+								disabled={!!busy}
+								onCheckedChange={(enabled) =>
+									act(`enable-${s.id}`, () =>
+										setMcpServerEnabled({ data: { id: s.id, enabled } }),
+									)
+								}
+							/>
+							<Label htmlFor={`mcp-${s.id}-enabled`}>
+								{m.mcp_server_enabled()}
+							</Label>
+							<Button
+								size="sm"
+								variant="destructive"
+								disabled={!!busy}
+								onClick={() => {
+									if (confirm(m.delete_mcp_server_confirm()))
+										void act(`delete-${s.id}`, () =>
+											deleteMcpServer({ data: s.id }),
+										);
+								}}
+							>
+								{busy === `delete-${s.id}` && (
+									<Loader2Icon className="animate-spin" />
+								)}
+								{m.delete()}
+							</Button>
+						</div>
+					</div>
+					{s.headers.some((h) => !h.readable) && (
+						<p className="text-destructive">{m.mcp_header_unreadable()}</p>
+					)}
+					<McpServerForm existing={s} />
+				</div>
+			))}
+			<div className="flex flex-col gap-4 rounded-lg border p-4 text-sm">
+				<h3 className="font-medium">{m.add_mcp_server()}</h3>
+				<McpServerForm />
+			</div>
+			{error && <p className="text-sm text-destructive">{error}</p>}
+		</>
+	);
+}
+
+/** Adds an MCP Server or edits `existing`; a blank header value keeps the stored one. */
+function McpServerForm({ existing }: { existing?: McpServer }) {
+	const router = useRouter();
+	const [name, setName] = useState(existing?.name ?? "");
+	const [id, setId] = useState(existing?.id ?? "");
+	const [idEdited, setIdEdited] = useState(false);
+	const [url, setUrl] = useState(existing?.url ?? "");
+	const blank = () =>
+		existing?.headers.map((h) => ({ name: h.name, value: "" })) ?? [];
+	const [headers, setHeaders] = useState(blank);
+	const [busy, setBusy] = useState(false);
+	const [errors, setErrors] = useState<Record<string, string>>({});
+	const [test, setTest] = useState<McpTestResult>();
+	const fieldId = (field: string) => `mcp-${existing?.id ?? "new"}-${field}`;
+	const setHeader = (i: number, fields: Partial<(typeof headers)[number]>) =>
+		setHeaders(headers.map((h, j) => (j === i ? { ...h, ...fields } : h)));
+
+	async function save() {
+		setBusy(true);
+		setTest(undefined);
+		try {
+			const result = await saveMcpServer({
+				data: {
+					id,
+					create: !existing,
+					name,
+					url,
+					enabled: existing?.enabled ?? true,
+					headers,
+				},
+			});
+			setErrors({
+				...(result.errors.id && { id: saveErrorText(result.errors.id) }),
+				...(result.errors.headers && {
+					headers: saveErrorText(result.errors.headers),
+				}),
+			});
+			setTest(result.test);
+			if (!Object.keys(result.errors).length) {
+				if (!existing) {
+					setName("");
+					setId("");
+					setIdEdited(false);
+					setUrl("");
+				}
+				setHeaders(blank());
+				await router.invalidate();
+			}
+		} catch (e) {
+			setErrors({ "": errorText(e) });
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	return (
+		<form
+			className="flex flex-col gap-4"
+			onSubmit={(e) => {
+				e.preventDefault();
+				void save();
+			}}
+		>
+			<div className="flex flex-col gap-2">
+				<Label htmlFor={fieldId("name")}>{m.mcp_server_name()}</Label>
+				<Input
+					id={fieldId("name")}
+					required
+					value={name}
+					onChange={(e) => {
+						setName(e.target.value);
+						if (!existing && !idEdited) setId(slugify(e.target.value));
+					}}
+				/>
+			</div>
+			<div className="flex flex-col gap-2">
+				<Label htmlFor={fieldId("id")}>{m.mcp_server_id()}</Label>
+				{!existing && (
+					<p className="text-muted-foreground">{m.mcp_server_id_hint()}</p>
+				)}
+				<Input
+					id={fieldId("id")}
+					required
+					disabled={!!existing}
+					pattern="[a-z0-9][a-z0-9\-]*"
+					value={id}
+					onChange={(e) => {
+						setId(e.target.value);
+						setIdEdited(true);
+					}}
+				/>
+				{errors.id && <p className="text-destructive">{errors.id}</p>}
+			</div>
+			<div className="flex flex-col gap-2">
+				<Label htmlFor={fieldId("url")}>{m.mcp_server_url()}</Label>
+				<Input
+					id={fieldId("url")}
+					type="url"
+					required
+					pattern="https?://.*"
+					value={url}
+					onChange={(e) => setUrl(e.target.value)}
+				/>
+			</div>
+			<fieldset className="flex flex-col gap-2">
+				<legend className="mb-2 font-medium">{m.mcp_headers()}</legend>
+				{existing && (
+					<p className="text-muted-foreground">{m.mcp_headers_hint()}</p>
+				)}
+				{headers.map((h, i) => {
+					const stored = existing?.headers.find((s) => s.name === h.name);
+					return (
+						// biome-ignore lint/suspicious/noArrayIndexKey: rows have no id until saved
+						<div key={i} className="flex flex-wrap items-center gap-2">
+							<Input
+								aria-label={m.header_name()}
+								placeholder={m.header_name()}
+								className="w-48"
+								required
+								value={h.name}
+								onChange={(e) => setHeader(i, { name: e.target.value })}
+							/>
+							<Input
+								aria-label={m.header_value()}
+								type="password"
+								autoComplete="off"
+								className="flex-1"
+								required={!stored?.readable}
+								placeholder={
+									stored?.readable ? m.header_value_set() : m.header_value()
+								}
+								value={h.value}
+								onChange={(e) => setHeader(i, { value: e.target.value })}
+							/>
+							<Button
+								type="button"
+								size="sm"
+								variant="ghost"
+								onClick={() => setHeaders(headers.filter((_, j) => j !== i))}
+							>
+								{m.remove()}
+							</Button>
+						</div>
+					);
+				})}
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					className="self-start"
+					onClick={() => setHeaders([...headers, { name: "", value: "" }])}
+				>
+					{m.add_header()}
+				</Button>
+				{errors.headers && <p className="text-destructive">{errors.headers}</p>}
+			</fieldset>
+			<Button
+				type="submit"
+				className="self-start"
+				variant={existing ? "outline" : "default"}
+				disabled={busy}
+			>
+				{busy && <Loader2Icon className="animate-spin" />}
+				{existing ? m.save() : m.add_mcp_server()}
+			</Button>
+			{test && <McpTestOutcome result={test} />}
+			{errors[""] && <p className="text-destructive">{errors[""]}</p>}
+		</form>
+	);
+}
+
+const saveErrorText = (error: McpSaveError) =>
+	"header" in error
+		? {
+				header_invalid: m.mcp_header_invalid,
+				header_twice: m.mcp_header_twice,
+				header_value_missing: m.mcp_header_value_missing,
+			}[error.code]({ header: error.header })
+		: { id_invalid: m.mcp_id_invalid, id_taken: m.mcp_id_taken }[error.code]();
+
+/** The Tools a just-saved MCP Server offers, or why connecting to it failed. */
+function McpTestOutcome({ result }: { result: McpTestResult }) {
+	if (!result.ok) {
+		const message = {
+			auth: m.mcp_test_auth,
+			unreachable: m.mcp_test_unreachable,
+			timeout: m.mcp_test_timeout,
+			failed: m.mcp_test_failed,
+		}[result.reason];
+		return (
+			<p className="text-destructive">{message({ detail: result.detail })}</p>
+		);
+	}
+	if (!result.tools.length) return <p>{m.mcp_test_no_tools()}</p>;
+	return (
+		<div className="flex flex-col gap-2">
+			<p>{m.mcp_test_ok()}</p>
+			<ul className="flex flex-col gap-1">
+				{result.tools.map((t) => (
+					<li key={t.name}>
+						<code className={inlineCode}>{t.name}</code>
+						{t.description && (
+							<span className="text-muted-foreground"> {t.description}</span>
+						)}
+					</li>
+				))}
+			</ul>
+		</div>
 	);
 }

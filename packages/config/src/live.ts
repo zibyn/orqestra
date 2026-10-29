@@ -3,6 +3,7 @@ import {
 	agent,
 	enabledModel,
 	instanceSettings,
+	mcpServer,
 	provider,
 	searchProvider,
 } from "@orqestra/db/schema";
@@ -20,12 +21,14 @@ import { decryptSecret, encryptionKey } from "./secret.ts";
 /** Everything saved in /console, with API keys decrypted; writes the General Agent into a database without Agents. */
 export async function loadSettings(): Promise<Settings> {
 	const key = encryptionKey();
-	const [providers, enabled, searchProviders, [instance]] = await Promise.all([
-		db.select().from(provider),
-		db.select().from(enabledModel),
-		db.select().from(searchProvider),
-		db.select().from(instanceSettings),
-	]);
+	const [providers, enabled, searchProviders, [instance], mcpServers] =
+		await Promise.all([
+			db.select().from(provider),
+			db.select().from(enabledModel),
+			db.select().from(searchProvider),
+			db.select().from(instanceSettings),
+			db.select().from(mcpServer).orderBy(mcpServer.createdAt),
+		]);
 	let agents = await db.select().from(agent).orderBy(agent.createdAt);
 	if (!agents.length) {
 		// web and worker may both get here first
@@ -54,6 +57,16 @@ export async function loadSettings(): Promise<Settings> {
 			search: (instance?.searchServedBy ?? null) as SearchProviderId | null,
 			scrape: (instance?.scrapeServedBy ?? null) as SearchProviderId | null,
 		},
+		mcpServers: mcpServers.map((s) => ({
+			id: s.id,
+			name: s.name,
+			url: s.url,
+			enabled: s.enabled,
+			headers: s.headers.map((h) => ({
+				name: h.name,
+				value: decryptSecret(h.value, key),
+			})),
+		})),
 	};
 }
 

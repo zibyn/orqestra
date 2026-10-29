@@ -37,7 +37,22 @@ export const agentId = z
 	.string()
 	.regex(/^[a-z0-9][a-z0-9-]*$/, "lowercase letters, digits and dashes");
 
-/** A name turned into an Agent id; "" when nothing usable is left (e.g. a Chinese name). */
+/** An MCP Server's id, like an Agent's; never changes, since Agent Definitions and Tool names refer to it. */
+export const mcpServerId = agentId;
+
+/** An Agent's Tool entry: a built-in Tool, or `mcp:<serverId>` for every Tool of that MCP Server. */
+export const toolRef = z.union([
+	toolName,
+	z.templateLiteral(["mcp:", mcpServerId]),
+]);
+export type ToolRef = z.infer<typeof toolRef>;
+/** The Tool entry for every Tool of MCP Server `id`. */
+export const mcpToolRef = (id: string) => `mcp:${id}` as const;
+/** The MCP Server a Tool entry names, or undefined for a built-in Tool. */
+export const mcpServerOf = (tool: string) =>
+	tool.startsWith("mcp:") ? tool.slice(4) : undefined;
+
+/** A name turned into an Agent or MCP Server id; "" when nothing usable is left (e.g. a Chinese name). */
 export const slugify = (name: string) =>
 	name
 		.toLowerCase()
@@ -60,8 +75,8 @@ export const agentDefinition = z.strictObject({
 			allowed: z.array(thinkingLevel).min(1).optional(),
 		})
 		.optional(),
-	/** Omitted means every Tool. */
-	tools: z.array(toolName).optional(),
+	/** Omitted means Search and Scrape, never an MCP Server. */
+	tools: z.array(toolRef).optional(),
 	compaction: z
 		.strictObject({
 			reserveTokens: z.number().int().positive().optional(),

@@ -37,6 +37,7 @@ const deepseek = (
 	})),
 	searchProviders: [],
 	servedBy: { search: null, scrape: null },
+	mcpServers: [],
 });
 const withAgents = (agents: Record<string, unknown>, enabled?: string[]) =>
 	deepseek(enabled, {}, agents);
@@ -187,11 +188,94 @@ describe("loadConfig", () => {
 			).toEqual({});
 		});
 
+		it("offers enabled MCP Servers by id, with their headers decrypted", async () => {
+			const config = await loadConfig({
+				...deepseek(),
+				mcpServers: [
+					{
+						id: "github",
+						name: "GitHub",
+						url: "https://mcp.example.com/mcp",
+						enabled: true,
+						headers: [{ name: "Authorization", value: "Bearer gh" }],
+					},
+					{
+						id: "wiki",
+						name: "Wiki",
+						url: "http://10.0.0.2/mcp",
+						enabled: true,
+						headers: [],
+					},
+				],
+			});
+			expect(config.mcpServers).toEqual({
+				github: {
+					name: "GitHub",
+					url: "https://mcp.example.com/mcp",
+					headers: { Authorization: "Bearer gh" },
+				},
+				wiki: { name: "Wiki", url: "http://10.0.0.2/mcp", headers: {} },
+			});
+		});
+
+		it("leaves an MCP Server unavailable when it is disabled or a header cannot be decrypted", async () => {
+			const server = {
+				name: "S",
+				url: "https://mcp.example.com/mcp",
+				enabled: true,
+				headers: [{ name: "X-Token", value: "t" }],
+			};
+			const config = await loadConfig({
+				...deepseek(),
+				mcpServers: [
+					{ ...server, id: "off", enabled: false },
+					{
+						...server,
+						id: "unreadable",
+						headers: [
+							{ name: "X-Token", value: "t" },
+							{ name: "X-Other", value: undefined },
+						],
+					},
+				],
+			});
+			expect(config.mcpServers).toEqual({});
+		});
+
 		it("keeps an Agent's `tools` as written", async () => {
 			const config = await loadConfig(
 				withAgents({ general: agentWith({ tools: ["scrape"] }) }),
 			);
 			expect(config.defaultAgent.tools).toEqual(["scrape"]);
+		});
+
+		it("keeps `mcp:<id>` as written, even for an MCP Server that is not configured", async () => {
+			const config = await loadConfig(
+				withAgents({
+					general: agentWith({ tools: ["search", "mcp:github", "mcp:gone"] }),
+				}),
+			);
+			expect(config.defaultAgent.tools).toEqual([
+				"search",
+				"mcp:github",
+				"mcp:gone",
+			]);
+		});
+
+		it("gives an Agent without `tools` Search and Scrape but no MCP Server", async () => {
+			const config = await loadConfig({
+				...deepseek(),
+				mcpServers: [
+					{
+						id: "github",
+						name: "GitHub",
+						url: "https://mcp.example.com/mcp",
+						enabled: true,
+						headers: [],
+					},
+				],
+			});
+			expect(config.defaultAgent.tools).toEqual(["search", "scrape"]);
 		});
 	});
 
@@ -262,6 +346,12 @@ describe("loadConfig", () => {
 		it("an unknown Tool", () =>
 			fails(
 				{ general: agentWith({ tools: ["search", "browse"] }) },
+				/"general": tools\.1/,
+			));
+
+		it("a malformed MCP Server entry", () =>
+			fails(
+				{ general: agentWith({ tools: ["search", "mcp:Not Valid"] }) },
 				/"general": tools\.1/,
 			));
 
@@ -373,7 +463,7 @@ describe("resolveTurn", () => {
 		expect(turn?.thinking).toBe("high");
 	});
 
-	it("runs a Subagent without a template as the general worker, on the picked Model and every Tool", async () => {
+	it("runs a Subagent without a template as the general worker, on the picked Model, Search and Scrape but no MCP Server", async () => {
 		const turn = resolveTurn(await load(), null, {
 			model: "deepseek/deepseek-v4-pro",
 		});

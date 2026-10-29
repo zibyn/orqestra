@@ -2,11 +2,12 @@ import {
 	agentDefinition,
 	agentId,
 	definitionIssues,
+	mcpToolRef,
 	modelRef,
 	toolName,
 } from "@orqestra/config";
 import { db, eq, sql } from "@orqestra/db";
-import { agent } from "@orqestra/db/schema";
+import { agent, mcpServer } from "@orqestra/db/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { config, reloadConfig } from "#/lib/config";
@@ -16,9 +17,13 @@ import { requireAdmin } from "#/lib/session";
 
 export const listAgents = createServerFn().handler(async () => {
 	await requireAdmin();
-	const [rows, loaded] = await Promise.all([
+	const [rows, loaded, servers] = await Promise.all([
 		db.select().from(agent).orderBy(agent.createdAt),
 		config.get(),
+		db
+			.select({ id: mcpServer.id, name: mcpServer.name })
+			.from(mcpServer)
+			.orderBy(mcpServer.createdAt),
 	]);
 	return {
 		agents: rows.map((r) => {
@@ -35,8 +40,13 @@ export const listAgents = createServerFn().handler(async () => {
 			ref: modelRef(m),
 			name: m.name,
 		})),
-		/** Tools with a usable Search Provider. */
-		availableTools: toolName.options.filter((t) => loaded.tools[t]),
+		/** Every configured MCP Server, enabled or not. */
+		mcpServers: servers,
+		/** Tools with a usable Search Provider, and `mcp:<id>` of available MCP Servers. */
+		availableTools: [
+			...toolName.options.filter((t) => loaded.tools[t]),
+			...Object.keys(loaded.mcpServers).map(mcpToolRef),
+		],
 	};
 });
 

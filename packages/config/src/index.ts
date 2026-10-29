@@ -17,6 +17,7 @@ import {
 	type SearchProviderId,
 	searchProviders,
 	type ToolName,
+	type ToolRef,
 	toolName,
 } from "./shared.ts";
 
@@ -39,8 +40,8 @@ export interface AgentDefinition {
 	/** As written; resolve per Model with `resolveThinking`. */
 	thinking: { default?: ThinkingLevel; allowed?: ThinkingLevel[] };
 	compaction?: { reserveTokens?: number; keepRecentTokens?: number };
-	/** As written; only those with a Search Provider are offered in a Run. */
-	tools: ToolName[];
+	/** As written; only built-in Tools with a Search Provider and available MCP Servers are offered in a Run. */
+	tools: ToolRef[];
 	/** Users can start Conversations with it; any Agent can be a Subagent template. */
 	pickable: boolean;
 	default: boolean;
@@ -68,6 +69,21 @@ export interface Settings {
 	}[];
 	/** The Search Provider picked for each Tool. */
 	servedBy: Record<ToolName, SearchProviderId | null>;
+	/** A header `value` is undefined when it cannot be decrypted. */
+	mcpServers: {
+		id: string;
+		name: string;
+		url: string;
+		enabled: boolean;
+		headers: { name: string; value: string | undefined }[];
+	}[];
+}
+
+/** An MCP Server ready to connect to, with plaintext headers. */
+export interface McpServer {
+	name: string;
+	url: string;
+	headers: Record<string, string>;
 }
 
 /** A Tool's Search Provider and its decrypted key. */
@@ -87,6 +103,8 @@ export interface OrqestraConfig {
 	defaultAgent: AgentDefinition;
 	/** Tools with a usable Search Provider; the others are unavailable. */
 	tools: Partial<Record<ToolName, ToolService>>;
+	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
+	mcpServers: Record<string, McpServer>;
 	/** pi's streamSimple with the Provider's configured API key. */
 	streamSimple: StreamSimple;
 }
@@ -218,12 +236,23 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 			};
 	}
 
+	const mcpServers: OrqestraConfig["mcpServers"] = {};
+	for (const { id, name, url, enabled, headers } of settings.mcpServers) {
+		const plain = headers.flatMap((h) =>
+			h.value === undefined ? [] : [[h.name, h.value]],
+		);
+		// one unreadable header: the server would reject us, so it is unavailable
+		if (enabled && plain.length === headers.length)
+			mcpServers[id] = { name, url, headers: Object.fromEntries(plain) };
+	}
+
 	return {
 		registry,
 		models,
 		agents,
 		defaultAgent: defaults[0],
 		tools,
+		mcpServers,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);
 			if (provider && provider.apiKey === undefined)
@@ -294,7 +323,7 @@ export function resolveThinking(
 export const GENERAL_WORKER =
 	"You carry out one task for another agent, starting without any prior context. Work through it with the tools you have, then reply with a complete, self-contained answer: it is all the other agent will see.";
 
-/** The built-in Agent a Subagent without a template runs as: any enabled Model, every Tool. */
+/** The built-in Agent a Subagent without a template runs as: any enabled Model, Search and Scrape, no MCP Server. */
 const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
 	id: "",
 	name: "General worker",

@@ -61,8 +61,12 @@ How a Subagent's work stands: queued while it waits for a free slot, running, or
 _Avoid_: Status (of a Subagent), state, result
 
 **Tool**:
-A capability an Agent can call during a Run, such as Search or Scrape, served by an external service rather than by Orqestra itself. A Tool with no service to serve it is unavailable, and Agents that list it run without it.
+A capability an Agent can call during a Run, such as Search, Scrape or those of an MCP Server, served by an external service rather than by Orqestra itself. A Tool with no service to serve it is unavailable, and Agents that list it run without it.
 _Avoid_: Function, plugin, skill
+
+**MCP Server**:
+An external service, configured by an Admin, that serves Tools to Agents over the Model Context Protocol. An Agent Definition allows an MCP Server as a whole, and only by naming it; one the Admin has disabled or that cannot be reached is unavailable until it is back, while deleting one removes it from every Agent Definition.
+_Avoid_: Connector, integration, plugin
 
 **Search**:
 The Tool that queries the web and returns matching pages.
