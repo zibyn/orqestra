@@ -45,6 +45,7 @@ import {
 	subagent,
 } from "@orqestra/db/schema";
 import { createPostgresBackend, Worker } from "bullmq";
+import { mcpTools } from "./mcp.ts";
 import {
 	limiter,
 	MAX_SUBAGENT_STEPS,
@@ -125,117 +126,125 @@ async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
 	if (!turn) throw new Error(`Agent "${conv.agentId}" is no longer configured`);
 	const streamFn: StreamFn = config.streamSimple;
 	const tools = searchTools(config, turn.agent.tools);
-
-	// a Subagent gets no Subagent Tools, and a step limit whose last request goes without Tools,
-	// so it answers with what it has rather than stopping mid-search
-	let steps = 0;
-	const agent = new Agent({
-		initialState: {
-			systemPrompt: sub
-				? turn.agent.instructions || GENERAL_WORKER
-				: turn.agent.instructions,
-			model: turn.model,
-			thinkingLevel: turn.thinking,
-			tools: sub
-				? tools
-				: [
-						...tools,
-						...subagentTools(
-							config,
-							{ model: turn.model, thinking: turn.thinking },
-							{ conversationId, userId: conv.userId, notify: send },
-						),
-					],
-			messages: await context(
-				conversationId,
-				rows,
-				turn,
-				streamFn,
-				signal,
-				send,
-			),
-		},
-		streamFn,
-		sessionId: conversationId,
-		finishTurn: () =>
-			sub && ++steps >= MAX_SUBAGENT_STEPS ? { action: "end" } : undefined,
-		// inputs that arrived during a step go to the model right after it
-		prepareNextTurnWithContext: async ({ context }) => {
-			const messages = (await drain(conversationId)) as Message[];
-			if (messages.length) await send({ type: "saved" });
-			if (sub && steps === MAX_SUBAGENT_STEPS - 1)
-				return {
-					context: { ...context, tools: [] },
-					messages: [
-						...messages,
-						{ role: "user", content: STEP_LIMIT, timestamp: Date.now() },
-					],
-				};
-			return messages.length ? { messages } : undefined;
-		},
-	});
-	agent.subscribe(async (event) => {
-		await relay(event, send, sub);
-		if (event.type !== "message_end") return;
-		const { role } = event.message;
-		if (role !== "toolResult" && role !== "assistant") return;
-		// finished and stopped replies are saved (a stopped one keeps what was generated), and so are Tool results;
-		// failed replies are not, the turn is retried instead, dropping everything after the user message
-		if (role === "toolResult" || event.message.stopReason !== "error")
-			await db.insert(message).values({
-				conversationId,
-				message: event.message,
-				model: modelRef(turn.model),
+	// connected for this Run only, so changes on the server side show up in the next one
+	const mcp = await mcpTools(config, turn.agent.tools, signal);
+	try {
+		// a Subagent gets no Subagent Tools, and a step limit whose last request goes without Tools,
+		// so it answers with what it has rather than stopping mid-search
+		let steps = 0;
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: sub
+					? turn.agent.instructions || GENERAL_WORKER
+					: turn.agent.instructions,
+				model: turn.model,
 				thinkingLevel: turn.thinking,
-			});
-		await send(
-			role === "assistant" ? { type: "end", subagent: sub } : { type: "saved" },
-		);
-	});
+				tools: sub
+					? [...tools, ...mcp.tools]
+					: [
+							...tools,
+							...mcp.tools,
+							...subagentTools(
+								config,
+								{ model: turn.model, thinking: turn.thinking },
+								{ conversationId, userId: conv.userId, notify: send },
+							),
+						],
+				messages: await context(
+					conversationId,
+					rows,
+					turn,
+					streamFn,
+					signal,
+					send,
+				),
+			},
+			streamFn,
+			sessionId: conversationId,
+			finishTurn: () =>
+				sub && ++steps >= MAX_SUBAGENT_STEPS ? { action: "end" } : undefined,
+			// inputs that arrived during a step go to the model right after it
+			prepareNextTurnWithContext: async ({ context }) => {
+				const messages = (await drain(conversationId)) as Message[];
+				if (messages.length) await send({ type: "saved" });
+				if (sub && steps === MAX_SUBAGENT_STEPS - 1)
+					return {
+						context: { ...context, tools: [] },
+						messages: [
+							...messages,
+							{ role: "user", content: STEP_LIMIT, timestamp: Date.now() },
+						],
+					};
+				return messages.length ? { messages } : undefined;
+			},
+		});
+		agent.subscribe(async (event) => {
+			await relay(event, send, sub);
+			if (event.type !== "message_end") return;
+			const { role } = event.message;
+			if (role !== "toolResult" && role !== "assistant") return;
+			// finished and stopped replies are saved (a stopped one keeps what was generated), and so are Tool results;
+			// failed replies are not, the turn is retried instead, dropping everything after the user message
+			if (role === "toolResult" || event.message.stopReason !== "error")
+				await db.insert(message).values({
+					conversationId,
+					message: event.message,
+					model: modelRef(turn.model),
+					thinkingLevel: turn.thinking,
+				});
+			await send(
+				role === "assistant"
+					? { type: "end", subagent: sub }
+					: { type: "saved" },
+			);
+		});
 
-	// how a Subagent's Run ended, judged from its last reply
-	const ended = () => {
-		const replies = (agent.state.messages as Message[]).filter(
-			(m): m is AssistantMessage => m.role === "assistant",
-		);
-		const result =
-			replies
-				.map(messageText)
-				.filter((t) => t.trim())
-				.at(-1) ?? "";
-		if (signal.aborted) return { outcome: "stopped" as const, result };
-		if (steps >= MAX_SUBAGENT_STEPS)
-			return { outcome: "partial" as const, result };
-		return { outcome: "completed" as const, result };
-	};
+		// how a Subagent's Run ended, judged from its last reply
+		const ended = () => {
+			const replies = (agent.state.messages as Message[]).filter(
+				(m): m is AssistantMessage => m.role === "assistant",
+			);
+			const result =
+				replies
+					.map(messageText)
+					.filter((t) => t.trim())
+					.at(-1) ?? "";
+			if (signal.aborted) return { outcome: "stopped" as const, result };
+			if (steps >= MAX_SUBAGENT_STEPS)
+				return { outcome: "partial" as const, result };
+			return { outcome: "completed" as const, result };
+		};
 
-	signal.throwIfAborted(); // stopped before the reply began
-	signal.addEventListener("abort", () => agent.abort());
-	let next: Message[] = [];
-	for (;;) {
-		await (next.length ? agent.prompt(next) : agent.continue());
-		const answer = agent.state.messages.at(-1) as AssistantMessage;
-		// fails the job so the reason (e.g. an unreadable API key) is logged; the 'failed' handler marks the Conversation failed
-		if (answer.stopReason === "error")
-			throw new Error(answer.errorMessage ?? "The reply failed");
-		if (signal.aborted) {
-			await stopped(conv, ended().result);
-			break;
+		signal.throwIfAborted(); // stopped before the reply began
+		signal.addEventListener("abort", () => agent.abort());
+		let next: Message[] = [];
+		for (;;) {
+			await (next.length ? agent.prompt(next) : agent.continue());
+			const answer = agent.state.messages.at(-1) as AssistantMessage;
+			// fails the job so the reason (e.g. an unreadable API key) is logged; the 'failed' handler marks the Conversation failed
+			if (answer.stopReason === "error")
+				throw new Error(answer.errorMessage ?? "The reply failed");
+			if (signal.aborted) {
+				await stopped(conv, ended().result);
+				break;
+			}
+			next = (await drain(conversationId, sub ? ended : true)) as Message[];
+			await send({ type: "saved" });
+			if (!next.length) break;
 		}
-		next = (await drain(conversationId, sub ? ended : true)) as Message[];
-		await send({ type: "saved" });
-		if (!next.length) break;
-	}
-	if (sub) return;
-	const answer = agent.state.messages.at(-1) as AssistantMessage;
+		if (sub) return;
+		const answer = agent.state.messages.at(-1) as AssistantMessage;
 
-	// titled after the first turn that produced a reply, stopped ones included
-	const first = !rows.some((r) => r.message.role === "assistant");
-	if (first && !conv.titleEdited)
-		await generateTitle(conversationId, config, turn.agent.id, [
-			last.message,
-			answer,
-		]).catch((error) => console.error("title generation failed", error));
+		// titled after the first turn that produced a reply, stopped ones included
+		const first = !rows.some((r) => r.message.role === "assistant");
+		if (first && !conv.titleEdited)
+			await generateTitle(conversationId, config, turn.agent.id, [
+				last.message,
+				answer,
+			]).catch((error) => console.error("title generation failed", error));
+	} finally {
+		await mcp.close();
+	}
 }
 
 /** The messages the model sees: everything, or the latest summary plus what it kept; compacts first when needed. */

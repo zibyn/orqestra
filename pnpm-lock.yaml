@@ -183,6 +183,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 1.4.0
         version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7)
+      '@earendil-works/pi-mcp':
+        specifier: 1.4.0
+        version: 1.4.0
       '@orqestra/config':
         specifier: workspace:*
         version: link:../../packages/config

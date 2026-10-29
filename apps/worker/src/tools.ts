@@ -40,7 +40,7 @@ export const MAX_SUBAGENTS_PER_USER_MESSAGE = 16;
 /** Model requests a Subagent may make; the last one, without Tools, is for its final answer. */
 export const MAX_SUBAGENT_STEPS = 20;
 // shortcut: a hard cut keeps one page from flooding the context; summarize instead if pages get cut too often
-const MAX_PAGE_CHARS = 50_000;
+export const MAX_PAGE_CHARS = 50_000;
 
 const text = (t: string) => [{ type: "text" as const, text: t }];
 
