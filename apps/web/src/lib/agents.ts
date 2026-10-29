@@ -6,9 +6,10 @@ import {
 	modelRef,
 	toolName,
 } from "@orqestra/config";
-import { db, eq, sql } from "@orqestra/db";
+import { db } from "@orqestra/db";
 import { agent, mcpServer } from "@orqestra/db/schema";
 import { createServerFn } from "@tanstack/react-start";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { config, reloadConfig } from "#/lib/config";
 import { requireAdmin } from "#/lib/session";

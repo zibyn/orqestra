@@ -30,6 +30,10 @@ export const notify = (conversationId: string, event: ConversationEvent) =>
 		sql`select pg_notify(${conversationChannel(conversationId)}, ${JSON.stringify(event)})`,
 	);
 
+/** Tells the pages showing this Conversation that what it shows changed: every change of state sends it. */
+export const saved = (conversationId: string) =>
+	notify(conversationId, { type: "saved" });
+
 /** Asks whichever worker runs these Conversations' Runs to abort them. */
 export const requestStop = (conversationIds: string[]) =>
 	Promise.all(
@@ -157,7 +161,18 @@ export async function ensureRun(conversationId: string) {
 	return true;
 }
 
-type Ended = {
+/** The Model and thinking level of a Conversation's latest message: an input to it without a pick of its own goes on with them. */
+export async function lastModel(tx: Tx, conversationId: string) {
+	const [last] = await tx
+		.select({ model: message.model, thinkingLevel: message.thinkingLevel })
+		.from(message)
+		.where(eq(message.conversationId, conversationId))
+		.orderBy(desc(message.id))
+		.limit(1);
+	return last as { model: string; thinkingLevel: string } | undefined;
+}
+
+export type Ended = {
 	outcome: "completed" | "partial" | "failed" | "stopped";
 	result: string;
 };
@@ -199,12 +214,7 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 		.set({ wake: false })
 		.where(eq(inbox.conversationId, conversationId));
 	// the Notification is answered on the Model the parent last replied with
-	const [last] = await tx
-		.select({ model: message.model, thinkingLevel: message.thinkingLevel })
-		.from(message)
-		.where(eq(message.conversationId, row.parentId))
-		.orderBy(desc(message.id))
-		.limit(1);
+	const last = await lastModel(tx, row.parentId);
 	await tx.insert(inbox).values({
 		conversationId: row.parentId,
 		message: {
@@ -222,7 +232,7 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 
 /** After a Subagent ended: the parent answers its Notification, and the Subagents waiting for a slot get one. */
 async function wakeAfter(parentId: string) {
-	await notify(parentId, { type: "saved" });
+	await saved(parentId);
 	const waiting = await db
 		.select({ id: subagent.conversationId })
 		.from(subagent)
@@ -266,7 +276,7 @@ export async function endRun(
 			.set({ status })
 			.where(eq(conversation.id, conversationId));
 	});
-	await notify(conversationId, { type: "saved" });
+	await saved(conversationId);
 	if (status === "idle") await ensureRun(conversationId);
 }
 
@@ -374,6 +384,6 @@ export async function stopSubagents(parentId: string, numbers?: number[]) {
 	await requestStop(
 		rows.filter((r) => r.outcome === "running").map((r) => r.id),
 	);
-	if (rows.length) await notify(parentId, { type: "saved" });
+	if (rows.length) await saved(parentId);
 	return rows.map((r) => r.number);
 }

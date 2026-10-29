@@ -1,5 +1,6 @@
 import { liveConfig } from "@orqestra/config/live";
-import { CONFIG_CHANNEL, db, sql } from "@orqestra/db";
+import { CONFIG_CHANNEL, db } from "@orqestra/db";
+import { sql } from "drizzle-orm";
 
 // Reloaded whenever an Admin saves Providers, Models, Search Providers or Agents
 export const config = liveConfig();

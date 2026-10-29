@@ -1,8 +1,9 @@
 import { catalogProviders, testConnection } from "@orqestra/config";
 import { decryptSecret, encryptSecret } from "@orqestra/config/secret";
-import { and, db, eq } from "@orqestra/db";
+import { db } from "@orqestra/db";
 import { enabledModel, provider } from "@orqestra/db/schema";
 import { createServerFn } from "@tanstack/react-start";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { reloadConfig as reload } from "#/lib/config";
 import { requireAdmin } from "#/lib/session";

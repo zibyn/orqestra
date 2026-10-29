@@ -198,15 +198,6 @@ importers:
       '@orqestra/conversations':
         specifier: workspace:*
         version: link:../../packages/conversations
-      '@orqestra/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      bullmq:
-        specifier: ^6.5.0
-        version: 6.5.0(ioredis@6.0.0)(pg@8.23.1)
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
     devDependencies:
       '@types/bun':
         specifier: latest

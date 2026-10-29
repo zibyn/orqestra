@@ -36,8 +36,10 @@ const { AGENT_RUNS_QUEUE, STOP_CHANNEL } = runs;
 const { startAgentWorker, providerLimiter } = await import(
 	"../../../worker/src/run.ts"
 );
-const { MAX_SUBAGENT_STEPS, MAX_SUBAGENTS, MAX_SUBAGENTS_PER_USER_MESSAGE } =
-	await import("../../../worker/src/tools.ts");
+const { MAX_SUBAGENT_STEPS } = await import("../../../worker/src/tools.ts");
+const { MAX_SUBAGENTS, MAX_SUBAGENTS_PER_USER_MESSAGE } = await import(
+	"@orqestra/conversations"
+);
 
 const faux = fauxProvider({
 	provider: "faux",
@@ -169,7 +171,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			baseUrl: "https://api.tavily.com",
 		};
 		// faux replies are one shared queue, so runs go one at a time; "works on several Runs at once" lifts that
-		stopWorker = await startAgentWorker(config.get, url as string, {
+		stopWorker = await startAgentWorker(config.get, {
 			concurrency: 1,
 		});
 	});
@@ -1504,7 +1506,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 	// last: it swaps the worker for one that notices stalled runs quickly
 	it("works on several Runs at once", async () => {
 		await stopWorker();
-		stopWorker = await startAgentWorker(config.get, url as string);
+		stopWorker = await startAgentWorker(config.get);
 		let release!: () => void;
 		const gate = new Promise<void>((r) => {
 			release = r;
@@ -1537,7 +1539,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				(v) => v?.status === "idle" && v.title === "T",
 			);
 		await stopWorker();
-		stopWorker = await startAgentWorker(config.get, url as string, {
+		stopWorker = await startAgentWorker(config.get, {
 			concurrency: 1,
 		});
 	});
@@ -1560,7 +1562,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			thinkingLevel: "off",
 			wake: true,
 		});
-		stopWorker = await startAgentWorker(config.get, url as string, {
+		stopWorker = await startAgentWorker(config.get, {
 			concurrency: 1,
 		});
 		const view = await waitFor(
@@ -1591,7 +1593,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			thinkingLevel: "off",
 			wake: true,
 		});
-		stopWorker = await startAgentWorker(config.get, url as string, {
+		stopWorker = await startAgentWorker(config.get, {
 			concurrency: 1,
 		});
 		// the start queues it after the worker's requeue did
@@ -1626,7 +1628,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		await waitFor(async () => picked, Boolean);
 		await crashing.close(true);
 
-		stopWorker = await startAgentWorker(config.get, url as string, {
+		stopWorker = await startAgentWorker(config.get, {
 			stalledInterval: 200,
 			concurrency: 1,
 		});

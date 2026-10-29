@@ -12,33 +12,15 @@ import {
 	shouldCompact,
 } from "@earendil-works/pi-coding-agent";
 import {
-	GENERAL_WORKER,
 	messageText,
-	modelRef,
 	type OrqestraConfig,
 	resolveTurn,
-	type ThinkingLevel,
 } from "@orqestra/config";
 import {
-	AGENT_RUNS_QUEUE,
-	type ConversationEvent,
-	drain,
-	endRun,
-	endSubagent,
-	enqueue,
-	notify,
-	STOP_CHANNEL,
-	SUBAGENT_RUNS_QUEUE,
-	stopSubagents,
-} from "@orqestra/conversations/runs";
-import { and, asc, db, desc, eq } from "@orqestra/db";
-import {
-	compaction,
-	conversation,
-	message,
-	subagent,
-} from "@orqestra/db/schema";
-import { createPostgresBackend, Worker } from "bullmq";
+	createConversations,
+	type RunHandle,
+	type Transcript,
+} from "@orqestra/conversations";
 import { mcpTools } from "./mcp.ts";
 import {
 	limiter,
@@ -49,75 +31,15 @@ import {
 	subagentTools,
 } from "./tools.ts";
 
-type Turn = NonNullable<ReturnType<typeof resolveTurn>>;
-type Row = typeof message.$inferSelect & { message: Message };
-type Conv = typeof conversation.$inferSelect;
-
-/** Runs in this process, by Conversation id, so a stop request can abort them from the start (compaction included). */
-const active = new Map<string, AbortController>();
-
 /**
- * One Run of a Conversation: delivers its inbox and replies, step by step, until no wake input is left.
- * A stopped Run ends here; a failed one is ended by the worker's 'failed' handler, which also sees crashes.
+ * Replies to one Run, step by step, until no input is left: the Agent loop, compaction and the title.
+ * A failed reply throws, and the Run fails.
  */
-export async function executeRun(
-	conversationId: string,
-	config: OrqestraConfig,
-) {
-	const conv = await db.query.conversation.findFirst({
-		where: eq(conversation.id, conversationId),
-	});
-	if (!conv) return; // deleted while queued
-	const stop = new AbortController();
-	active.set(conversationId, stop);
-	if (conv.parentId) {
-		const row = await db.query.subagent.findFirst({
-			where: eq(subagent.conversationId, conversationId),
-		});
-		if (row?.outcome === "stopped") stop.abort(); // stopped while queued
-	}
-	try {
-		await reply(conv, config, stop.signal);
-	} catch (error) {
-		// stopped while compacting: nothing to save
-		if (stop.signal.aborted) return stopped(conv, "");
-		throw error;
-	} finally {
-		// the next Run of this Conversation may have begun meanwhile, while this one titled it
-		if (active.get(conversationId) === stop) active.delete(conversationId);
-	}
-}
-
-/**
- * Ends a stopped Run. Only the User stops a top-level one, which stops its Subagents too:
- * again after the Run ended, to catch any it started while the stop was on its way.
- */
-async function stopped(conv: Conv, result: string) {
-	if (conv.parentId)
-		return endSubagent(conv.id, { outcome: "stopped", result });
-	await stopSubagents(conv.id);
-	await endRun(conv.id, "idle");
-}
-
-async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
-	const conversationId = conv.id;
-	const sub = conv.parentId ? conversationId : undefined;
-	const send = (event: ConversationEvent) =>
-		notify(conv.parentId ?? conversationId, event);
-	// nothing to reload: the inputs showed already, from the inbox
-	await drain(conversationId);
-	const rows = (await db
-		.select()
-		.from(message)
-		.where(eq(message.conversationId, conversationId))
-		.orderBy(asc(message.id))) as Row[];
-	const last = rows.at(-1);
-	if (last?.message.role !== "user") throw new Error("Nothing to reply to");
-	const turn = resolveTurn(config, conv.agentId, {
-		model: last.model,
-		thinking: last.thinkingLevel as ThinkingLevel,
-	});
-	if (!turn) throw new Error(`Agent "${conv.agentId}" is no longer configured`);
+export async function reply(run: RunHandle, config: OrqestraConfig) {
+	const { conversationId, turn, signal } = run;
+	const sub = run.isSubagent;
+	const rows = run.transcript.messages;
+	const last = rows.at(-1) as Transcript["messages"][number];
 	const streamFn: StreamFn = config.streamSimple;
 	const tools = searchTools(config, turn.agent.tools);
 	// connected for this Run only, so changes on the server side show up in the next one
@@ -128,30 +50,13 @@ async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
 		let steps = 0;
 		const agent = new Agent({
 			initialState: {
-				systemPrompt: sub
-					? turn.agent.instructions || GENERAL_WORKER
-					: turn.agent.instructions,
+				systemPrompt: turn.agent.instructions,
 				model: turn.model,
 				thinkingLevel: turn.thinking,
 				tools: sub
 					? [...tools, ...mcp.tools]
-					: [
-							...tools,
-							...mcp.tools,
-							...subagentTools(
-								config,
-								{ model: turn.model, thinking: turn.thinking },
-								{ conversationId, userId: conv.userId, notify: send },
-							),
-						],
-				messages: await context(
-					conversationId,
-					rows,
-					turn,
-					streamFn,
-					signal,
-					send,
-				),
+					: [...tools, ...mcp.tools, ...subagentTools(config, run.subagents)],
+				messages: await context(run, streamFn),
 			},
 			streamFn,
 			sessionId: conversationId,
@@ -159,8 +64,7 @@ async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
 				sub && ++steps >= MAX_SUBAGENT_STEPS ? { action: "end" } : undefined,
 			// inputs that arrived during a step go to the model right after it
 			prepareNextTurnWithContext: async ({ context }) => {
-				const messages = (await drain(conversationId)) as Message[];
-				if (messages.length) await send({ type: "saved" });
+				const messages = await run.deliver();
 				if (sub && steps === MAX_SUBAGENT_STEPS - 1)
 					return {
 						context: { ...context, tools: [] },
@@ -173,27 +77,17 @@ async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
 			},
 		});
 		agent.subscribe(async (event) => {
-			await relay(event, send, sub);
+			await relay(event, run.stream);
 			if (event.type !== "message_end") return;
 			const { role } = event.message;
 			if (role !== "toolResult" && role !== "assistant") return;
 			// finished and stopped replies are saved (a stopped one keeps what was generated), and so are Tool results;
 			// failed replies are not, the turn is retried instead, dropping everything after the user message
 			if (role === "toolResult" || event.message.stopReason !== "error")
-				await db.insert(message).values({
-					conversationId,
-					message: event.message,
-					model: modelRef(turn.model),
-					thinkingLevel: turn.thinking,
-				});
-			await send(
-				role === "assistant"
-					? { type: "end", subagent: sub }
-					: { type: "saved" },
-			);
+				await run.save(event.message);
 		});
 
-		// how a Subagent's Run ended, judged from its last reply
+		// how the Run ended, judged from its last reply
 		const ended = () => {
 			const replies = (agent.state.messages as Message[]).filter(
 				(m): m is AssistantMessage => m.role === "assistant",
@@ -215,15 +109,10 @@ async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
 		for (;;) {
 			await (next.length ? agent.prompt(next) : agent.continue());
 			const answer = agent.state.messages.at(-1) as AssistantMessage;
-			// fails the job so the reason (e.g. an unreadable API key) is logged; the 'failed' handler marks the Conversation failed
+			// fails the job so the reason (e.g. an unreadable API key) is logged; the Run is then marked failed
 			if (answer.stopReason === "error")
 				throw new Error(answer.errorMessage ?? "The reply failed");
-			if (signal.aborted) {
-				await stopped(conv, ended().result);
-				break;
-			}
-			next = (await drain(conversationId, sub ? ended : true)) as Message[];
-			await send({ type: "saved" });
+			next = await run.finish(sub ? ended() : undefined);
 			if (!next.length) break;
 		}
 		if (sub) return;
@@ -231,8 +120,8 @@ async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
 
 		// titled after the first turn that produced a reply, stopped ones included
 		const first = !rows.some((r) => r.message.role === "assistant");
-		if (first && !conv.titleEdited)
-			await generateTitle(conversationId, config, turn.agent.id, [
+		if (first && !run.renamed)
+			await generateTitle(run, config, turn.agent.id, [
 				last.message,
 				answer,
 			]).catch((error) => console.error("title generation failed", error));
@@ -243,20 +132,13 @@ async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
 
 /** The messages the model sees: everything, or the latest summary plus what it kept; compacts first when needed. */
 async function context(
-	conversationId: string,
-	rows: Row[],
-	turn: Turn,
+	{ transcript, turn, signal, compacted }: RunHandle,
 	streamFn: StreamFn,
-	signal: AbortSignal,
-	/** Sends the page showing this Conversation (a Subagent's parent's) what to reload. */
-	send: (event: ConversationEvent) => Promise<unknown>,
 ): Promise<AgentMessage[]> {
-	const previous = await db.query.compaction.findFirst({
-		where: eq(compaction.conversationId, conversationId),
-		orderBy: desc(compaction.id),
-	});
+	const rows = transcript.messages;
+	const previous = transcript.compaction;
 	let kept = previous
-		? rows.slice(rows.findIndex((r) => r.id === previous.firstKeptMessageId))
+		? rows.slice(rows.findIndex((r) => r.id === previous.firstKeptId))
 		: rows;
 	let summary = previous?.summary;
 	const settings = { ...DEFAULT_COMPACTION_SETTINGS, ...turn.agent.compaction };
@@ -293,13 +175,7 @@ async function context(
 				streamFn,
 			);
 			signal.throwIfAborted();
-			await db.insert(compaction).values({
-				conversationId,
-				summary: result.summary,
-				firstKeptMessageId: kept[cut].id,
-				tokensBefore: tokens,
-			});
-			await send({ type: "saved" });
+			await compacted(result.summary, kept[cut].id, tokens);
 			summary = result.summary;
 			kept = kept.slice(cut);
 		}
@@ -344,7 +220,7 @@ function cutIndex(rows: { message: Message }[], keepRecentTokens: number) {
 }
 
 async function generateTitle(
-	conversationId: string,
+	run: RunHandle,
 	config: OrqestraConfig,
 	agentId: string,
 	[question, answer]: [Message, AssistantMessage],
@@ -372,17 +248,7 @@ async function generateTitle(
 		.slice(0, 20)
 		.join("");
 	if (result.stopReason !== "stop" || !title) return;
-	await db
-		.update(conversation)
-		.set({ title })
-		// a rename that landed meanwhile wins
-		.where(
-			and(
-				eq(conversation.id, conversationId),
-				eq(conversation.titleEdited, false),
-			),
-		);
-	await notify(conversationId, { type: "saved" });
+	await run.setTitle(title);
 }
 
 /**
@@ -408,98 +274,24 @@ export function providerLimiter(max: number) {
 		};
 }
 
-/** Starts the BullMQ workers for top-level and Subagent Runs plus the listener for stop requests; resolves to a close function. */
-export async function startAgentWorker(
-	// read per job: a Run keeps the config it started with, the next one picks up a reload
+/** Works on queued Runs in this process, replying to each, until the returned close function is called. */
+export function startAgentWorker(
+	// read per Run: a Run keeps the config it started with, the next one picks up a reload
 	getConfig: () => Promise<OrqestraConfig>,
-	databaseUrl: string,
 	{
-		// tests shorten it to see a crashed run fail quickly
-		stalledInterval = 30_000,
-		concurrency = 8,
-		subagentConcurrency = 8,
 		providerConcurrency = 8,
-	}: {
-		stalledInterval?: number;
-		/** Top-level Runs this worker works on at once. */
-		concurrency?: number;
-		/** Subagent Runs this worker works on at once. */
-		subagentConcurrency?: number;
+		...options
+	}: Parameters<ReturnType<typeof createConversations>["serveRuns"]>[1] & {
 		/** Model requests to one Provider at once, across this worker's Runs. */
 		providerConcurrency?: number;
 	} = {},
 ) {
 	const limitProviders = providerLimiter(providerConcurrency);
-	// a pool connection held for good, since LISTEN is per connection
-	const listener = await db.$client.connect();
-	await listener.query(`LISTEN ${STOP_CHANNEL}`);
-	listener.on("notification", (n) => active.get(n.payload ?? "")?.abort());
-
-	const workers = [
-		[AGENT_RUNS_QUEUE, concurrency],
-		[SUBAGENT_RUNS_QUEUE, subagentConcurrency],
-	].map(([queue, concurrency]) => {
-		const worker = new Worker(
-			queue as string,
-			async (job) => {
-				const config = await getConfig();
-				return executeRun(job.data.conversationId, {
-					...config,
-					streamSimple: limitProviders(config.streamSimple),
-				});
-			},
-			{
-				concurrency: concurrency as number,
-				// bullmq tables live in their own "bullmq" schema; migrate is advisory-locked across processes
-				connection: { connectionString: databaseUrl, migrate: true },
-				// a run lost to a crashed worker fails instead of re-running; the UI offers a retry.
-				// The pg backend requeues a stalled job with a deferred failure, which a worker then emits as 'failed' below
-				maxStalledCount: 0,
-				stalledInterval,
-			},
-			createPostgresBackend,
-		);
-		worker.on("failed", (job, err) => {
-			console.error(`job ${job?.id} failed`, err);
-			if (job)
-				void failed(job.data.conversationId, err).catch((error) =>
-					console.error(`could not mark job ${job.id}'s Run failed`, error),
-				);
+	return createConversations({ config: getConfig }).serveRuns(async (run) => {
+		const config = await getConfig();
+		await reply(run, {
+			...config,
+			streamSimple: limitProviders(config.streamSimple),
 		});
-		worker.on("error", (err) => console.error("worker error", err));
-		return worker;
-	});
-	// the pg backend doesn't emit 'error' on connect failure, so fail fast instead of idling silently
-	await Promise.all(workers.map((w) => w.waitUntilReady()));
-	await requeue();
-
-	return async () => {
-		await Promise.all(workers.map((w) => w.close()));
-		listener.release(true); // destroy rather than return a LISTENing connection to the pool
-	};
-}
-
-/** A failed or crashed Run: a top-level Conversation is marked failed; a Subagent fails, and its Notification wakes the parent. */
-async function failed(conversationId: string, error: Error) {
-	const conv = await db.query.conversation.findFirst({
-		where: eq(conversation.id, conversationId),
-	});
-	if (!conv) return;
-	if (!conv.parentId) return endRun(conversationId, "failed");
-	await endSubagent(conversationId, {
-		outcome: "failed",
-		result: `[The subagent failed, or the worker running it crashed: ${error.message}]`,
-	});
-}
-
-/**
- * Queues again the Runs left running without a job, lost to a crash between saving a Run's start and queueing it.
- * Each is queued as the job its start saved, so a Run that has its job, or that its start is queueing right now, gets no second one.
- */
-async function requeue() {
-	const running = await db
-		.select({ id: conversation.id })
-		.from(conversation)
-		.where(eq(conversation.status, "running"));
-	for (const c of running) await enqueue(c.id);
+	}, options);
 }

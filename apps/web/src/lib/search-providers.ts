@@ -1,8 +1,9 @@
 import { searchProviderId, searchProviders, toolName } from "@orqestra/config";
 import { decryptSecret, encryptSecret } from "@orqestra/config/secret";
-import { db, eq } from "@orqestra/db";
+import { db } from "@orqestra/db";
 import { instanceSettings, searchProvider } from "@orqestra/db/schema";
 import { createServerFn } from "@tanstack/react-start";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { config, reloadConfig } from "#/lib/config";
 import { requireAdmin } from "#/lib/session";

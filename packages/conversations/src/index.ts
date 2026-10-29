@@ -22,13 +22,30 @@ import {
 	ensureRun,
 	lockRoot,
 	newJobId,
-	notify,
 	requestStop,
 	runQueue,
+	saved,
 	stopSubagents,
 } from "./runs.ts";
 
+import { type RunHandle, type ServeOptions, serveRuns } from "./serve.ts";
+
 export type { ConversationEvent } from "./runs.ts";
+export { MAX_SUBAGENTS } from "./runs.ts";
+export {
+	BudgetExceeded,
+	MAX_SUBAGENT_TASKS,
+	MAX_SUBAGENTS_PER_USER_MESSAGE,
+	NoSuchSubagent,
+	NoSuchTemplate,
+	type Outcome,
+	type RunHandle,
+	type StreamEvent,
+	TemplateOffline,
+	type Transcript,
+	type TranscriptMessage,
+	type Turn,
+} from "./serve.ts";
 
 // The only module that reads and writes Conversations, their Inbox, messages, Subagents and compactions.
 // The User's side takes the signed-in user's id everywhere: nobody else, Admins included, can see a Conversation.
@@ -61,6 +78,12 @@ export function createConversations({
 	config: () => Promise<OrqestraConfig>;
 }) {
 	return {
+		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
+		serveRuns: (
+			handler: (run: RunHandle) => Promise<void>,
+			options?: ServeOptions,
+		) => serveRuns(config, handler, options),
+
 		list: (userId: string) =>
 			db
 				.select({
@@ -248,7 +271,7 @@ export function createConversations({
 				// the inputs stay in the Conversation, unanswered
 				await drain(id);
 				await drain(id, true);
-				await notify(id, { type: "saved" });
+				await saved(id);
 			} else await requestStop([id]);
 			await stopSubagents(id);
 		},

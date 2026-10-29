@@ -1,8 +1,9 @@
 import { mcpServerId, mcpToolRef } from "@orqestra/config";
 import { decryptSecret, encryptSecret } from "@orqestra/config/secret";
-import { db, eq, sql } from "@orqestra/db";
+import { db } from "@orqestra/db";
 import { agent, mcpServer } from "@orqestra/db/schema";
 import { createServerFn } from "@tanstack/react-start";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { reloadConfig } from "#/lib/config";
 import { type McpTestResult, testMcpServer } from "#/lib/mcp-connection";
