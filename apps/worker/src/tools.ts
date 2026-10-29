@@ -1,33 +1,42 @@
-import {
-	Agent,
-	type AgentEvent,
-	type AgentTool,
-} from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
 import {
 	type Api,
-	type AssistantMessage,
-	type Message,
 	type Model,
 	type TSchema,
 	Type,
 } from "@earendil-works/pi-ai";
 import {
 	type AgentDefinition,
-	messageText,
+	modelRef,
 	type OrqestraConfig,
 	resolveTurn,
 	type ThinkingLevel,
 } from "@orqestra/config";
 import { scrape, search } from "@orqestra/config/search";
-import { and, type ConversationEvent, db, eq, inArray } from "@orqestra/db";
-import { subagent } from "@orqestra/db/schema";
+import {
+	and,
+	type ConversationEvent,
+	db,
+	desc,
+	eq,
+	lockRoot,
+	MAX_SUBAGENTS,
+	sql,
+	type Tx,
+} from "@orqestra/db";
+import { ensureRun, stopSubagents } from "@orqestra/db/runs";
+import {
+	conversation,
+	inbox,
+	message as messageRow,
+	subagent,
+} from "@orqestra/db/schema";
 
-/** Subagents running at once in one Run; more wait their turn. */
-export const MAX_SUBAGENTS = 4;
+export { MAX_SUBAGENTS };
 /** Tasks one subagent call may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
-/** Subagents one Run may start in all, so a parent cannot keep delegating forever. */
-export const MAX_SUBAGENTS_PER_RUN = 16;
+/** Subagents an Agent may start or continue in all since the User's last message, so Notifications cannot keep it delegating forever. */
+export const MAX_SUBAGENTS_PER_USER_MESSAGE = 16;
 /** Model requests a Subagent may make; the last one, without Tools, is for its final answer. */
 export const MAX_SUBAGENT_STEPS = 20;
 // shortcut: a hard cut keeps one page from flooding the context; summarize instead if pages get cut too often
@@ -159,227 +168,64 @@ export async function relay(
 		});
 }
 
-const GENERAL_WORKER =
-	"You carry out one task for another agent, starting without any prior context. Work through it with the tools you have, then reply with a complete, self-contained answer: it is all the other agent will see.";
-const STEP_LIMIT =
+/** Told to a Subagent whose next request is its last, made without Tools. */
+export const STEP_LIMIT =
 	"You have reached your step limit and can no longer use tools. Reply now with your final answer from what you have so far, saying what is left undone.";
 
-type Status = (typeof subagent.$inferSelect)["status"];
-
-/** A Subagent's state within its Run, as the parent Agent's Tools see it. */
-interface Handle {
-	number: number;
-	status: Status;
-	result: string;
-	/** Set once it runs; until then messages wait in `inbox`. */
-	agent?: Agent;
-	inbox: Message[];
-	stop: AbortController;
-	/** Resolves once it has finished and its row is saved; never rejects. */
-	done: Promise<void>;
-	finished: boolean;
-	/** Its result went back to the parent Agent already. */
-	reported: boolean;
-}
-
-/** Marks a Conversation's unfinished Subagents stopped, for a Run that ended without closing them (a crashed worker). */
-export const stopSubagents = (conversationId: string) =>
-	db
-		.update(subagent)
-		.set({ status: "stopped" })
-		.where(
-			and(
-				eq(subagent.conversationId, conversationId),
-				inArray(subagent.status, ["queued", "running"]),
-			),
-		);
-
-// a Subagent's output may come from any web page: it must not close the tag that frames it
-const results = (handles: Handle[]) =>
-	handles
-		.map(
-			(h) =>
-				`<result subagent="${h.number}" status="${h.status}">\n${h.result.replaceAll("</result", "<\\/result")}\n</result>`,
-		)
-		.join("\n\n");
+const NOTIFIED =
+	"Each subagent's final answer comes to you by itself as a <task-notification>, once it finishes: do not poll. Until the results you need are in, you may tell the user what you are doing and end your reply.";
 
 /**
- * The Tools an Agent delegates tasks to Subagents with during a Run: start them, wait for results, message or stop them.
- * Subagents work in the background, up to MAX_SUBAGENTS at once, with `tools` narrowed to their template's and none of these;
- * `close` stops the ones left once the Run's reply is done.
+ * Under the parent's lock: spends `more` of the budget of Subagents started, or continued once finished, since the User's last message.
+ * Throws, spending nothing, when it would run out.
+ */
+async function spend(tx: Tx, conversationId: string, more: number) {
+	const [{ used }] = await tx
+		.update(conversation)
+		.set({
+			subagentsSinceUser: sql`${conversation.subagentsSinceUser} + ${more}`,
+		})
+		.where(eq(conversation.id, conversationId))
+		.returning({ used: conversation.subagentsSinceUser });
+	if (used > MAX_SUBAGENTS_PER_USER_MESSAGE)
+		throw new Error(
+			`Since the user's last message at most ${MAX_SUBAGENTS_PER_USER_MESSAGE} subagents may be started or continued, and ${used - more} have been: do the rest of the work yourself.`,
+		);
+}
+
+/**
+ * The Tools an Agent delegates tasks to Subagents with: start them, message (or continue) them, stop them.
+ * Each Subagent runs in a Conversation of its own, in the background and past the parent's Run, up to MAX_SUBAGENTS at once;
+ * it hands back its result as a Notification that wakes the parent.
  */
 export function subagentTools(
 	config: OrqestraConfig,
 	parent: { model: Model<Api>; thinking: ThinkingLevel },
-	tools: AgentTool[],
 	run: {
 		conversationId: string;
-		signal: AbortSignal;
-		/** Sends the UI what streams and, after every saved change, what to reload. */
+		userId: string;
+		/** Sends the UI what to reload. */
 		notify: Notify;
 	},
 ) {
-	const limit = limiter(MAX_SUBAGENTS);
-	const handles = new Map<number, Handle>();
 	const templates = config.agents
 		.map((a) => `- ${a.id} (${a.name}): ${a.description}`)
 		.join("\n");
-
-	async function save(
-		id: string,
-		values: Partial<typeof subagent.$inferInsert>,
-		event: ConversationEvent = { type: "saved" },
-	) {
-		await db.update(subagent).set(values).where(eq(subagent.id, id));
-		await run.notify(event);
-	}
-
-	async function work(
-		id: string,
-		h: Handle,
-		brief: string,
-		template: AgentDefinition | undefined,
-		signal: AbortSignal,
-	) {
-		// a template with its own Models runs on its default; otherwise the Subagent inherits the parent's
-		const own =
-			template && !template.allModels && resolveTurn(config, template.id);
-		let steps = 0;
-		const agent = new Agent({
-			initialState: {
-				systemPrompt: template?.instructions || GENERAL_WORKER,
-				model: own ? own.model : parent.model,
-				thinkingLevel: own ? own.thinking : parent.thinking,
-				tools: template
-					? tools.filter((t) =>
-							template.tools.includes(
-								t.name as AgentDefinition["tools"][number],
-							),
-						)
-					: tools,
-				messages: [
-					{ role: "user", content: brief, timestamp: Date.now() },
-					...h.inbox,
-				],
-			},
-			streamFn: config.streamSimple,
-			finishTurn: () =>
-				++steps >= MAX_SUBAGENT_STEPS ? { action: "end" } : undefined,
-			// the last request goes without Tools, so it answers with what it has rather than stopping mid-search
-			prepareNextTurnWithContext: ({ context }) =>
-				steps === MAX_SUBAGENT_STEPS - 1
-					? {
-							context: { ...context, tools: [] },
-							messages: [
-								{ role: "user", content: STEP_LIMIT, timestamp: Date.now() },
-							],
-						}
-					: undefined,
+	const find = async (tx: Tx, number: number) => {
+		const row = await tx.query.subagent.findFirst({
+			where: and(
+				eq(subagent.parentId, run.conversationId),
+				eq(subagent.number, number),
+			),
 		});
-		h.agent = agent;
-		// the transcript starts with the system prompt and Tool list; keep only what happened
-		const transcript = () =>
-			(agent.state.messages as Message[]).filter(
-				(m) =>
-					m.role === "user" ||
-					m.role === "assistant" ||
-					m.role === "toolResult",
-			);
-		agent.subscribe(async (event) => {
-			await relay(event, run.notify, id);
-			if (event.type === "message_end")
-				await save(
-					id,
-					{ messages: transcript() },
-					event.message.role === "assistant"
-						? { type: "end", subagent: id }
-						: undefined,
-				);
-		});
-		const abort = () => agent.abort();
-		signal.addEventListener("abort", abort);
-		try {
-			await save(id, { status: "running" });
-			h.status = "running";
-			signal.throwIfAborted();
-			await agent.continue();
-		} finally {
-			signal.removeEventListener("abort", abort);
-		}
-		const replies = transcript().filter(
-			(m): m is AssistantMessage => m.role === "assistant",
-		);
-		const last = replies.at(-1);
-		let result =
-			replies
-				.map(messageText)
-				.filter((t) => t.trim())
-				.at(-1) ?? "";
-		let status: Status = "completed";
-		if (last?.stopReason === "aborted" || signal.aborted) status = "stopped";
-		else if (last?.stopReason === "error") {
-			status = "failed";
-			result += `\n\n[The subagent failed: ${last.errorMessage ?? "unknown error"}]`;
-		} else if (steps >= MAX_SUBAGENT_STEPS) status = "partial";
-		return { status, result, messages: transcript() };
-	}
-
-	function start(
-		id: Promise<string>,
-		h: Handle,
-		brief: string,
-		template: AgentDefinition | undefined,
-	) {
-		const signal = AbortSignal.any([run.signal, h.stop.signal]);
-		return (async () => {
-			const rowId = await id;
-			const outcome = await limit(
-				() => work(rowId, h, brief, template, signal),
-				signal,
-			).catch((error) =>
-				// dropped while queued, or stopped before it began
-				signal.aborted
-					? { status: "stopped" as const, result: "" }
-					: {
-							status: "failed" as const,
-							result: `[The subagent failed: ${error instanceof Error ? error.message : error}]`,
-						},
-			);
-			h.status = outcome.status;
-			h.result = outcome.result;
-			h.finished = true;
-			await save(rowId, outcome);
-		})().catch((error) => {
-			// the row could not be saved: the Run still gets an outcome
-			console.error(`subagent ${h.number} failed`, error);
-			if (!h.finished) h.status = "failed";
-			h.finished = true;
-		});
-	}
-
-	const numbers = Type.Array(Type.Integer({ minimum: 1 }), {
-		description: "Subagent numbers, as the subagent Tool returned them",
-	});
-	const find = (n: number) => {
-		const h = handles.get(n);
-		if (!h) throw new Error(`There is no subagent ${n}`);
-		return h;
-	};
-	const report = (finished: Handle[], running: Handle[]) => {
-		for (const h of finished) h.reported = true;
-		const still = running.length
-			? `\n\nStill running: ${running.map((h) => h.number).join(", ")}.`
-			: "";
-		return {
-			content: text(results(finished) + still),
-			details: { numbers: finished.map((h) => h.number) },
-		};
+		if (!row) throw new Error(`There is no subagent ${number}`);
+		return row;
 	};
 
 	const spawn = tool({
 		name: "subagent",
 		label: "Subagent",
-		description: `Start subagents on tasks. They work in the background, in parallel, from a blank context, so you can keep working; get their final answers with subagent_wait. Use them for self-contained work such as research. Each brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. Wait for every subagent you need before your final answer: any still running then is stopped.\n\nTemplates:\n${templates}`,
+		description: `Start subagents on tasks. They work in the background, in parallel, from a blank context, so you can keep working. Use them for self-contained work such as research. Each brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
 		parameters: Type.Object({
 			tasks: Type.Array(
 				Type.Object({
@@ -394,55 +240,67 @@ export function subagentTools(
 			),
 		}),
 		execute: async (toolCallId, { tasks }) => {
-			if (handles.size + tasks.length > MAX_SUBAGENTS_PER_RUN)
-				throw new Error(
-					`A reply may start at most ${MAX_SUBAGENTS_PER_RUN} subagents and ${handles.size} have been started: do the rest of the work yourself.`,
-				);
 			const picked = tasks.map((t) => {
 				const template = config.agents.find((a) => a.id === t.template);
 				if (t.template && !template)
 					throw new Error(`There is no template "${t.template}"`);
 				if (template && !template.allModels && !template.models.length)
 					throw new Error(`Template "${t.template}" has no available Model`);
-				return { brief: t.brief, template };
+				// a template with its own Models runs on its default; otherwise the Subagent inherits the parent's
+				const own =
+					template && !template.allModels && resolveTurn(config, template.id);
+				return {
+					brief: t.brief,
+					template,
+					model: own ? own.model : parent.model,
+					thinking: own ? own.thinking : parent.thinking,
+				};
 			});
-			const first = handles.size + 1;
-			// registered before the insert lands, so a subagent_wait in the same reply already sees them
-			const rows = (async () =>
-				db
-					.insert(subagent)
+			const { first, children } = await db.transaction(async (tx) => {
+				await lockRoot(tx, run.conversationId);
+				await spend(tx, run.conversationId, picked.length);
+				const [{ numbered }] = await tx
+					.select({
+						numbered: sql<number>`coalesce(max(${subagent.number}), 0)`,
+					})
+					.from(subagent)
+					.where(eq(subagent.parentId, run.conversationId));
+				const first = Number(numbered) + 1;
+				const children = await tx
+					.insert(conversation)
 					.values(
-						picked.map((t, i) => ({
-							conversationId: run.conversationId,
-							toolCallId,
-							number: first + i,
-							template: t.template?.id,
-							brief: t.brief,
+						picked.map((t) => ({
+							userId: run.userId,
+							parentId: run.conversationId,
+							agentId: t.template?.id ?? null,
 						})),
 					)
-					.returning({ id: subagent.id }))();
-			for (const [i, t] of picked.entries()) {
-				const h: Handle = {
-					number: first + i,
-					status: "queued",
-					result: "",
-					inbox: [],
-					stop: new AbortController(),
-					done: Promise.resolve(),
-					finished: false,
-					reported: false,
-				};
-				handles.set(h.number, h);
-				h.done = start(
-					rows.then((r) => r[i].id),
-					h,
-					t.brief,
-					t.template,
+					.returning({ id: conversation.id });
+				await tx.insert(subagent).values(
+					picked.map((t, i) => ({
+						conversationId: children[i].id,
+						parentId: run.conversationId,
+						toolCallId,
+						number: first + i,
+						template: t.template?.id,
+						brief: t.brief,
+					})),
 				);
-			}
-			await rows;
+				await tx.insert(inbox).values(
+					picked.map((t, i) => ({
+						conversationId: children[i].id,
+						message: { role: "user", content: t.brief, timestamp: Date.now() },
+						model: modelRef(t.model),
+						thinkingLevel: t.thinking,
+						wake: true,
+					})),
+				);
+				return { first, children };
+			});
+			// beyond MAX_SUBAGENTS they stay queued until one finishes
+			for (const c of children) await ensureRun(c.id);
 			await run.notify({ type: "saved" });
-			const started = picked.map((_, i) => first + i);
+			const started = children.map((_, i) => first + i);
 			return {
 				content: text(
 					`Started subagent${started.length > 1 ? "s" : ""} ${started.join(", ")}.`,
@@ -452,53 +310,54 @@ export function subagentTools(
 		},
 	});
 
-	const wait = tool({
-		name: "subagent_wait",
-		label: "Wait for subagents",
-		description:
-			"Wait until at least one of the given subagents (by default every one whose result you have not had yet) has finished, then return the results of all that have.",
-		parameters: Type.Object({ numbers: Type.Optional(numbers) }),
-		execute: async (_id, args) => {
-			const targets = args.numbers?.length
-				? args.numbers.map(find)
-				: [...handles.values()].filter((h) => !h.reported);
-			if (!targets.length)
-				return {
-					content: text("There are no subagents to wait for."),
-					details: { numbers: [] },
-				};
-			if (!targets.some((h) => h.finished))
-				await Promise.race(targets.map((h) => h.done));
-			return report(
-				targets.filter((h) => h.finished),
-				targets.filter((h) => !h.finished),
-			);
-		},
-	});
-
 	const message = tool({
 		name: "subagent_message",
 		label: "Message subagent",
-		description:
-			"Send a running subagent more instructions or context; it reads them after its current step.",
+		description: `Send a subagent more instructions or context. A running one reads them after its current step; a finished one continues where it left off, and notifies you again when done.`,
 		parameters: Type.Object({
 			number: Type.Integer({ minimum: 1 }),
 			message: Type.String(),
 		}),
 		execute: async (_id, { number, message }) => {
-			const h = find(number);
-			if (h.finished)
-				throw new Error(
-					`Subagent ${number} has finished; start a new one instead`,
-				);
-			const m: Message = {
-				role: "user",
-				content: message,
-				timestamp: Date.now(),
+			const row = await db.transaction(async (tx) => {
+				await lockRoot(tx, run.conversationId);
+				const row = await find(tx, number);
+				const continued = !["queued", "running"].includes(row.outcome);
+				if (continued) {
+					await spend(tx, run.conversationId, 1);
+					// it waits for a slot like a new one, and a stop catches it while it waits
+					await tx
+						.update(subagent)
+						.set({ outcome: "queued" })
+						.where(eq(subagent.conversationId, row.conversationId));
+				}
+				// it continues on the Model it last used
+				const [last] = await tx
+					.select({
+						model: messageRow.model,
+						thinkingLevel: messageRow.thinkingLevel,
+					})
+					.from(messageRow)
+					.where(eq(messageRow.conversationId, row.conversationId))
+					.orderBy(desc(messageRow.id))
+					.limit(1);
+				await tx.insert(inbox).values({
+					conversationId: row.conversationId,
+					message: { role: "user", content: message, timestamp: Date.now() },
+					model: last?.model ?? modelRef(parent.model),
+					thinkingLevel: last?.thinkingLevel ?? parent.thinking,
+					wake: true,
+				});
+				return { ...row, continued };
+			});
+			await ensureRun(row.conversationId);
+			await run.notify({ type: "saved" });
+			return {
+				content: text(
+					row.continued ? `Subagent ${number} continues.` : "Sent.",
+				),
+				details: undefined,
 			};
-			if (h.agent) h.agent.steer(m);
-			else h.inbox.push(m);
-			return { content: text("Sent."), details: undefined };
 		},
 	});
 
@@ -506,22 +365,27 @@ export function subagentTools(
 		name: "subagent_stop",
 		label: "Stop subagents",
 		description:
-			"Stop subagents you no longer need, and return what each had produced.",
-		parameters: Type.Object({ numbers }),
-		execute: async (_id, args) => {
-			const targets = args.numbers.map(find);
-			for (const h of targets) h.stop.abort();
-			await Promise.all(targets.map((h) => h.done));
-			return report(targets, []);
+			"Stop subagents you no longer need. Each one stopped notifies you with what it had produced.",
+		parameters: Type.Object({
+			numbers: Type.Array(Type.Integer({ minimum: 1 }), {
+				description: "Subagent numbers, as the subagent Tool returned them",
+			}),
+		}),
+		execute: async (_id, { numbers }) => {
+			await db.transaction(async (tx) => {
+				for (const n of numbers) await find(tx, n);
+			});
+			const stopped = await stopSubagents(run.conversationId, numbers);
+			return {
+				content: text(
+					stopped.length
+						? `Stopping subagent${stopped.length > 1 ? "s" : ""} ${stopped.join(", ")}.`
+						: "None of them was running.",
+				),
+				details: { numbers: stopped },
+			};
 		},
 	});
 
-	return {
-		tools: [spawn, wait, message, stop],
-		/** Stops the Subagents still running and waits until their rows are saved. */
-		close: async () => {
-			for (const h of handles.values()) if (!h.finished) h.stop.abort();
-			await Promise.all([...handles.values()].map((h) => h.done));
-		},
-	};
+	return [spawn, message, stop];
 }

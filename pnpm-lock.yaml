@@ -230,6 +230,9 @@ importers:
 
   packages/db:
     dependencies:
+      bullmq:
+        specifier: ^6.5.0
+        version: 6.5.0(ioredis@6.0.0)(pg@8.23.1)
       drizzle-orm:
         specifier: ^0.45.1
         version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)

@@ -48,6 +48,18 @@ _Avoid_: Child agent, worker, delegate
 The input that hands a finished Subagent's result to the Agent that started it. It reaches that Agent between two steps of its current Run, or starts a new Run when none is going. A Subagent the User stopped sends one too, but it waits for the next User message instead of starting a Run.
 _Avoid_: Callback, event, result message
 
+**Inbox**:
+Where every input to a Conversation waits, a User message, a Notification or further instructions to a Subagent, until its Run delivers them between two steps, in the order they arrived.
+_Avoid_: Queue, mailbox, pending messages
+
+**Wake**:
+What an input does when it arrives in the Inbox of a Conversation that has no Run going: it starts one. Every input wakes its Conversation, except the Notification of a Subagent that was stopped, which waits for the next one.
+_Avoid_: Trigger, resume
+
+**Outcome**:
+How a Subagent's work stands: queued while it waits for a free slot, running, or how its latest Run ended: completed, partial (cut off at its step limit), failed or stopped. Its Notification carries it. A Conversation's own state is its status instead: idle, running or failed.
+_Avoid_: Status (of a Subagent), state, result
+
 **Tool**:
 A capability an Agent can call during a Run, such as Search or Scrape, served by an external service rather than by Orqestra itself. A Tool with no service to serve it is unavailable, and Agents that list it run without it.
 _Avoid_: Function, plugin, skill

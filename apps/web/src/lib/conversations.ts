@@ -6,50 +6,33 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/config";
 import {
-	AGENT_RUNS_QUEUE,
-	type ConversationEvent,
 	conversationChannel,
 	db,
-	STOP_CHANNEL,
+	lockRoot,
+	notify,
+	requestStop,
 } from "@orqestra/db";
+import {
+	drain,
+	enqueue,
+	ensureRun,
+	newJobId,
+	runQueue,
+	stopSubagents,
+} from "@orqestra/db/runs";
 import {
 	compaction,
 	conversation,
+	inbox,
 	message,
 	subagent,
 } from "@orqestra/db/schema";
-import { createPostgresBackend, Queue } from "bullmq";
-import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import pg from "pg";
 import { config } from "#/lib/config";
 
 // Server-only Conversation logic, keyed by the signed-in user's id; server functions wrap it in conversation-fns.ts.
 // Every query is scoped to that user: nobody else, Admins included, can see a Conversation.
-
-const newQueue = () =>
-	new Queue(
-		AGENT_RUNS_QUEUE,
-		{ connection: { connectionString: process.env.DATABASE_URL as string } },
-		createPostgresBackend,
-	);
-let queue: ReturnType<typeof newQueue> | undefined;
-
-async function enqueue(conversationId: string) {
-	queue ??= newQueue();
-	try {
-		await queue.add(
-			"run",
-			{ conversationId },
-			{ removeOnComplete: true, removeOnFail: 1000 },
-		);
-	} catch (error) {
-		await db
-			.update(conversation)
-			.set({ status: "failed" })
-			.where(eq(conversation.id, conversationId));
-		throw error;
-	}
-}
 
 const owned = (userId: string, id: string) =>
 	db.query.conversation.findFirst({
@@ -88,42 +71,59 @@ export const listConversations = (userId: string) =>
 			id: conversation.id,
 			title: conversation.title,
 			status: conversation.status,
+			// Subagents queued or at work, which the sidebar marks while the parent itself is idle
+			background: sql<boolean>`exists (select 1 from ${subagent} where ${subagent.parentId} = ${conversation.id} and ${subagent.outcome} in ('queued', 'running'))`,
 		})
 		.from(conversation)
-		.where(eq(conversation.userId, userId))
+		// a Subagent's Conversation shows only within its parent
+		.where(and(eq(conversation.userId, userId), isNull(conversation.parentId)))
 		.orderBy(desc(conversation.updatedAt));
 
 export async function getConversation(userId: string, id: string) {
 	const conv = await owned(userId, id);
 	if (!conv) return undefined;
-	const [messages, compactions, subagents] = await Promise.all([
+	const [messages, pending, compactions, subagents] = await Promise.all([
 		db
 			.select({
 				id: message.id,
 				message: message.message,
 				model: message.model,
 				thinkingLevel: message.thinkingLevel,
+				subagentId: message.subagentId,
+				queued: sql<boolean>`false`,
 			})
 			.from(message)
 			.where(eq(message.conversationId, id))
 			.orderBy(asc(message.id)),
+		// inputs the Run has yet to deliver show after what it has
+		db
+			.select({
+				id: inbox.id,
+				message: inbox.message,
+				model: inbox.model,
+				thinkingLevel: inbox.thinkingLevel,
+				subagentId: inbox.subagentId,
+				// its id is the inbox's, not a message's
+				queued: sql<boolean>`true`,
+			})
+			.from(inbox)
+			.where(eq(inbox.conversationId, id))
+			.orderBy(asc(inbox.id)),
 		db
 			.select({ firstKeptMessageId: compaction.firstKeptMessageId })
 			.from(compaction)
 			.where(eq(compaction.conversationId, id)),
-		// shortcut: whole transcripts on every reload; load them per Subagent when opened if Conversations get heavy
 		db
 			.select({
-				id: subagent.id,
+				id: subagent.conversationId,
 				toolCallId: subagent.toolCallId,
 				number: subagent.number,
 				template: subagent.template,
 				brief: subagent.brief,
-				status: subagent.status,
-				messages: subagent.messages,
+				outcome: subagent.outcome,
 			})
 			.from(subagent)
-			.where(eq(subagent.conversationId, id))
+			.where(eq(subagent.parentId, id))
 			.orderBy(asc(subagent.number)),
 	]);
 	return {
@@ -133,23 +133,51 @@ export async function getConversation(userId: string, id: string) {
 		status: conv.status,
 		// the Agent was removed from config or has no Model left
 		readOnly: !resolveTurn(await config.get(), conv.agentId),
-		messages: messages.map((m) => ({
+		messages: [...messages, ...pending].map((m) => ({
 			...m,
 			message: m.message as Message,
 		})),
 		compactedBefore: compactions.map((c) => c.firstKeptMessageId),
-		subagents: subagents.map((s) => ({
-			...s,
-			messages: s.messages as Message[],
-		})),
+		subagents,
 	};
+}
+
+/** The parent's Subagent with this Conversation id, when the parent is the user's. */
+const ownedSubagent = async (userId: string, id: string) => {
+	const [row] = await db
+		.select({ parentId: subagent.parentId, number: subagent.number })
+		.from(subagent)
+		.innerJoin(conversation, eq(conversation.id, subagent.parentId))
+		.where(
+			and(eq(subagent.conversationId, id), eq(conversation.userId, userId)),
+		);
+	return row;
+};
+
+/** A Subagent's transcript, loaded when its panel opens; undefined when it is not the user's. */
+export async function getSubagentMessages(userId: string, id: string) {
+	if (!(await ownedSubagent(userId, id))) return undefined;
+	const rows = await db
+		.select({ message: message.message })
+		.from(message)
+		.where(eq(message.conversationId, id))
+		.orderBy(asc(message.id));
+	return rows.map((r) => r.message as Message);
+}
+
+/** Stops one Subagent at the User's request; like the Agent's subagent_stop, it does not wake the parent. */
+export async function stopSubagent(userId: string, id: string) {
+	const row = await ownedSubagent(userId, id);
+	if (row) await stopSubagents(row.parentId, [row.number]);
 }
 
 export class ConversationError extends Error {
 	override name = "ConversationError";
 }
 
-/** Saves a user message (starting a Conversation when there is no id) and queues the Agent's reply. */
+export { ensureRun };
+
+/** Puts a user message in the inbox (starting a Conversation when there is no id) and has the Agent reply. */
 export async function sendMessage(
 	userId: string,
 	input: {
@@ -164,7 +192,8 @@ export async function sendMessage(
 	const existing = input.conversationId
 		? await owned(userId, input.conversationId)
 		: undefined;
-	if (input.conversationId && !existing)
+	// the User cannot write to a Subagent: only the Agent that started it can
+	if (input.conversationId && (!existing || existing.parentId))
 		throw new ConversationError("Conversation not found");
 	// the Agent is fixed once a Conversation has messages
 	const agentId = existing?.agentId ?? input.agentId ?? cfg.defaultAgent.id;
@@ -176,30 +205,30 @@ export async function sendMessage(
 
 	const conversationId = await db.transaction(async (tx) => {
 		let id = existing?.id;
+		// while a Run goes, it delivers this at its next step boundary; the lock keeps it from going idle past it
 		if (id) {
-			// one run at a time per Conversation
-			const claimed = await tx
+			await lockRoot(tx, id);
+			// a User message renews the Agent's Subagent budget
+			await tx
 				.update(conversation)
-				.set({ status: "running" })
-				.where(and(eq(conversation.id, id), ne(conversation.status, "running")))
-				.returning({ id: conversation.id });
-			if (!claimed.length)
-				throw new ConversationError("A reply is still being generated");
+				.set({ subagentsSinceUser: 0 })
+				.where(eq(conversation.id, id));
 		} else {
 			[{ id }] = await tx
 				.insert(conversation)
-				.values({ userId, agentId, status: "running" })
+				.values({ userId, agentId })
 				.returning({ id: conversation.id });
 		}
-		await tx.insert(message).values({
+		await tx.insert(inbox).values({
 			conversationId: id,
 			message: { role: "user", content: input.text, timestamp: Date.now() },
 			model: modelRef(turn.model),
 			thinkingLevel: turn.thinking,
+			wake: true,
 		});
 		return id;
 	});
-	await enqueue(conversationId);
+	await ensureRun(conversationId);
 	return conversationId;
 }
 
@@ -209,10 +238,10 @@ export async function retryRun(userId: string, id: string) {
 	if (!conv) return;
 	if (!resolveTurn(await config.get(), conv.agentId))
 		throw new ConversationError("This Agent is offline");
-	await db.transaction(async (tx) => {
+	const dropped = await db.transaction(async (tx) => {
 		const claimed = await tx
 			.update(conversation)
-			.set({ status: "running" })
+			.set({ status: "running", jobId: newJobId() })
 			.where(and(eq(conversation.id, id), eq(conversation.status, "failed")))
 			.returning({ id: conversation.id });
 		if (!claimed.length) throw new ConversationError("Nothing to retry");
@@ -220,37 +249,43 @@ export async function retryRun(userId: string, id: string) {
 		await tx.execute(
 			sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
 		);
-		await tx.execute(
-			sql`delete from ${subagent} where ${subagent.conversationId} = ${id} and ${subagent.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id})`,
-		);
+		return (
+			await tx.execute<{ id: string }>(
+				sql`delete from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id}) returning id`,
+			)
+		).rows;
 	});
+	// their Runs stop; with their Conversation gone they save nothing more
+	await requestStop(dropped.map((d) => d.id));
 	await enqueue(id);
 }
 
-/** Drops this Conversation's run while it is still queued, or else asks whichever worker runs it to abort it. */
+/**
+ * Drops this Conversation's Run while it is still queued, or else asks whichever worker runs it to abort it.
+ * Then its Subagents stop too, without waking it: after the Run, so it starts none past this.
+ */
 export async function stopRun(userId: string, id: string) {
-	if (!(await owned(userId, id))) return;
-	queue ??= newQueue();
-	// shortcut: scans every waiting job, fine while the queue stays short; key jobs by Conversation if it grows
-	for (const job of await queue.getWaiting()) {
-		if (job.data.conversationId !== id) continue;
-		// fails when a worker took the job meanwhile; the NOTIFY below then reaches it
-		const removed = await job.remove().then(
+	const conv = await owned(userId, id);
+	if (!conv) return;
+	const job =
+		conv.status === "running" && conv.jobId
+			? await runQueue().getJob(conv.jobId)
+			: undefined;
+	// removing fails when a worker took the job meanwhile; the stop request then reaches it
+	const removed =
+		!!job &&
+		(await job.isWaiting()) &&
+		(await job.remove().then(
 			() => true,
 			() => false,
-		);
-		if (!removed) break;
-		await db
-			.update(conversation)
-			.set({ status: "idle" })
-			.where(eq(conversation.id, id));
-		const saved: ConversationEvent = { type: "saved" };
-		await db.execute(
-			sql`select pg_notify(${conversationChannel(id)}, ${JSON.stringify(saved)})`,
-		);
-		return;
-	}
-	await db.execute(sql`select pg_notify(${STOP_CHANNEL}, ${id})`);
+		));
+	if (removed) {
+		// the inputs stay in the Conversation, unanswered
+		await drain(id);
+		await drain(id, true);
+		await notify(id, { type: "saved" });
+	} else await requestStop([id]);
+	await stopSubagents(id);
 }
 
 export async function renameConversation(
@@ -265,9 +300,14 @@ export async function renameConversation(
 }
 
 export async function deleteConversation(userId: string, id: string) {
-	await db
-		.delete(conversation)
-		.where(and(eq(conversation.id, id), eq(conversation.userId, userId)));
+	if (!(await owned(userId, id))) return;
+	const children = await db
+		.select({ id: conversation.id })
+		.from(conversation)
+		.where(eq(conversation.parentId, id));
+	// its Run and its Subagents' stop first, then they go (cascade); a Run that outlives its Conversation saves nothing more
+	await requestStop([id, ...children.map((c) => c.id)]);
+	await db.delete(conversation).where(eq(conversation.id, id));
 }
 
 /**
@@ -292,6 +332,8 @@ export async function conversationEvents(
 		start(controller) {
 			const close = () => {
 				clearInterval(ping);
+				// NOTIFYs still arrive until the connection has ended
+				client.removeAllListeners("notification");
 				void client.end();
 				try {
 					controller.close();
@@ -310,6 +352,7 @@ export async function conversationEvents(
 		},
 		cancel() {
 			clearInterval(ping);
+			client.removeAllListeners("notification");
 			void client.end();
 		},
 	});

@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-router";
 import {
 	ChevronsUpDownIcon,
+	Loader2Icon,
 	LogOutIcon,
 	MoreHorizontalIcon,
 	PencilIcon,
@@ -49,7 +50,7 @@ export function AppSidebar({
 	conversations,
 }: {
 	user: { email: string; phoneNumber?: string | null; role?: string | null };
-	conversations: { id: string; title: string | null }[];
+	conversations: { id: string; title: string | null; background: boolean }[];
 }) {
 	return (
 		<Sidebar>
@@ -120,7 +121,7 @@ export function AppSidebar({
 function ConversationItem({
 	conversation,
 }: {
-	conversation: { id: string; title: string | null };
+	conversation: { id: string; title: string | null; background: boolean };
 }) {
 	const router = useRouter();
 	const navigate = useNavigate();
@@ -164,6 +165,12 @@ function ConversationItem({
 				}
 			>
 				<span>{title}</span>
+				{conversation.background && (
+					<Loader2Icon
+						aria-label={m.background_subagents()}
+						className="ml-auto animate-spin text-muted-foreground"
+					/>
+				)}
 			</SidebarMenuButton>
 			<DropdownMenu>
 				<DropdownMenuTrigger

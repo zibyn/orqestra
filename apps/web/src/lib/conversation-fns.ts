@@ -23,6 +23,20 @@ export const getConversation = createServerFn()
 			null,
 	);
 
+export const getSubagentMessages = createServerFn()
+	.validator(id)
+	.handler(
+		async ({ data }) =>
+			(await conversations.getSubagentMessages(await requireUserId(), data)) ??
+			null,
+	);
+
+export const stopSubagent = createServerFn({ method: "POST" })
+	.validator(id)
+	.handler(async ({ data }) =>
+		conversations.stopSubagent(await requireUserId(), data),
+	);
+
 export const sendMessage = createServerFn({ method: "POST" })
 	.validator(
 		z.object({

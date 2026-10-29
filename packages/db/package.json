@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema.ts"
+    "./schema": "./src/schema.ts",
+    "./runs": "./src/runs.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
@@ -15,7 +16,8 @@
   },
   "dependencies": {
     "drizzle-orm": "^0.45.1",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "bullmq": "^6.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

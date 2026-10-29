@@ -70,7 +70,7 @@ if conv.status != 'running' and inbox 里有 wake 输入 and 还有名额:
 - 名额：顶层会话不受限制；子会话要求同一父会话下正在跑的子会话少于 `MAX_SUBAGENTS`（4）。没有名额的保持 `queued`，等有兄弟会话结束时再拉起。
 - 以下几处都调用它：sendMessage、启动 Subagent、发 Notification、`subagent_message`、Run 结束时（拉起排队的兄弟会话）。
 
-### 4.2 Run 的主循环（runTurn）
+### 4.2 Run 的主循环（executeRun）
 
 ```
 drain()：锁内取出 inbox 全部条目 → 插入 message → 删除 inbox 条目 → 返回这些消息
@@ -119,13 +119,13 @@ Notification 里的 result 沿用现有的转义方式，把 `</task-notificatio
 
 唤起意味着可能出现「Notification → 父 Agent 再派 Subagent → 再收到 Notification」的无限循环。预算按「自上一条 User 消息以来」计算：
 
-- 启动 Subagent 加上续跑 Subagent，合计不超过 `MAX_SUBAGENTS_PER_TURN`（16）；超出时 Tool 报错，要求父 Agent 自己完成剩下的工作。
+- 启动 Subagent 加上续跑 Subagent，合计不超过 `MAX_SUBAGENTS_PER_USER_MESSAGE`（16）；超出时 Tool 报错，要求父 Agent 自己完成剩下的工作。
 - 每次唤起最多对应一次 Subagent 的结束，所以唤起次数自然受上面这个预算约束，不需要单独计数。
 
 ### 4.7 队列
 
 - 拆成两个队列：`agent-runs`（顶层会话）和 `subagent-runs`（子会话），各有一个 Worker 和各自的 concurrency。这样子会话再多，也不会把其他用户的主对话饿死。
-- job 数据保持 `{ conversationId }`；runTurn 根据有没有 `subagent` 行来决定 Tool 集合、system prompt（模板的 instructions 或 GENERAL_WORKER）、步数上限，以及最后一步不给 Tools 的规则。
+- job 数据保持 `{ conversationId }`；executeRun 根据有没有 `subagent` 行来决定 Tool 集合、system prompt（模板的 instructions 或 GENERAL_WORKER）、步数上限，以及最后一步不给 Tools 的规则。
 - 子会话的 model 和 thinking 记在 brief 那条输入上（继承父会话，或用模板的默认值），走现有「每条 user 消息记录自己的 model」机制，不需要新增字段。`resolveTurn` 需要支持 `agentId = null`，也就是 general worker 的情况。
 - `providerLimiter` 不变，仍按进程计算。
 
@@ -149,7 +149,7 @@ Notification 里的 result 沿用现有的转义方式，把 `</task-notificatio
 ## 7. 分阶段实施
 
 1. **Schema + inbox + ensureRun**：迁移（conversation.parent_id，agent_id 改为可空，subagent 删掉 messages、加上 parent_id/outcome，新增 inbox 表，message 加 subagent_id），并把现有的 sendMessage 改成走 inbox。这一阶段行为不变，现有测试应当全部通过。
-2. **子会话 Run + Notification 唤起**：新增 `subagent-runs` 队列，runTurn 的主循环改成「直到 inbox 为空」，重写三个 Tool，删除 `subagent_wait` 和 `close()`，处理结束、崩溃和重试。测试至少覆盖：父会话先回复完、子会话后完成并唤起父会话；两个子会话同时完成时只唤起一次 Run 并投递两条；父会话 running 期间到达的 Notification 在步骤边界投递；续跑一个已完成的子会话；子会话崩溃时唤起父会话；名额排队；预算耗尽。
+2. **子会话 Run + Notification 唤起**：新增 `subagent-runs` 队列，executeRun 的主循环改成「直到 inbox 为空」，重写三个 Tool，删除 `subagent_wait` 和 `close()`，处理结束、崩溃和重试。测试至少覆盖：父会话先回复完、子会话后完成并唤起父会话；两个子会话同时完成时只唤起一次 Run 并投递两条；父会话 running 期间到达的 Notification 在步骤边界投递；续跑一个已完成的子会话；子会话崩溃时唤起父会话；名额排队；预算耗尽。
 3. **UI**：按需加载面板、Notification 行、侧边栏标记、停止按钮。
 4. **running 时排队 User 消息**：机制在第 1 阶段已经具备，这里放开 Composer 和 sendMessage 的限制，并测试 running 期间发的消息在下一个步骤边界被投递。
 

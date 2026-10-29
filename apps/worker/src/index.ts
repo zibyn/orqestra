@@ -21,6 +21,7 @@ const count = (name: string) => {
 };
 const close = await startAgentWorker(config.get, databaseUrl, {
 	concurrency: count("WORKER_CONCURRENCY"),
+	subagentConcurrency: count("SUBAGENT_CONCURRENCY"),
 	providerConcurrency: count("PROVIDER_CONCURRENCY"),
 });
 
@@ -35,4 +36,4 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 	});
 }
 
-console.log("worker listening on queue agent-runs");
+console.log("worker listening on queues agent-runs and subagent-runs");

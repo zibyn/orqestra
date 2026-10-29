@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	catalogProviders,
+	GENERAL_WORKER,
 	loadConfig,
 	resolveThinking,
 	resolveTurn,
@@ -370,6 +371,15 @@ describe("resolveTurn", () => {
 			thinking: "low",
 		});
 		expect(turn?.thinking).toBe("high");
+	});
+
+	it("runs a Subagent without a template as the general worker, on the picked Model and every Tool", async () => {
+		const turn = resolveTurn(await load(), null, {
+			model: "deepseek/deepseek-v4-pro",
+		});
+		expect(turn?.model.id).toBe("deepseek-v4-pro");
+		expect(turn?.agent.instructions).toBe(GENERAL_WORKER);
+		expect(turn?.agent.tools).toEqual(["search", "scrape"]);
 	});
 
 	it("returns nothing once the Agent is removed from config, so the Conversation is read-only", async () => {

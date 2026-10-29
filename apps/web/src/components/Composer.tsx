@@ -67,7 +67,8 @@ export function Composer({
 			<PromptInput
 				onSubmit={async (e) => {
 					e.preventDefault();
-					if (!text.trim() || sending || running) return;
+					// sent while running, it waits in the inbox for the next step boundary
+					if (!text.trim() || sending) return;
 					setSending(true);
 					setError("");
 					try {
