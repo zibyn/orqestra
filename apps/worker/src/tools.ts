@@ -18,6 +18,8 @@ import { scrape, search } from "@orqestra/config/search";
 
 /** Subagents running at once in one Run; more wait their turn. */
 export const MAX_SUBAGENTS = 4;
+/** Tasks one subagent call may hand out. */
+export const MAX_SUBAGENT_TASKS = 8;
 /** Model requests a Subagent may make before it has to hand back what it has. */
 export const MAX_SUBAGENT_STEPS = 20;
 // shortcut: a hard cut keeps one page from flooding the context; summarize instead if pages get cut too often
@@ -108,13 +110,26 @@ export interface SubagentTranscript {
 	result: string;
 }
 
-/** Runs at most `max` functions at once, the rest in call order. */
-function limiter(max: number) {
+/** Runs at most `max` functions at once, the rest in call order; one aborted while waiting leaves the queue and rejects. */
+export function limiter(max: number) {
 	let active = 0;
 	const waiting: (() => void)[] = [];
-	return async <T>(fn: () => Promise<T>) => {
+	return async <T>(fn: () => Promise<T>, signal?: AbortSignal) => {
+		signal?.throwIfAborted();
 		if (active < max) active++;
-		else await new Promise<void>((resolve) => waiting.push(resolve));
+		else
+			await new Promise<void>((resolve, reject) => {
+				const start = () => {
+					signal?.removeEventListener("abort", stop);
+					resolve();
+				};
+				const stop = () => {
+					waiting.splice(waiting.indexOf(start), 1);
+					reject(signal?.reason);
+				};
+				waiting.push(start);
+				signal?.addEventListener("abort", stop, { once: true });
+			});
 		try {
 			return await fn();
 		} finally {
@@ -209,7 +224,7 @@ export function subagentTool(
 						Type.String({ description: "A template id from the list" }),
 					),
 				}),
-				{ minItems: 1 },
+				{ minItems: 1, maxItems: MAX_SUBAGENT_TASKS },
 			),
 		}),
 		execute: async (_id, { tasks }, signal) => {
@@ -222,7 +237,9 @@ export function subagentTool(
 				return { brief: t.brief, template };
 			});
 			const runs = await Promise.all(
-				picked.map((t) => limit(() => run(t.brief, t.template, signal))),
+				picked.map((t) =>
+					limit(() => run(t.brief, t.template, signal), signal),
+				),
 			);
 			return {
 				content: text(

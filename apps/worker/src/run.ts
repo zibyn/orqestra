@@ -32,7 +32,7 @@ import {
 } from "@orqestra/db";
 import { compaction, conversation, message } from "@orqestra/db/schema";
 import { createPostgresBackend, Worker } from "bullmq";
-import { subagentTool, searchTools } from "./tools.ts";
+import { limiter, searchTools, subagentTool } from "./tools.ts";
 
 type Turn = NonNullable<ReturnType<typeof resolveTurn>>;
 type Row = typeof message.$inferSelect & { message: Message };
@@ -272,19 +272,18 @@ async function generateTitle(
 	const turn = resolveTurn(config, agentId);
 	if (!turn) return;
 	// no reasoning option: thinking stays off
-	const result = await config
-		.streamSimple(turn.model, {
-			systemPrompt:
-				"Write a title of at most 20 characters for this conversation, in the language the user writes in. Reply with the title only, without quotes or punctuation at the end.",
-			messages: [
-				{
-					role: "user",
-					content: `User: ${messageText(question)}\n\nAssistant: ${messageText(answer)}`,
-					timestamp: Date.now(),
-				},
-			],
-		})
-		.result();
+	const stream = await config.streamSimple(turn.model, {
+		systemPrompt:
+			"Write a title of at most 20 characters for this conversation, in the language the user writes in. Reply with the title only, without quotes or punctuation at the end.",
+		messages: [
+			{
+				role: "user",
+				content: `User: ${messageText(question)}\n\nAssistant: ${messageText(answer)}`,
+				timestamp: Date.now(),
+			},
+		],
+	});
+	const result = await stream.result();
 	const title = [
 		...messageText(result)
 			.trim()
@@ -306,14 +305,48 @@ async function generateTitle(
 	await notify(conversationId, { type: "saved" });
 }
 
+/**
+ * Wraps a streamSimple so each Provider serves at most `max` Model requests at once, counted from the request until its stream ends.
+ * The limits live as long as the returned function, so one Provider shares them across configs.
+ */
+export function providerLimiter(max: number) {
+	const limits = new Map<string, ReturnType<typeof limiter>>();
+	// shortcut: per worker process; several workers multiply the limit, move to a shared lock if that hits rate limits
+	return (
+		streamSimple: OrqestraConfig["streamSimple"],
+	): OrqestraConfig["streamSimple"] =>
+		(model, context, options) => {
+			const limit = limits.get(model.provider) ?? limiter(max);
+			limits.set(model.provider, limit);
+			return new Promise((resolve, reject) => {
+				limit(async () => {
+					const stream = await streamSimple(model, context, options);
+					resolve(stream);
+					await stream.result();
+				}, options?.signal).catch(reject);
+			});
+		};
+}
+
 /** Starts the BullMQ worker for agent runs plus the listener for stop requests; resolves to a close function. */
 export async function startAgentWorker(
 	// read per job: a Run keeps the config it started with, the next one picks up a reload
 	getConfig: () => Promise<OrqestraConfig>,
 	databaseUrl: string,
-	// tests shorten it to see a crashed run fail quickly
-	{ stalledInterval = 30_000 }: { stalledInterval?: number } = {},
+	{
+		// tests shorten it to see a crashed run fail quickly
+		stalledInterval = 30_000,
+		concurrency = 8,
+		providerConcurrency = 8,
+	}: {
+		stalledInterval?: number;
+		/** Runs this worker works on at once. */
+		concurrency?: number;
+		/** Model requests to one Provider at once, across this worker's Runs. */
+		providerConcurrency?: number;
+	} = {},
 ) {
+	const limitProviders = providerLimiter(providerConcurrency);
 	// a pool connection held for good, since LISTEN is per connection
 	const listener = await db.$client.connect();
 	await listener.query(`LISTEN ${STOP_CHANNEL}`);
@@ -321,8 +354,15 @@ export async function startAgentWorker(
 
 	const worker = new Worker(
 		AGENT_RUNS_QUEUE,
-		async (job) => runTurn(job.data.conversationId, await getConfig()),
+		async (job) => {
+			const config = await getConfig();
+			return runTurn(job.data.conversationId, {
+				...config,
+				streamSimple: limitProviders(config.streamSimple),
+			});
+		},
 		{
+			concurrency,
 			// bullmq tables live in their own "bullmq" schema; migrate is advisory-locked across processes
 			connection: { connectionString: databaseUrl, migrate: true },
 			// a run lost to a crashed worker fails instead of re-running; the UI offers a retry.

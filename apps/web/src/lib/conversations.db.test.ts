@@ -30,7 +30,9 @@ const { sql } = await import("drizzle-orm");
 const { config } = await import("#/lib/config");
 const conversations = await import("#/lib/conversations");
 // the worker runs in-process so the test drives the real queue -> worker -> NOTIFY path
-const { startAgentWorker } = await import("../../../worker/src/run.ts");
+const { startAgentWorker, providerLimiter } = await import(
+	"../../../worker/src/run.ts"
+);
 const { MAX_SUBAGENT_STEPS } = await import("../../../worker/src/tools.ts");
 
 const faux = fauxProvider({
@@ -129,7 +131,10 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			apiKey: "k",
 			baseUrl: "https://api.tavily.com",
 		};
-		stopWorker = await startAgentWorker(config.get, url as string);
+		// faux replies are one shared queue, so runs go one at a time; "works on several Runs at once" lifts that
+		stopWorker = await startAgentWorker(config.get, url as string, {
+			concurrency: 1,
+		});
 	});
 	afterAll(() => stopWorker?.());
 	afterEach(() => vi.unstubAllGlobals());
@@ -253,7 +258,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				return fauxAssistantMessage("should not run");
 			},
 		]);
-		// the worker runs one job at a time, so the second Conversation waits
+		// the suite's worker runs one job at a time, so the second Conversation waits
 		const busy = await conversations.sendMessage(userId, {
 			agentId: "faux",
 			text: "a",
@@ -515,6 +520,46 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 	});
 
 	// last: it swaps the worker for one that notices stalled runs quickly
+	it("works on several Runs at once", async () => {
+		await stopWorker();
+		stopWorker = await startAgentWorker(config.get, url as string);
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		let replying = 0;
+		const gated = async () => {
+			replying++;
+			await gate;
+			return fauxAssistantMessage("done");
+		};
+		faux.setResponses([
+			gated,
+			gated,
+			fauxAssistantMessage("T"),
+			fauxAssistantMessage("T"),
+		]);
+		const ids = [
+			await conversations.sendMessage(userId, { agentId: "faux", text: "a" }),
+			await conversations.sendMessage(userId, { agentId: "faux", text: "b" }),
+		];
+		// both replies are underway before either may finish
+		await waitFor(
+			async () => replying,
+			(n) => n === 2,
+		);
+		release();
+		for (const id of ids)
+			await waitFor(
+				() => conversations.getConversation(userId, id),
+				(v) => v?.status === "idle" && v.title === "T",
+			);
+		await stopWorker();
+		stopWorker = await startAgentWorker(config.get, url as string, {
+			concurrency: 1,
+		});
+	});
+
 	it("fails a run whose worker crashed, so it can be retried", async () => {
 		await stopWorker();
 		let picked = false;
@@ -538,6 +583,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 
 		stopWorker = await startAgentWorker(config.get, url as string, {
 			stalledInterval: 200,
+			concurrency: 1,
 		});
 		await waitFor(
 			() => conversations.getConversation(userId, id),
@@ -553,4 +599,50 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			"assistant",
 		]);
 	}, 15_000);
+});
+
+describe("providerLimiter", () => {
+	// a stream that ends when its test says so
+	function streams() {
+		const started: string[] = [];
+		const end: Record<string, () => void> = {};
+		const streamSimple = ((model: { provider: string; id: string }) => {
+			started.push(model.id);
+			const result = new Promise((resolve) => {
+				end[model.id] = () => resolve({});
+			});
+			return { result: () => result };
+		}) as unknown as Parameters<ReturnType<typeof providerLimiter>>[0];
+		return { started, end, streamSimple };
+	}
+	const model = (provider: string, id: string) => ({ provider, id }) as never;
+	const tick = () => new Promise((r) => setTimeout(r, 0));
+
+	it("holds a Provider's slot until the stream ends, without blocking other Providers", async () => {
+		const { started, end, streamSimple } = streams();
+		const limited = providerLimiter(1)(streamSimple);
+		void limited(model("a", "a1"), { messages: [] });
+		void limited(model("a", "a2"), { messages: [] });
+		void limited(model("b", "b1"), { messages: [] });
+		await tick();
+		expect(started).toEqual(["a1", "b1"]);
+		end.a1();
+		await tick();
+		expect(started).toEqual(["a1", "b1", "a2"]);
+	});
+
+	it("drops a queued request when its signal aborts", async () => {
+		const { started, streamSimple } = streams();
+		const limited = providerLimiter(1)(streamSimple);
+		void limited(model("a", "a1"), { messages: [] });
+		const stop = new AbortController();
+		const queued = limited(
+			model("a", "a2"),
+			{ messages: [] },
+			{ signal: stop.signal },
+		);
+		stop.abort(new Error("stopped"));
+		await expect(queued).rejects.toThrow("stopped");
+		expect(started).toEqual(["a1"]);
+	});
 });

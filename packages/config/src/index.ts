@@ -95,7 +95,8 @@ type StreamSimple = (
 	model: Model<Api>,
 	context: Context,
 	options?: SimpleStreamOptions,
-) => AssistantMessageEventStream;
+	// a worker may queue the request before it starts
+) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
 
 export class ConfigError extends Error {
 	override name = "ConfigError";

@@ -11,7 +11,18 @@ console.log(
 	`loaded ${loaded.agents.length} agent(s), default "${loaded.defaultAgent.id}"`,
 );
 
-const close = await startAgentWorker(config.get, databaseUrl);
+const count = (name: string) => {
+	const value = process.env[name];
+	if (value === undefined) return undefined;
+	const n = Number(value);
+	if (!Number.isInteger(n) || n < 1)
+		throw new Error(`${name} must be a positive integer`);
+	return n;
+};
+const close = await startAgentWorker(config.get, databaseUrl, {
+	concurrency: count("WORKER_CONCURRENCY"),
+	providerConcurrency: count("PROVIDER_CONCURRENCY"),
+});
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
 	process.on(signal, async () => {
