@@ -7,12 +7,13 @@ import {
 } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/config";
 import type { ConversationEvent } from "@orqestra/db";
+import { createPostgresBackend, Worker } from "bullmq";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
 if (url) process.env.DATABASE_URL = url;
-const { db } = await import("@orqestra/db");
+const { db, AGENT_RUNS_QUEUE } = await import("@orqestra/db");
 const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
 const { config } = await import("#/lib/config");
@@ -200,6 +201,118 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		const reply = view?.messages[1].message as AssistantMessage;
 		expect(reply.stopReason).toBe("aborted");
 		expect(JSON.stringify(reply.content).length).toBeLessThan(long.length);
+		// a stopped first reply still names the Conversation
+		await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.title === "T",
+		);
+	});
+
+	it("stops a run that is still queued", async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		let replying = false;
+		let ranQueued = false;
+		faux.setResponses([
+			async () => {
+				replying = true;
+				await gate;
+				return fauxAssistantMessage("first");
+			},
+			fauxAssistantMessage("T"),
+			() => {
+				ranQueued = true;
+				return fauxAssistantMessage("should not run");
+			},
+		]);
+		// the worker runs one job at a time, so the second Conversation waits
+		const busy = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "a",
+		});
+		await waitFor(async () => replying, Boolean);
+		const queued = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "b",
+		});
+		await conversations.stopRun(userId, queued);
+		release();
+
+		await waitFor(
+			() => conversations.getConversation(userId, busy),
+			(v) => v?.status === "idle" && v.title === "T",
+		);
+		const view = await conversations.getConversation(userId, queued);
+		expect(view?.status).toBe("idle");
+		expect(view?.messages.map((m) => m.message.role)).toEqual(["user"]);
+		expect(ranQueued).toBe(false);
+	});
+
+	it("stops a run while it compacts", async () => {
+		const [conv] = await db
+			.insert(schema.conversation)
+			.values({ userId, agentId: "small", title: "t" })
+			.returning();
+		const old = fauxAssistantMessage("b".repeat(2000));
+		old.usage.totalTokens = 1500;
+		await db.insert(schema.message).values(
+			[{ role: "user", content: "a".repeat(4000), timestamp: 1 }, old].map(
+				(m) => ({
+					conversationId: conv.id,
+					message: m,
+					model: "faux/faux-small",
+					thinkingLevel: "off",
+				}),
+			),
+		);
+		let compacting = false;
+		let replied = false;
+		faux.setResponses([
+			() => {
+				compacting = true;
+				// the summary streams slowly enough to be stopped
+				return fauxAssistantMessage("s".repeat(4000));
+			},
+			() => {
+				replied = true;
+				return fauxAssistantMessage("should not run");
+			},
+		]);
+		await conversations.sendMessage(userId, {
+			conversationId: conv.id,
+			text: "next?",
+		});
+		await waitFor(async () => compacting, Boolean);
+		await conversations.stopRun(userId, conv.id);
+
+		const view = await waitFor(
+			() => conversations.getConversation(userId, conv.id),
+			(v) => v?.status !== "running",
+		);
+		expect(view?.status).toBe("idle");
+		expect(view?.messages).toHaveLength(3);
+		expect(view?.compactedBefore).toEqual([]);
+		expect(replied).toBe(false);
+	});
+
+	it("marks a failed reply as failed without saving it", async () => {
+		faux.setResponses([
+			fauxAssistantMessage("half", {
+				stopReason: "error",
+				errorMessage: "boom",
+			}),
+		]);
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "hi",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "failed",
+		);
+		expect(view?.messages.map((m) => m.message.role)).toEqual(["user"]);
 	});
 
 	it("compacts a long history before the turn but keeps it all visible", async () => {
@@ -261,4 +374,44 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			),
 		).toBeUndefined();
 	});
+
+	// last: it swaps the worker for one that notices stalled runs quickly
+	it("fails a run whose worker crashed, so it can be retried", async () => {
+		await stopWorker();
+		let picked = false;
+		// a worker that takes the job and then dies without finishing it
+		const crashing = new Worker(
+			AGENT_RUNS_QUEUE,
+			() => {
+				picked = true;
+				return new Promise(() => {});
+			},
+			{ connection: { connectionString: url as string }, lockDuration: 300 },
+			createPostgresBackend,
+		);
+		faux.setResponses([fauxAssistantMessage("retried")]);
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "hi",
+		});
+		await waitFor(async () => picked, Boolean);
+		await crashing.close(true);
+
+		stopWorker = await startAgentWorker(await config, url as string, {
+			stalledInterval: 200,
+		});
+		await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "failed",
+		);
+		await conversations.retryRun(userId, id);
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "idle",
+		);
+		expect(view?.messages.map((m) => m.message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
+	}, 15_000);
 });

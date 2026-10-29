@@ -7,6 +7,7 @@ import {
 } from "@orqestra/config";
 import {
 	AGENT_RUNS_QUEUE,
+	type ConversationEvent,
 	conversationChannel,
 	db,
 	STOP_CHANNEL,
@@ -193,9 +194,29 @@ export async function retryRun(userId: string, id: string) {
 	await enqueue(id);
 }
 
-/** Asks whichever worker runs this Conversation to abort it. */
+/** Drops this Conversation's run while it is still queued, or else asks whichever worker runs it to abort it. */
 export async function stopRun(userId: string, id: string) {
 	if (!(await owned(userId, id))) return;
+	queue ??= newQueue();
+	// shortcut: scans every waiting job, fine while the queue stays short; key jobs by Conversation if it grows
+	for (const job of await queue.getWaiting()) {
+		if (job.data.conversationId !== id) continue;
+		// fails when a worker took the job meanwhile; the NOTIFY below then reaches it
+		const removed = await job.remove().then(
+			() => true,
+			() => false,
+		);
+		if (!removed) break;
+		await db
+			.update(conversation)
+			.set({ status: "idle" })
+			.where(eq(conversation.id, id));
+		const saved: ConversationEvent = { type: "saved" };
+		await db.execute(
+			sql`select pg_notify(${conversationChannel(id)}, ${JSON.stringify(saved)})`,
+		);
+		return;
+	}
 	await db.execute(sql`select pg_notify(${STOP_CHANNEL}, ${id})`);
 }
 
@@ -218,7 +239,7 @@ export async function deleteConversation(userId: string, id: string) {
 
 /**
  * Server-sent events of a Conversation's ConversationEvents, relayed from Postgres NOTIFY.
- * Clients load saved messages first and then follow this stream; partial replies are never stored.
+ * Clients load saved messages first and then follow this stream; a reply is stored only once it ends (finished or stopped).
  * Undefined when the Conversation is not the user's.
  */
 export async function conversationEvents(

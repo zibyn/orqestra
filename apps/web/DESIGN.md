@@ -98,3 +98,5 @@ Centered in the available area: a muted lucide icon (`size-8 text-muted-foregrou
 ### Code and identifiers
 
 `font-mono text-sm`, inline code with `rounded bg-muted px-1 py-0.5`.
+
+Code blocks in Agent replies (Streamdown with `@streamdown/code`, styled by the `[data-streamdown="code-block*"]` rules in `src/styles.css`): one `rounded-lg` block with a single 1px `border` and `bg-muted/50`, no shadow or nested card; a slim header with the language in `text-xs text-muted-foreground` and a ghost copy button (no download); body in `font-mono text-sm`, keeping Shiki's `github-light` / `github-dark` token colors.

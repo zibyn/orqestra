@@ -1,7 +1,5 @@
-import type {
-	AssistantMessage,
-	Message as PiMessage,
-} from "@earendil-works/pi-ai";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { messageText } from "@orqestra/config/shared";
 import type { ConversationEvent } from "@orqestra/db";
 import {
 	createFileRoute,
@@ -19,6 +17,7 @@ import {
 import { Reasoning } from "#/components/ai-elements/reasoning";
 import { type Choice, Composer } from "#/components/Composer";
 import { Button } from "#/components/ui/button";
+import { Separator } from "#/components/ui/separator";
 import {
 	getConversation,
 	retryRun,
@@ -59,10 +58,9 @@ function useLiveReply(conversationId: string) {
 			const event = JSON.parse(e.data) as ConversationEvent;
 			if (event.type === "start") setLive([]);
 			else if (event.type === "delta")
-				// deltas of a reply that began before we connected are dropped (live is null)
+				// shortcut: a reply that began before we connected shows from the next delta on; replaying it needs a server-side buffer
 				setLive((parts) => {
-					if (!parts) return parts;
-					const next = [...parts];
+					const next = [...(parts ?? [])];
 					const part = next[event.index] ?? { kind: event.kind, text: "" };
 					next[event.index] = { ...part, text: part.text + event.delta };
 					return next;
@@ -74,16 +72,12 @@ function useLiveReply(conversationId: string) {
 	return live;
 }
 
-const textOf = (message: PiMessage) =>
-	typeof message.content === "string"
-		? message.content
-		: message.content.map((c) => (c.type === "text" ? c.text : "")).join("");
-
 function ConversationView() {
 	const conversation = Route.useLoaderData();
 	const { agents } = app.useLoaderData();
 	const router = useRouter();
 	const live = useLiveReply(conversation.id);
+	const [retrying, setRetrying] = useState(false);
 	const running = conversation.status === "running";
 	const lastUser = conversation.messages
 		.filter((row) => row.message.role === "user")
@@ -97,14 +91,14 @@ function ConversationView() {
 						<Fragment key={row.id}>
 							{conversation.compactedBefore.includes(row.id) && (
 								<div className="flex items-center gap-3 text-xs text-muted-foreground">
-									<div className="h-px flex-1 bg-border" />
+									<Separator className="flex-1" />
 									{m.compacted_divider()}
-									<div className="h-px flex-1 bg-border" />
+									<Separator className="flex-1" />
 								</div>
 							)}
 							{row.message.role === "user" ? (
 								<Message from="user">
-									<MessageContent>{textOf(row.message)}</MessageContent>
+									<MessageContent>{messageText(row.message)}</MessageContent>
 								</Message>
 							) : (
 								<AgentReply message={row.message as AssistantMessage} />
@@ -124,12 +118,22 @@ function ConversationView() {
 							<Button
 								variant="outline"
 								size="sm"
+								disabled={retrying}
 								onClick={async () => {
-									await retryRun({ data: conversation.id });
-									await router.invalidate();
+									setRetrying(true);
+									try {
+										await retryRun({ data: conversation.id });
+										await router.invalidate();
+									} finally {
+										setRetrying(false);
+									}
 								}}
 							>
-								<RotateCcwIcon />
+								{retrying ? (
+									<Loader2Icon className="animate-spin" />
+								) : (
+									<RotateCcwIcon />
+								)}
 								{m.retry()}
 							</Button>
 						</div>

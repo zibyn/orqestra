@@ -1,4 +1,4 @@
-import { ArrowUpIcon, SquareIcon } from "lucide-react";
+import { ArrowUpIcon, Loader2Icon, SquareIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
@@ -65,10 +65,13 @@ export function PromptInputSubmit({
 	running,
 	onStop,
 	disabled,
+	busy,
 }: {
 	running: boolean;
 	onStop: () => void;
 	disabled?: boolean;
+	/** The message is being sent. */
+	busy?: boolean;
 }) {
 	return running ? (
 		<Button
@@ -86,9 +89,9 @@ export function PromptInputSubmit({
 			size="icon-sm"
 			aria-label={m.send()}
 			className="ml-auto"
-			disabled={disabled}
+			disabled={disabled || busy}
 		>
-			<ArrowUpIcon />
+			{busy ? <Loader2Icon className="animate-spin" /> : <ArrowUpIcon />}
 		</Button>
 	);
 }

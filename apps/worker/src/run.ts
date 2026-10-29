@@ -13,6 +13,7 @@ import {
 	shouldCompact,
 } from "@earendil-works/pi-coding-agent";
 import {
+	messageText,
 	modelRef,
 	type OrqestraConfig,
 	resolveTurn,
@@ -36,8 +37,8 @@ import { createPostgresBackend, Worker } from "bullmq";
 type Turn = NonNullable<ReturnType<typeof resolveTurn>>;
 type Row = typeof message.$inferSelect & { message: Message };
 
-/** Runs in this process, by Conversation id, so a stop request can abort them. */
-const active = new Map<string, Agent>();
+/** Runs in this process, by Conversation id, so a stop request can abort them from the start (compaction included). */
+const active = new Map<string, AbortController>();
 
 const notify = (conversationId: string, event: ConversationEvent) =>
 	db.execute(
@@ -46,7 +47,7 @@ const notify = (conversationId: string, event: ConversationEvent) =>
 
 async function setStatus(
 	conversationId: string,
-	status: "idle" | "running" | "failed",
+	status: (typeof conversation.$inferSelect)["status"],
 ) {
 	await db
 		.update(conversation)
@@ -57,15 +58,25 @@ async function setStatus(
 
 /** Replies to the last (user) message of a Conversation. */
 export async function runTurn(conversationId: string, config: OrqestraConfig) {
+	const stop = new AbortController();
+	active.set(conversationId, stop);
 	try {
-		await reply(conversationId, config);
+		await reply(conversationId, config, stop.signal);
 	} catch (error) {
+		// stopped while compacting: nothing to save
+		if (stop.signal.aborted) return setStatus(conversationId, "idle");
 		await setStatus(conversationId, "failed");
 		throw error;
+	} finally {
+		active.delete(conversationId);
 	}
 }
 
-async function reply(conversationId: string, config: OrqestraConfig) {
+async function reply(
+	conversationId: string,
+	config: OrqestraConfig,
+	signal: AbortSignal,
+) {
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
@@ -91,7 +102,7 @@ async function reply(conversationId: string, config: OrqestraConfig) {
 			model: turn.model,
 			thinkingLevel: turn.thinking,
 			tools: [] as AgentTool[], // no tools yet; they plug in here
-			messages: await context(conversationId, rows, turn, streamFn),
+			messages: await context(conversationId, rows, turn, streamFn, signal),
 		},
 		streamFn,
 		sessionId: conversationId,
@@ -109,8 +120,12 @@ async function reply(conversationId: string, config: OrqestraConfig) {
 					delta: e.delta,
 				});
 		}
-		// only finished replies are saved; aborted and failed ones too, so the UI can show them
-		if (event.type === "message_end" && event.message.role === "assistant")
+		// finished and stopped replies are saved (a stopped one keeps what was generated); failed ones are not, the turn is retried instead
+		if (
+			event.type === "message_end" &&
+			event.message.role === "assistant" &&
+			event.message.stopReason !== "error"
+		)
 			await db.insert(message).values({
 				conversationId,
 				message: event.message,
@@ -119,19 +134,18 @@ async function reply(conversationId: string, config: OrqestraConfig) {
 			});
 	});
 
-	active.set(conversationId, agent);
-	try {
-		await agent.continue();
-	} finally {
-		active.delete(conversationId);
-	}
+	signal.throwIfAborted(); // stopped before the reply began
+	signal.addEventListener("abort", () => agent.abort());
+	await agent.continue();
 	const answer = agent.state.messages.at(-1) as AssistantMessage;
 	await setStatus(
 		conversationId,
 		answer.stopReason === "error" ? "failed" : "idle",
 	);
 
-	if (!conv.title && !conv.titleEdited && answer.stopReason === "stop")
+	// titled after the first turn that produced a reply, stopped ones included
+	const first = !rows.some((r) => r.message.role === "assistant");
+	if (first && !conv.titleEdited && answer.stopReason !== "error")
 		await generateTitle(conversationId, config, conv.agentId, [
 			last.message,
 			answer,
@@ -144,6 +158,7 @@ async function context(
 	rows: Row[],
 	turn: Turn,
 	streamFn: StreamFn,
+	signal: AbortSignal,
 ): Promise<AgentMessage[]> {
 	const previous = await db.query.compaction.findFirst({
 		where: eq(compaction.conversationId, conversationId),
@@ -182,10 +197,11 @@ async function context(
 				undefined, // auth comes from the registry through streamFn
 				undefined,
 				undefined,
-				undefined,
+				signal,
 				undefined,
 				streamFn,
 			);
+			signal.throwIfAborted();
 			await db.insert(compaction).values({
 				conversationId,
 				summary: result.summary,
@@ -244,10 +260,6 @@ async function generateTitle(
 ) {
 	const turn = resolveTurn(config, agentId);
 	if (!turn) return;
-	const text = (m: Message) =>
-		typeof m.content === "string"
-			? m.content
-			: m.content.map((c) => (c.type === "text" ? c.text : "")).join("");
 	// no reasoning option: thinking stays off
 	const result = await config.registry.complete(turn.model, {
 		systemPrompt:
@@ -255,13 +267,13 @@ async function generateTitle(
 		messages: [
 			{
 				role: "user",
-				content: `User: ${text(question)}\n\nAssistant: ${text(answer)}`,
+				content: `User: ${messageText(question)}\n\nAssistant: ${messageText(answer)}`,
 				timestamp: Date.now(),
 			},
 		],
 	});
 	const title = [
-		...text(result)
+		...messageText(result)
 			.trim()
 			.replace(/^["'“「]|["'”」]$/g, ""),
 	]
@@ -285,6 +297,8 @@ async function generateTitle(
 export async function startAgentWorker(
 	config: OrqestraConfig,
 	databaseUrl: string,
+	// tests shorten it to see a crashed run fail quickly
+	{ stalledInterval = 30_000 }: { stalledInterval?: number } = {},
 ) {
 	// a pool connection held for good, since LISTEN is per connection
 	const listener = await db.$client.connect();
@@ -297,8 +311,10 @@ export async function startAgentWorker(
 		{
 			// bullmq tables live in their own "bullmq" schema; migrate is advisory-locked across processes
 			connection: { connectionString: databaseUrl, migrate: true },
-			// a run lost to a crashed worker fails instead of re-running; the UI offers a retry
+			// a run lost to a crashed worker fails instead of re-running; the UI offers a retry.
+			// The pg backend requeues a stalled job with a deferred failure, which a worker then emits as 'failed' below
 			maxStalledCount: 0,
+			stalledInterval,
 		},
 		createPostgresBackend,
 	);

@@ -2,6 +2,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { Label } from "#/components/ui/label";
 import { Switch } from "#/components/ui/switch";
 import { getSettings, saveAllowMemberPassword } from "#/lib/instance";
+import { inlineCode } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/console/settings")({
@@ -37,9 +38,7 @@ function Settings() {
 				{oidc.configured ? (
 					<p>
 						{m.idp_configured()}
-						<code className="rounded bg-muted px-1 py-0.5 font-mono">
-							{oidc.issuer}
-						</code>
+						<code className={inlineCode}>{oidc.issuer}</code>
 					</p>
 				) : (
 					<p>{m.idp_not_configured()}</p>
