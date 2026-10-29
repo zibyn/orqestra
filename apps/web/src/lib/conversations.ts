@@ -10,16 +10,20 @@ import {
 	type ConversationEvent,
 	conversationChannel,
 	db,
+	drain,
+	lockRoot,
+	MAX_SUBAGENTS,
 	STOP_CHANNEL,
 } from "@orqestra/db";
 import {
 	compaction,
 	conversation,
+	inbox,
 	message,
 	subagent,
 } from "@orqestra/db/schema";
 import { createPostgresBackend, Queue } from "bullmq";
-import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import pg from "pg";
 import { config } from "#/lib/config";
 
@@ -90,13 +94,14 @@ export const listConversations = (userId: string) =>
 			status: conversation.status,
 		})
 		.from(conversation)
-		.where(eq(conversation.userId, userId))
+		// a Subagent's Conversation shows only within its parent
+		.where(and(eq(conversation.userId, userId), isNull(conversation.parentId)))
 		.orderBy(desc(conversation.updatedAt));
 
 export async function getConversation(userId: string, id: string) {
 	const conv = await owned(userId, id);
 	if (!conv) return undefined;
-	const [messages, compactions, subagents] = await Promise.all([
+	const [messages, pending, compactions, subagents] = await Promise.all([
 		db
 			.select({
 				id: message.id,
@@ -107,40 +112,68 @@ export async function getConversation(userId: string, id: string) {
 			.from(message)
 			.where(eq(message.conversationId, id))
 			.orderBy(asc(message.id)),
+		// inputs the Run has yet to deliver show after what it has
+		db
+			.select({
+				id: sql<number>`-${inbox.id}`,
+				message: inbox.message,
+				model: inbox.model,
+				thinkingLevel: inbox.thinkingLevel,
+			})
+			.from(inbox)
+			.where(eq(inbox.conversationId, id))
+			.orderBy(asc(inbox.id)),
 		db
 			.select({ firstKeptMessageId: compaction.firstKeptMessageId })
 			.from(compaction)
 			.where(eq(compaction.conversationId, id)),
-		// shortcut: whole transcripts on every reload; load them per Subagent when opened if Conversations get heavy
 		db
 			.select({
-				id: subagent.id,
+				id: subagent.conversationId,
 				toolCallId: subagent.toolCallId,
 				number: subagent.number,
 				template: subagent.template,
 				brief: subagent.brief,
-				status: subagent.status,
-				messages: subagent.messages,
+				status: subagent.outcome,
 			})
 			.from(subagent)
-			.where(eq(subagent.conversationId, id))
+			.where(eq(subagent.parentId, id))
 			.orderBy(asc(subagent.number)),
 	]);
+	// shortcut: whole transcripts on every reload; load them per Subagent when opened if Conversations get heavy
+	const transcripts = subagents.length
+		? await db
+				.select({
+					conversationId: message.conversationId,
+					message: message.message,
+				})
+				.from(message)
+				.where(
+					inArray(
+						message.conversationId,
+						subagents.map((s) => s.id),
+					),
+				)
+				.orderBy(asc(message.id))
+		: [];
 	return {
 		id: conv.id,
 		agentId: conv.agentId,
 		title: conv.title,
 		status: conv.status,
 		// the Agent was removed from config or has no Model left
-		readOnly: !resolveTurn(await config.get(), conv.agentId),
-		messages: messages.map((m) => ({
+		// shortcut: a Subagent's Conversation (agentId null) reads as read-only until resolveTurn takes the general worker
+		readOnly: !conv.agentId || !resolveTurn(await config.get(), conv.agentId),
+		messages: [...messages, ...pending].map((m) => ({
 			...m,
 			message: m.message as Message,
 		})),
 		compactedBefore: compactions.map((c) => c.firstKeptMessageId),
 		subagents: subagents.map((s) => ({
 			...s,
-			messages: s.messages as Message[],
+			messages: transcripts
+				.filter((t) => t.conversationId === s.id)
+				.map((t) => t.message as Message),
 		})),
 	};
 }
@@ -149,7 +182,52 @@ export class ConversationError extends Error {
 	override name = "ConversationError";
 }
 
-/** Saves a user message (starting a Conversation when there is no id) and queues the Agent's reply. */
+/**
+ * Starts a Run for a Conversation that has none, a wake input in its inbox and room to run (a Subagent waits for a free slot);
+ * decided under its root's lock, so inputs arriving together start one Run. True when it started one.
+ */
+export async function ensureRun(conversationId: string) {
+	const started = await db.transaction(async (tx) => {
+		await lockRoot(tx, conversationId);
+		const conv = await tx.query.conversation.findFirst({
+			where: eq(conversation.id, conversationId),
+		});
+		if (!conv || conv.status === "running") return false;
+		const [wake] = await tx
+			.select({ id: inbox.id })
+			.from(inbox)
+			.where(
+				and(eq(inbox.conversationId, conversationId), eq(inbox.wake, true)),
+			)
+			.limit(1);
+		if (!wake) return false;
+		if (conv.parentId) {
+			const [{ running }] = await tx
+				.select({ running: count() })
+				.from(subagent)
+				.where(
+					and(
+						eq(subagent.parentId, conv.parentId),
+						eq(subagent.outcome, "running"),
+					),
+				);
+			if (running >= MAX_SUBAGENTS) return false;
+			await tx
+				.update(subagent)
+				.set({ outcome: "running" })
+				.where(eq(subagent.conversationId, conversationId));
+		}
+		await tx
+			.update(conversation)
+			.set({ status: "running" })
+			.where(eq(conversation.id, conversationId));
+		return true;
+	});
+	if (started) await enqueue(conversationId);
+	return started;
+}
+
+/** Puts a user message in the inbox (starting a Conversation when there is no id) and has the Agent reply. */
 export async function sendMessage(
 	userId: string,
 	input: {
@@ -164,7 +242,8 @@ export async function sendMessage(
 	const existing = input.conversationId
 		? await owned(userId, input.conversationId)
 		: undefined;
-	if (input.conversationId && !existing)
+	// the User cannot write to a Subagent: only the Agent that started it can
+	if (input.conversationId && (!existing || existing.parentId))
 		throw new ConversationError("Conversation not found");
 	// the Agent is fixed once a Conversation has messages
 	const agentId = existing?.agentId ?? input.agentId ?? cfg.defaultAgent.id;
@@ -177,29 +256,30 @@ export async function sendMessage(
 	const conversationId = await db.transaction(async (tx) => {
 		let id = existing?.id;
 		if (id) {
-			// one run at a time per Conversation
-			const claimed = await tx
-				.update(conversation)
-				.set({ status: "running" })
-				.where(and(eq(conversation.id, id), ne(conversation.status, "running")))
-				.returning({ id: conversation.id });
-			if (!claimed.length)
+			await lockRoot(tx, id);
+			const [conv] = await tx
+				.select({ status: conversation.status })
+				.from(conversation)
+				.where(eq(conversation.id, id));
+			// shortcut: refused while a Run goes; stage 4 of docs/design/subagent-sessions.md lets the inbox hold it
+			if (conv?.status === "running")
 				throw new ConversationError("A reply is still being generated");
 		} else {
 			[{ id }] = await tx
 				.insert(conversation)
-				.values({ userId, agentId, status: "running" })
+				.values({ userId, agentId })
 				.returning({ id: conversation.id });
 		}
-		await tx.insert(message).values({
+		await tx.insert(inbox).values({
 			conversationId: id,
 			message: { role: "user", content: input.text, timestamp: Date.now() },
 			model: modelRef(turn.model),
 			thinkingLevel: turn.thinking,
+			wake: true,
 		});
 		return id;
 	});
-	await enqueue(conversationId);
+	await ensureRun(conversationId);
 	return conversationId;
 }
 
@@ -207,7 +287,7 @@ export async function sendMessage(
 export async function retryRun(userId: string, id: string) {
 	const conv = await owned(userId, id);
 	if (!conv) return;
-	if (!resolveTurn(await config.get(), conv.agentId))
+	if (!conv.agentId || !resolveTurn(await config.get(), conv.agentId))
 		throw new ConversationError("This Agent is offline");
 	await db.transaction(async (tx) => {
 		const claimed = await tx
@@ -221,7 +301,7 @@ export async function retryRun(userId: string, id: string) {
 			sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
 		);
 		await tx.execute(
-			sql`delete from ${subagent} where ${subagent.conversationId} = ${id} and ${subagent.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id})`,
+			sql`delete from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id})`,
 		);
 	});
 	await enqueue(id);
@@ -240,10 +320,9 @@ export async function stopRun(userId: string, id: string) {
 			() => false,
 		);
 		if (!removed) break;
-		await db
-			.update(conversation)
-			.set({ status: "idle" })
-			.where(eq(conversation.id, id));
+		// the inputs stay in the Conversation, unanswered
+		await drain(id);
+		await drain(id, true);
 		const saved: ConversationEvent = { type: "saved" };
 		await db.execute(
 			sql`select pg_notify(${conversationChannel(id)}, ${JSON.stringify(saved)})`,

@@ -50,6 +50,13 @@
       "when": 1793268670168,
       "tag": "0006_subagents",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793272364867,
+      "tag": "0007_subagent_sessions",
+      "breakpoints": true
     }
   ]
 }

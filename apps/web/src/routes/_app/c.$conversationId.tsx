@@ -195,7 +195,8 @@ function ConversationView() {
 						// remount when the Conversation changes so picks don't leak between them
 						key={conversation.id}
 						agents={agents}
-						agentId={conversation.agentId}
+						// null only for a Subagent's Conversation, which is read-only and shows no Composer
+						agentId={conversation.agentId ?? ""}
 						initial={
 							lastUser && {
 								model: lastUser.model,

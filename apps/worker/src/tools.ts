@@ -14,16 +14,27 @@ import {
 import {
 	type AgentDefinition,
 	messageText,
+	modelRef,
 	type OrqestraConfig,
 	resolveTurn,
 	type ThinkingLevel,
 } from "@orqestra/config";
 import { scrape, search } from "@orqestra/config/search";
-import { and, type ConversationEvent, db, eq, inArray } from "@orqestra/db";
-import { subagent } from "@orqestra/db/schema";
+import {
+	and,
+	type ConversationEvent,
+	db,
+	eq,
+	inArray,
+	MAX_SUBAGENTS,
+} from "@orqestra/db";
+import {
+	conversation,
+	message as messageRow,
+	subagent,
+} from "@orqestra/db/schema";
 
-/** Subagents running at once in one Run; more wait their turn. */
-export const MAX_SUBAGENTS = 4;
+export { MAX_SUBAGENTS };
 /** Tasks one subagent call may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
 /** Subagents one Run may start in all, so a parent cannot keep delegating forever. */
@@ -164,7 +175,7 @@ const GENERAL_WORKER =
 const STEP_LIMIT =
 	"You have reached your step limit and can no longer use tools. Reply now with your final answer from what you have so far, saying what is left undone.";
 
-type Status = (typeof subagent.$inferSelect)["status"];
+type Status = (typeof subagent.$inferSelect)["outcome"];
 
 /** A Subagent's state within its Run, as the parent Agent's Tools see it. */
 interface Handle {
@@ -186,11 +197,11 @@ interface Handle {
 export const stopSubagents = (conversationId: string) =>
 	db
 		.update(subagent)
-		.set({ status: "stopped" })
+		.set({ outcome: "stopped" })
 		.where(
 			and(
-				eq(subagent.conversationId, conversationId),
-				inArray(subagent.status, ["queued", "running"]),
+				eq(subagent.parentId, conversationId),
+				inArray(subagent.outcome, ["queued", "running"]),
 			),
 		);
 
@@ -214,6 +225,9 @@ export function subagentTools(
 	tools: AgentTool[],
 	run: {
 		conversationId: string;
+		userId: string;
+		/** The highest Subagent number the Conversation has used so far. */
+		numbered: number;
 		signal: AbortSignal;
 		/** Sends the UI what streams and, after every saved change, what to reload. */
 		notify: Notify;
@@ -230,7 +244,10 @@ export function subagentTools(
 		values: Partial<typeof subagent.$inferInsert>,
 		event: ConversationEvent = { type: "saved" },
 	) {
-		await db.update(subagent).set(values).where(eq(subagent.id, id));
+		await db
+			.update(subagent)
+			.set(values)
+			.where(eq(subagent.conversationId, id));
 		await run.notify(event);
 	}
 
@@ -245,11 +262,28 @@ export function subagentTools(
 		const own =
 			template && !template.allModels && resolveTurn(config, template.id);
 		let steps = 0;
+		const model = own ? own.model : parent.model;
+		const thinking = own ? own.thinking : parent.thinking;
+		// its transcript is its own Conversation's messages
+		const record = (messages: Message[]) =>
+			db.insert(messageRow).values(
+				messages.map((m) => ({
+					conversationId: id,
+					message: m,
+					model: modelRef(model),
+					thinkingLevel: thinking,
+				})),
+			);
+		const opening: Message[] = [
+			{ role: "user", content: brief, timestamp: Date.now() },
+			...h.inbox,
+		];
+		await record(opening);
 		const agent = new Agent({
 			initialState: {
 				systemPrompt: template?.instructions || GENERAL_WORKER,
-				model: own ? own.model : parent.model,
-				thinkingLevel: own ? own.thinking : parent.thinking,
+				model,
+				thinkingLevel: thinking,
 				tools: template
 					? tools.filter((t) =>
 							template.tools.includes(
@@ -257,10 +291,7 @@ export function subagentTools(
 							),
 						)
 					: tools,
-				messages: [
-					{ role: "user", content: brief, timestamp: Date.now() },
-					...h.inbox,
-				],
+				messages: opening,
 			},
 			streamFn: config.streamSimple,
 			finishTurn: () =>
@@ -287,19 +318,21 @@ export function subagentTools(
 			);
 		agent.subscribe(async (event) => {
 			await relay(event, run.notify, id);
-			if (event.type === "message_end")
-				await save(
-					id,
-					{ messages: transcript() },
-					event.message.role === "assistant"
-						? { type: "end", subagent: id }
-						: undefined,
-				);
+			if (event.type !== "message_end") return;
+			const { role } = event.message;
+			if (role !== "user" && role !== "assistant" && role !== "toolResult")
+				return;
+			await record([event.message]);
+			await run.notify(
+				role === "assistant"
+					? { type: "end", subagent: id }
+					: { type: "saved" },
+			);
 		});
 		const abort = () => agent.abort();
 		signal.addEventListener("abort", abort);
 		try {
-			await save(id, { status: "running" });
+			await save(id, { outcome: "running" });
 			h.status = "running";
 			signal.throwIfAborted();
 			await agent.continue();
@@ -321,7 +354,7 @@ export function subagentTools(
 			status = "failed";
 			result += `\n\n[The subagent failed: ${last.errorMessage ?? "unknown error"}]`;
 		} else if (steps >= MAX_SUBAGENT_STEPS) status = "partial";
-		return { status, result, messages: transcript() };
+		return { status, result };
 	}
 
 	function start(
@@ -348,7 +381,7 @@ export function subagentTools(
 			h.status = outcome.status;
 			h.result = outcome.result;
 			h.finished = true;
-			await save(rowId, outcome);
+			await save(rowId, { outcome: outcome.status, result: outcome.result });
 		})().catch((error) => {
 			// the row could not be saved: the Run still gets an outcome
 			console.error(`subagent ${h.number} failed`, error);
@@ -406,21 +439,32 @@ export function subagentTools(
 					throw new Error(`Template "${t.template}" has no available Model`);
 				return { brief: t.brief, template };
 			});
-			const first = handles.size + 1;
+			const first = run.numbered + handles.size + 1;
 			// registered before the insert lands, so a subagent_wait in the same reply already sees them
-			const rows = (async () =>
-				db
-					.insert(subagent)
+			const rows = db.transaction(async (tx) => {
+				// each Subagent works in a Conversation of its own, under this one
+				const children = await tx
+					.insert(conversation)
 					.values(
-						picked.map((t, i) => ({
-							conversationId: run.conversationId,
-							toolCallId,
-							number: first + i,
-							template: t.template?.id,
-							brief: t.brief,
+						picked.map((t) => ({
+							userId: run.userId,
+							parentId: run.conversationId,
+							agentId: t.template?.id,
 						})),
 					)
-					.returning({ id: subagent.id }))();
+					.returning({ id: conversation.id });
+				await tx.insert(subagent).values(
+					picked.map((t, i) => ({
+						conversationId: children[i].id,
+						parentId: run.conversationId,
+						toolCallId,
+						number: first + i,
+						template: t.template?.id,
+						brief: t.brief,
+					})),
+				);
+				return children;
+			});
 			for (const [i, t] of picked.entries()) {
 				const h: Handle = {
 					number: first + i,

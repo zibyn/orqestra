@@ -1,4 +1,5 @@
 import {
+	type AnyPgColumn,
 	boolean,
 	index,
 	integer,
@@ -8,6 +9,7 @@ import {
 	serial,
 	text,
 	timestamp,
+	unique,
 	uuid,
 } from "drizzle-orm/pg-core";
 
@@ -111,8 +113,12 @@ export const conversation = pgTable(
 		userId: text("user_id")
 			.notNull()
 			.references(() => user.id, { onDelete: "cascade" }),
-		// fixed once the first message is sent
-		agentId: text("agent_id").notNull(),
+		// a Subagent's Conversation sits under the one that started it; null for top-level ones
+		parentId: uuid("parent_id").references((): AnyPgColumn => conversation.id, {
+			onDelete: "cascade",
+		}),
+		// fixed once the first message is sent; null: the built-in general worker (Subagents only)
+		agentId: text("agent_id"),
 		// null until generated after the first reply
 		title: text("title"),
 		titleEdited: boolean("title_edited").default(false).notNull(),
@@ -143,9 +149,33 @@ export const message = pgTable(
 		// `provider/id` and thinking level picked for (user) or used by (assistant) this message
 		model: text("model").notNull(),
 		thinkingLevel: text("thinking_level").notNull(),
+		// a delivered Notification: the Subagent's Conversation it came from
+		subagentId: uuid("subagent_id"),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 	},
 	(table) => [index("message_conversationId_idx").on(table.conversationId)],
+);
+
+// Every input to a Conversation waits here until its Run delivers it into `message` between two steps
+export const inbox = pgTable(
+	"inbox",
+	{
+		id: serial("id").primaryKey(),
+		conversationId: uuid("conversation_id")
+			.notNull()
+			.references(() => conversation.id, { onDelete: "cascade" }),
+		// pi's UserMessage
+		message: jsonb("message").notNull(),
+		// as in `message`: the Model and thinking level picked for this input
+		model: text("model").notNull(),
+		thinkingLevel: text("thinking_level").notNull(),
+		// set: a Notification from this Subagent's Conversation
+		subagentId: uuid("subagent_id"),
+		// false: delivered by the next Run, but does not start one
+		wake: boolean("wake").notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [index("inbox_conversationId_idx").on(table.conversationId)],
 );
 
 // The model sees `summary` plus the messages from firstKeptMessageId on; users still see everything
@@ -166,33 +196,34 @@ export const compaction = pgTable(
 	(table) => [index("compaction_conversationId_idx").on(table.conversationId)],
 );
 
-// One row per Subagent, rewritten after each of its steps so the UI follows it live; lives as long as its Conversation
+// Metadata of a Subagent; its transcript is the `message` rows of its own Conversation
 export const subagent = pgTable(
 	"subagent",
 	{
-		id: uuid("id").primaryKey().defaultRandom(),
+		// the Subagent's Conversation
 		conversationId: uuid("conversation_id")
+			.primaryKey()
+			.references(() => conversation.id, { onDelete: "cascade" }),
+		parentId: uuid("parent_id")
 			.notNull()
 			.references(() => conversation.id, { onDelete: "cascade" }),
 		// the subagent Tool call that started it, so the UI shows it under that call
 		toolCallId: text("tool_call_id").notNull(),
-		// what the parent Agent calls it by within the Run: 1, 2, ...
+		// what the parent Agent calls it by: 1, 2, ... within the parent Conversation
 		number: integer("number").notNull(),
 		// Agent Definition id; null for the built-in general worker
 		template: text("template"),
 		brief: text("brief").notNull(),
-		status: text("status")
+		outcome: text("outcome")
 			.$type<
 				"queued" | "running" | "completed" | "partial" | "failed" | "stopped"
 			>()
 			.default("queued")
 			.notNull(),
-		// pi user / assistant / toolResult messages as-is
-		messages: jsonb("messages").default([]).notNull(),
 		result: text("result"),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 	},
-	(table) => [index("subagent_conversationId_idx").on(table.conversationId)],
+	(table) => [unique().on(table.parentId, table.number)],
 );
 
 // Providers an Admin configured from the Catalog; at most one row per Catalog Provider

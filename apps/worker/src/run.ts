@@ -26,11 +26,17 @@ import {
 	conversationChannel,
 	db,
 	desc,
+	drain,
 	eq,
 	STOP_CHANNEL,
 	sql,
 } from "@orqestra/db";
-import { compaction, conversation, message } from "@orqestra/db/schema";
+import {
+	compaction,
+	conversation,
+	message,
+	subagent,
+} from "@orqestra/db/schema";
 import { createPostgresBackend, Worker } from "bullmq";
 import {
 	limiter,
@@ -62,7 +68,15 @@ async function setStatus(
 	await notify(conversationId, { type: "saved" });
 }
 
-/** Replies to the last (user) message of a Conversation. */
+/** drain() plus a reload notice when anything changed. */
+async function deliver(conversationId: string, finish = false) {
+	const delivered = (await drain(conversationId, finish)) as Message[];
+	if (delivered.length || finish)
+		await notify(conversationId, { type: "saved" });
+	return delivered;
+}
+
+/** Delivers the inbox and replies, until the inbox stays empty. */
 export async function runTurn(conversationId: string, config: OrqestraConfig) {
 	const stop = new AbortController();
 	active.set(conversationId, stop);
@@ -87,6 +101,8 @@ async function reply(
 		where: eq(conversation.id, conversationId),
 	});
 	if (!conv) return; // deleted while queued
+	// nothing to reload: the inputs showed already, from the inbox
+	await drain(conversationId);
 	const rows = (await db
 		.select()
 		.from(message)
@@ -94,19 +110,26 @@ async function reply(
 		.orderBy(asc(message.id))) as Row[];
 	const last = rows.at(-1);
 	if (last?.message.role !== "user") throw new Error("Nothing to reply to");
-	const turn = resolveTurn(config, conv.agentId, {
+	// shortcut: a Subagent's Conversation (agentId null) gets no Run before stage 2 of docs/design/subagent-sessions.md
+	const turn = resolveTurn(config, conv.agentId ?? "", {
 		model: last.model,
 		thinking: last.thinkingLevel as ThinkingLevel,
 	});
 	if (!turn) throw new Error(`Agent "${conv.agentId}" is no longer configured`);
 	const streamFn: StreamFn = config.streamSimple;
 	const tools = searchTools(config, turn.agent.tools);
+	const [{ numbered }] = await db
+		.select({ numbered: sql<number>`coalesce(max(${subagent.number}), 0)` })
+		.from(subagent)
+		.where(eq(subagent.parentId, conversationId));
 	const subagents = subagentTools(
 		config,
 		{ model: turn.model, thinking: turn.thinking },
 		tools,
 		{
 			conversationId,
+			userId: conv.userId,
+			numbered: Number(numbered),
 			signal,
 			notify: (event) => notify(conversationId, event),
 		},
@@ -122,6 +145,11 @@ async function reply(
 		},
 		streamFn,
 		sessionId: conversationId,
+		// inputs that arrived during a step go to the model right after it
+		prepareNextTurn: async () => {
+			const messages = await deliver(conversationId);
+			return messages.length ? { messages } : undefined;
+		},
 	});
 	agent.subscribe(async (event) => {
 		await relay(event, (e) => notify(conversationId, e));
@@ -145,21 +173,31 @@ async function reply(
 	signal.throwIfAborted(); // stopped before the reply began
 	signal.addEventListener("abort", () => agent.abort());
 	try {
-		await agent.continue();
+		let next: Message[] = [];
+		for (;;) {
+			await (next.length ? agent.prompt(next) : agent.continue());
+			const answer = agent.state.messages.at(-1) as AssistantMessage;
+			// fails the job so the reason (e.g. an unreadable API key) is logged; runTurn marks the Conversation failed
+			if (answer.stopReason === "error")
+				throw new Error(answer.errorMessage ?? "The reply failed");
+			// stopped: inputs that arrived meanwhile wait for the next Run
+			if (signal.aborted) {
+				await setStatus(conversationId, "idle");
+				break;
+			}
+			next = await deliver(conversationId, true);
+			if (!next.length) break;
+		}
 	} finally {
 		// the reply is done: Subagents it did not wait for are stopped, not left running past the Run
 		await subagents.close();
 	}
 	const answer = agent.state.messages.at(-1) as AssistantMessage;
-	// fails the job so the reason (e.g. an unreadable API key) is logged; runTurn marks the Conversation failed
-	if (answer.stopReason === "error")
-		throw new Error(answer.errorMessage ?? "The reply failed");
-	await setStatus(conversationId, "idle");
 
 	// titled after the first turn that produced a reply, stopped ones included
 	const first = !rows.some((r) => r.message.role === "assistant");
 	if (first && !conv.titleEdited)
-		await generateTitle(conversationId, config, conv.agentId, [
+		await generateTitle(conversationId, config, turn.agent.id, [
 			last.message,
 			answer,
 		]).catch((error) => console.error("title generation failed", error));

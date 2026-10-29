@@ -511,6 +511,10 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				messages: [{ role: "user" }, { role: "assistant" }],
 			},
 		]);
+		// a Subagent's Conversation is reached through its parent only
+		expect(await conversations.listConversations(userId)).toMatchObject([
+			{ id },
+		]);
 	});
 
 	it("streams a Subagent's reply over SSE under its row id", async () => {
@@ -679,6 +683,42 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		expect(view?.subagents.map((s) => s.status)).toEqual([
 			"stopped",
 			"stopped",
+		]);
+	});
+
+	it("starts one Run for two wake inputs that arrive together, and delivers both", async () => {
+		faux.setResponses([
+			fauxAssistantMessage("Both"),
+			fauxAssistantMessage("T"),
+		]);
+		const [{ id }] = await db
+			.insert(schema.conversation)
+			.values({ userId, agentId: "faux" })
+			.returning({ id: schema.conversation.id });
+		await db.insert(schema.inbox).values(
+			["one", "two"].map((content) => ({
+				conversationId: id,
+				message: { role: "user", content, timestamp: Date.now() },
+				model: "faux/faux-1",
+				thinkingLevel: "off",
+				wake: true,
+			})),
+		);
+		const started = await Promise.all([
+			conversations.ensureRun(id),
+			conversations.ensureRun(id),
+		]);
+		expect(started.filter(Boolean)).toHaveLength(1);
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "idle" && v.title === "T",
+		);
+		expect(
+			view?.messages.map((m) => [m.message.role, m.message.content]),
+		).toMatchObject([
+			["user", "one"],
+			["user", "two"],
+			["assistant", [{ type: "text", text: "Both" }]],
 		]);
 	});
 
