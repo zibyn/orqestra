@@ -10,7 +10,8 @@ import {
 	setAllowMemberPassword,
 	setupInstance,
 } from "#/lib/auth";
-import { canUsePassword, isAdmin } from "#/lib/identity";
+import { canUsePassword } from "#/lib/identity";
+import { requireAdmin } from "#/lib/session";
 
 // Session plus whether Instance Setup is still pending; checked on every navigation by the root route.
 export const getUserAndSetupState = createServerFn().handler(async () => {
@@ -32,11 +33,6 @@ export const getLoginOptions = createServerFn().handler(async () => ({
 	oidcConfigured: oidc.configured,
 	memberPassword: canUsePassword({ role: "user" }, await passwordPolicy()),
 }));
-
-async function requireAdmin() {
-	const session = await auth.api.getSession({ headers: getRequestHeaders() });
-	if (!isAdmin(session?.user)) throw new Error("Forbidden");
-}
 
 export const getSettings = createServerFn().handler(async () => {
 	await requireAdmin();

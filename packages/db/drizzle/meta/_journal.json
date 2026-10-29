@@ -15,6 +15,13 @@
       "when": 1793243443067,
       "tag": "0001_setup_completed",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793249961459,
+      "tag": "0002_conversations",
+      "breakpoints": true
     }
   ]
 }
