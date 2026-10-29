@@ -12,18 +12,11 @@ import {
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { thinkingLevel } from "./shared.ts";
+
+export { messageText, thinkingLevel } from "./shared.ts";
 
 export type ThinkingLevel = ModelThinkingLevel;
-
-const thinkingLevel = z.enum([
-	"off",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-	"max",
-]);
 
 // strict: an Agent Definition must not carry Conversation- or User-specific fields, so it can back a subagent later
 const frontmatterSchema = z.strictObject({

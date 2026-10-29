@@ -139,3 +139,26 @@
     color-scheme: dark;
     }
 }
+
+/*
+ * Streamdown code blocks: one quiet block instead of its card-in-card (see DESIGN.md "Code and identifiers").
+ * Unlayered, so these win over Streamdown's utility classes without !important.
+ */
+[data-streamdown="code-block"] {
+  @apply my-4 gap-0 rounded-lg border border-border bg-muted/50 p-0 shadow-none;
+}
+[data-streamdown="code-block-header"] {
+  @apply h-8 px-3 text-xs text-muted-foreground;
+}
+[data-streamdown="code-block-header"] > span {
+  @apply ml-0;
+}
+[data-streamdown="code-block-actions"] {
+  @apply gap-1 border-0 bg-transparent p-0 backdrop-blur-none;
+}
+[data-streamdown="code-block-body"] {
+  @apply rounded-none border-0 bg-transparent px-3 pt-0 pb-3 font-mono text-sm;
+}
+[data-streamdown="code-block-body"] pre {
+  @apply m-0 rounded-none bg-transparent p-0 text-sm;
+}

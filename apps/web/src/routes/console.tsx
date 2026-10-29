@@ -17,7 +17,7 @@ export const Route = createFileRoute("/console")({
 	component: Console,
 });
 
-const tab =
+const tabClass =
 	"-mb-px border-b-2 border-transparent px-1 pb-2 text-muted-foreground transition-colors hover:text-foreground data-[status=active]:border-foreground data-[status=active]:text-foreground";
 
 function Console() {
@@ -37,13 +37,17 @@ function Console() {
 					<span className="text-lg font-semibold">{m.console()}</span>
 				</div>
 				<nav className="flex gap-4 text-sm">
-					<Link to="/console" className={tab} activeOptions={{ exact: true }}>
+					<Link
+						to="/console"
+						className={tabClass}
+						activeOptions={{ exact: true }}
+					>
 						{m.console_users()}
 					</Link>
-					<Link to="/console/settings" className={tab}>
+					<Link to="/console/settings" className={tabClass}>
 						{m.console_settings()}
 					</Link>
-					<Link to="/console/agents" className={tab}>
+					<Link to="/console/agents" className={tabClass}>
 						{m.console_agents()}
 					</Link>
 				</nav>

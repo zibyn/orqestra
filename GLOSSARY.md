@@ -51,3 +51,11 @@ _Avoid_: Vendor, backend
 **Conversation**:
 An ordered series of messages between one User and the Agent, owned by and visible only to that User.
 _Avoid_: Session, thread, chat
+
+**Turn**:
+One user message and the Agent's reply to it, with the Model and thinking level picked for that message. Compaction never splits a Turn.
+_Avoid_: Exchange, round
+
+**Run**:
+The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time.
+_Avoid_: Job, task, generation

@@ -1,13 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { listAgents } from "#/lib/agents";
+import { inlineCode } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/console/agents")({
 	loader: () => listAgents(),
 	component: Agents,
 });
-
-const code = "rounded bg-muted px-1 py-0.5 font-mono";
 
 function Agents() {
 	const { agents, providers } = Route.useLoaderData();
@@ -19,7 +18,7 @@ function Agents() {
 			{agents.map((agent) => (
 				<div key={agent.id} className="rounded-lg border p-4 text-sm">
 					<h2 className="mb-1 font-medium">
-						{agent.name} <code className={code}>{agent.id}</code>
+						{agent.name} <code className={inlineCode}>{agent.id}</code>
 						{agent.default && ` (${m.default_marker()})`}
 					</h2>
 					<p className="text-muted-foreground">{agent.description}</p>
@@ -28,7 +27,7 @@ function Agents() {
 						{agent.models.map((model, i) => (
 							<span key={model}>
 								{i > 0 && ", "}
-								<code className={code}>{model}</code>
+								<code className={inlineCode}>{model}</code>
 								{model === agent.defaultModel && ` (${m.default_marker()})`}
 							</span>
 						))}
@@ -40,7 +39,7 @@ function Agents() {
 				<ul>
 					{providers.map((p) => (
 						<li key={p.id}>
-							{p.name} <code className={code}>{p.id}</code>:{" "}
+							{p.name} <code className={inlineCode}>{p.id}</code>:{" "}
 							{p.keyConfigured
 								? m.provider_key_configured()
 								: m.provider_key_missing()}

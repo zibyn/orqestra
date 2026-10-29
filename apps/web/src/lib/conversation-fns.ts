@@ -1,18 +1,10 @@
+import { thinkingLevel } from "@orqestra/config/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import * as conversations from "#/lib/conversations";
 import { requireUserId } from "#/lib/session";
 
 const id = z.uuid();
-const thinking = z.enum([
-	"off",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-	"max",
-]);
 
 export const getAgentOptions = createServerFn().handler(async () => {
 	await requireUserId();
@@ -38,7 +30,7 @@ export const sendMessage = createServerFn({ method: "POST" })
 			agentId: z.string().optional(),
 			text: z.string().trim().min(1),
 			model: z.string().optional(),
-			thinking: thinking.optional(),
+			thinking: thinkingLevel.optional(),
 		}),
 	)
 	.handler(async ({ data }) =>

@@ -1,8 +1,11 @@
 export const themes = ["system", "light", "dark"] as const;
 export type Theme = (typeof themes)[number];
+/** localStorage key holding the chosen Theme. */
+export const THEME_KEY = "theme";
 
 /** Toggles `.dark` on <html> from the stored choice; anything but light/dark follows the system. */
 export function applyTheme() {
+	// THEME_KEY spelled out: themeScript inlines this function's source, where the constant is out of scope
 	const theme = localStorage.getItem("theme");
 	document.documentElement.classList.toggle(
 		"dark",

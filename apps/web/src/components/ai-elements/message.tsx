@@ -1,3 +1,4 @@
+import { code } from "@streamdown/code";
 import type { ComponentProps } from "react";
 import { Streamdown } from "streamdown";
 import { cn } from "#/lib/utils";
@@ -42,12 +43,14 @@ export function MessageResponse({
 	...props
 }: ComponentProps<typeof Streamdown>) {
 	return (
-		// shortcut: no syntax highlighting until `@streamdown/code` is added (pnpm --filter @orqestra/web add @streamdown/code) and passed as plugins={{ code }}
 		<Streamdown
 			className={cn(
 				"prose prose-neutral dark:prose-invert max-w-none",
 				className,
 			)}
+			plugins={{ code }}
+			// copy only: a download button is clutter on a chat snippet
+			controls={{ code: { download: false } }}
 			{...props}
 		/>
 	);

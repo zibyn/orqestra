@@ -7,7 +7,7 @@ import {
 	DropdownMenuSubContent,
 	DropdownMenuSubTrigger,
 } from "#/components/ui/dropdown-menu";
-import { applyTheme, type Theme, themes } from "#/lib/theme";
+import { applyTheme, THEME_KEY, type Theme, themes } from "#/lib/theme";
 import { m } from "#/paraglide/messages";
 
 const labels: Record<Theme, () => string> = {
@@ -19,7 +19,7 @@ const labels: Record<Theme, () => string> = {
 /** Theme submenu for a DropdownMenu; only mounted on the client when the menu opens. */
 export function ThemeSwitcher() {
 	const [theme, setTheme] = useState(
-		() => localStorage.getItem("theme") ?? "system",
+		() => (localStorage.getItem(THEME_KEY) as Theme | null) ?? "system",
 	);
 
 	return (
@@ -32,8 +32,8 @@ export function ThemeSwitcher() {
 				<DropdownMenuRadioGroup
 					value={theme}
 					onValueChange={(value) => {
-						localStorage.setItem("theme", value);
-						setTheme(value);
+						localStorage.setItem(THEME_KEY, value);
+						setTheme(value as Theme);
 						applyTheme();
 					}}
 				>

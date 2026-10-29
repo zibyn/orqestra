@@ -119,7 +119,8 @@ export function Composer({
 					<PromptInputSubmit
 						running={running}
 						onStop={onStop}
-						disabled={!text.trim() || sending}
+						disabled={!text.trim()}
+						busy={sending}
 					/>
 				</PromptInputFooter>
 			</PromptInput>
