@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
-import { getAppState } from "#/lib/instance";
+import { getUserAndSetupState } from "#/lib/instance";
 import { getLocale } from "#/paraglide/runtime";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
 import appCss from "../styles.css?url";
@@ -25,8 +25,8 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 			document.documentElement.setAttribute("lang", getLocale());
 		}
 
-		// Instance Setup gate: everything goes to /setup until an Admin exists, then /setup is gone
-		const { needsSetup, user } = await getAppState();
+		// Instance Setup gate: everything goes to /setup until setup is completed, then /setup is gone for good
+		const { needsSetup, user } = await getUserAndSetupState();
 		const onSetup = location.pathname === "/setup";
 		if (needsSetup && !onSetup) throw redirect({ to: "/setup" });
 		if (!needsSetup && onSetup) throw redirect({ to: "/login" });

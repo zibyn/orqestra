@@ -4,53 +4,31 @@ import {
 	canUsePassword,
 	displayName,
 	polarisUser,
-	setupInstance,
-} from "./identity";
+} from "#/lib/identity";
 
-function fakeAdmins() {
-	const admins: string[] = [];
-	return {
-		admins,
-		hasAdmin: async () => admins.length > 0,
-		createAdmin: async (email: string) => {
-			admins.push(email);
-		},
-	};
-}
-
-describe("Instance Setup", () => {
-	it("creates the Default Admin from /setup only once", async () => {
-		const store = fakeAdmins();
-		expect(
-			await setupInstance(store, { email: "a@x.io", password: "pw" }),
-		).toBe(true);
-		expect(
-			await setupInstance(store, { email: "b@x.io", password: "pw" }),
-		).toBe(false);
-		expect(store.admins).toEqual(["a@x.io"]);
-	});
-
-	it("creates the Default Admin from ADMIN_EMAIL/ADMIN_PASSWORD only once", async () => {
-		const store = fakeAdmins();
-		const env = { ADMIN_EMAIL: "env@x.io", ADMIN_PASSWORD: "pw" };
-		await bootstrapDefaultAdmin(env, store);
-		await bootstrapDefaultAdmin(env, store);
-		expect(store.admins).toEqual(["env@x.io"]);
-		expect(
-			await setupInstance(store, { email: "b@x.io", password: "pw" }),
-		).toBe(false);
+// Once-only and atomicity of Instance Setup itself are covered in instance-setup.db.test.ts
+describe("Instance Setup from ADMIN_EMAIL/ADMIN_PASSWORD", () => {
+	it("creates the Default Admin from the env vars", async () => {
+		const calls: unknown[] = [];
+		const setup = async (admin: unknown) => calls.push(admin) > 0;
+		await bootstrapDefaultAdmin(
+			{ ADMIN_EMAIL: "env@x.io", ADMIN_PASSWORD: "pw" },
+			setup,
+		);
+		expect(calls).toEqual([{ email: "env@x.io", password: "pw" }]);
 	});
 
 	it("leaves setup to /setup when admin env vars are missing", async () => {
-		const store = fakeAdmins();
-		await bootstrapDefaultAdmin({ ADMIN_EMAIL: "env@x.io" }, store);
-		expect(store.admins).toEqual([]);
+		const calls: unknown[] = [];
+		const setup = async (admin: unknown) => calls.push(admin) > 0;
+		await bootstrapDefaultAdmin({ ADMIN_EMAIL: "env@x.io" }, setup);
+		expect(calls).toEqual([]);
 	});
 });
 
 describe("polaris user", () => {
-	// better-auth links to an existing same-email User only when emailVerified is true
-	it("may merge into an existing account only when email_verified=true", () => {
+	// better-auth links to an existing same-email User only when emailVerified is true (config: auth.test.ts)
+	it("may merge into an existing User only when email_verified=true", () => {
 		const base = { sub: "s1", email: "m@x.io" };
 		expect(polarisUser({ ...base, email_verified: true }).emailVerified).toBe(
 			true,
@@ -99,8 +77,8 @@ describe("password login", () => {
 	it.each(
 		cases,
 	)("%s with OIDC=%s, member switch=%s → %s", (role, oidcConfigured, allowMemberPassword, allowed) => {
-		expect(canUsePassword(role, { oidcConfigured, allowMemberPassword })).toBe(
-			allowed,
-		);
+		expect(
+			canUsePassword({ role }, { oidcConfigured, allowMemberPassword }),
+		).toBe(allowed);
 	});
 });

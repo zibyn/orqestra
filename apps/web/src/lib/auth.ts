@@ -2,14 +2,21 @@ import { db } from "@orqestra/db";
 import * as schema from "@orqestra/db/schema";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError } from "better-auth/api";
+import {
+	APIError,
+	createAuthMiddleware,
+	getSessionFromCtx,
+} from "better-auth/api";
 import { admin, genericOAuth } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
+import { eq } from "drizzle-orm";
 import { env } from "#/env";
-import { canUsePassword, polarisUser } from "#/lib/identity";
+import { canUsePassword, isAdmin, polarisUser } from "#/lib/identity";
 
 export const oidc = {
-	configured: Boolean(env.OIDC_ISSUER && env.OIDC_CLIENT_ID),
+	configured: Boolean(
+		env.OIDC_ISSUER && env.OIDC_CLIENT_ID && env.OIDC_CLIENT_SECRET,
+	),
 	issuer: env.OIDC_ISSUER?.replace(/\/$/, ""),
 };
 
@@ -28,12 +35,21 @@ export async function setAllowMemberPassword(allowMemberPassword: boolean) {
 		});
 }
 
+/** Inputs of the password login rule (see canUsePassword). */
+export async function passwordPolicy() {
+	return {
+		oidcConfigured: oidc.configured,
+		allowMemberPassword: await getAllowMemberPassword(),
+	};
+}
+
 export const auth = betterAuth({
 	database: drizzleAdapter(db, { provider: "pg", schema }),
 	emailAndPassword: { enabled: true, disableSignUp: true },
 	user: {
 		additionalFields: {
-			phoneNumber: { type: "string", required: false, input: false },
+			// Not input:false, which would drop it from the polaris profile; the /update-user guard below keeps users from setting it
+			phoneNumber: { type: "string", required: false },
 		},
 	},
 	// Merging is decided by polaris' email_verified alone (see polarisUser)
@@ -44,20 +60,34 @@ export const auth = betterAuth({
 				// Runs after the password is verified, so it does not reveal which emails are Members
 				before: async (session, ctx) => {
 					if (ctx?.path !== "/sign-in/email") return;
-					const user = (await ctx.context.internalAdapter.findUserById(
-						session.userId,
-					)) as { role?: string } | null;
-					const allowed = canUsePassword(user?.role, {
-						oidcConfigured: oidc.configured,
-						allowMemberPassword: await getAllowMemberPassword(),
+					const user = await db.query.user.findFirst({
+						where: (u, { eq }) => eq(u.id, session.userId),
 					});
-					if (!allowed)
+					if (!canUsePassword(user, await passwordPolicy()))
 						throw new APIError("FORBIDDEN", {
 							message: "Password login is disabled. Sign in with Polaris.",
 						});
 				},
 			},
 		},
+	},
+	hooks: {
+		before: createAuthMiddleware(async (ctx) => {
+			if (ctx.path === "/update-user" && ctx.body?.phoneNumber !== undefined)
+				throw new APIError("BAD_REQUEST", {
+					message: "The phone number comes from Polaris",
+				});
+			// Keeps at least one Admin; better-auth itself already refuses self-ban and self-removal
+			if (ctx.path === "/admin/set-role" || ctx.path === "/admin/update-user") {
+				const role = ctx.body?.role ?? ctx.body?.data?.role;
+				if (role === undefined || isAdmin({ role })) return;
+				const session = await getSessionFromCtx(ctx);
+				if (session?.user.id === ctx.body.userId)
+					throw new APIError("BAD_REQUEST", {
+						message: "You cannot demote yourself",
+					});
+			}
+		}),
 	},
 	plugins: [
 		admin(),
@@ -82,16 +112,35 @@ export const auth = betterAuth({
 	],
 });
 
-export const admins = {
-	hasAdmin: async () =>
-		Boolean(
-			await db.query.user.findFirst({
-				where: (u, { eq }) => eq(u.role, "admin"),
-			}),
-		),
-	createAdmin: async (email: string, password: string) => {
+export async function isSetupCompleted() {
+	const [row] = await db.select().from(schema.instanceSettings);
+	return row?.setupCompleted ?? false;
+}
+
+/** Instance Setup: atomically marks setup done and creates the Default Admin. False if it already ran. */
+export async function setupInstance({
+	email,
+	password,
+}: {
+	email: string;
+	password: string;
+}) {
+	return db.transaction(async (tx) => {
+		// Concurrent claims wait on this row's lock, then see setup_completed already true
+		const claimed = await tx
+			.insert(schema.instanceSettings)
+			.values({ setupCompleted: true })
+			.onConflictDoUpdate({
+				target: schema.instanceSettings.id,
+				set: { setupCompleted: true },
+				setWhere: eq(schema.instanceSettings.setupCompleted, false),
+			})
+			.returning();
+		if (claimed.length === 0) return false;
+		// Not on tx, but if it throws the claim above rolls back
 		await auth.api.createUser({
 			body: { email, password, name: email, role: "admin" },
 		});
-	},
-};
+		return true;
+	});
+}

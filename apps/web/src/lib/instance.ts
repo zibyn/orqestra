@@ -1,33 +1,22 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 import { z } from "zod";
-import { env } from "#/env";
 import {
-	admins,
 	auth,
 	getAllowMemberPassword,
+	isSetupCompleted,
 	oidc,
+	passwordPolicy,
 	setAllowMemberPassword,
-} from "#/lib/auth";
-import {
-	bootstrapDefaultAdmin,
-	canUsePassword,
 	setupInstance,
-} from "#/lib/identity";
-
-let bootstrap: Promise<unknown> | undefined;
+} from "#/lib/auth";
+import { canUsePassword, isAdmin } from "#/lib/identity";
 
 // Session plus whether Instance Setup is still pending; checked on every navigation by the root route.
-export const getAppState = createServerFn().handler(async () => {
-	// Env-var Instance Setup runs once per process, before the first page is served
-	bootstrap ??= bootstrapDefaultAdmin(env, admins).catch((e) => {
-		bootstrap = undefined;
-		throw e;
-	});
-	await bootstrap;
+export const getUserAndSetupState = createServerFn().handler(async () => {
 	const session = await auth.api.getSession({ headers: getRequestHeaders() });
 	return {
-		needsSetup: !(await admins.hasAdmin()),
+		needsSetup: !(await isSetupCompleted()),
 		user: session?.user ?? null,
 	};
 });
@@ -35,21 +24,18 @@ export const getAppState = createServerFn().handler(async () => {
 export const runSetup = createServerFn({ method: "POST" })
 	.validator(z.object({ email: z.email(), password: z.string().min(8) }))
 	.handler(async ({ data }) => {
-		if (!(await setupInstance(admins, data)))
+		if (!(await setupInstance(data)))
 			throw new Error("Instance Setup has already been completed");
 	});
 
 export const getLoginOptions = createServerFn().handler(async () => ({
 	oidcConfigured: oidc.configured,
-	memberPassword: canUsePassword("user", {
-		oidcConfigured: oidc.configured,
-		allowMemberPassword: await getAllowMemberPassword(),
-	}),
+	memberPassword: canUsePassword({ role: "user" }, await passwordPolicy()),
 }));
 
 async function requireAdmin() {
 	const session = await auth.api.getSession({ headers: getRequestHeaders() });
-	if (session?.user.role !== "admin") throw new Error("Forbidden");
+	if (!isAdmin(session?.user)) throw new Error("Forbidden");
 }
 
 export const getSettings = createServerFn().handler(async () => {

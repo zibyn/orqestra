@@ -1,19 +1,8 @@
 // Pure identity rules, kept free of DB/auth imports so they unit-test without a database.
 
-type Admins = {
-	hasAdmin: () => Promise<boolean>;
-	createAdmin: (email: string, password: string) => Promise<void>;
-};
-
-/** Instance Setup: creates the Default Admin unless any Admin exists. Returns whether it ran. */
-export async function setupInstance(
-	admins: Admins,
-	{ email, password }: { email: string; password: string },
-) {
-	// shortcut: check-then-create is not atomic; two simultaneous first-boot setups could both win. Add a DB lock if setup is ever exposed beyond first boot.
-	if (await admins.hasAdmin()) return false;
-	await admins.createAdmin(email, password);
-	return true;
+/** Admins have the `admin` role; everyone else is a Member. */
+export function isAdmin(user: { role?: string | null } | null | undefined) {
+	return user?.role === "admin";
 }
 
 const PLACEHOLDER_DOMAIN = "@polaris.invalid";
@@ -45,19 +34,22 @@ export function polarisUser(claims: Record<string, unknown>) {
 
 /** Admins always; Members only via the instance switch, unless no OIDC is configured. */
 export function canUsePassword(
-	role: string | null | undefined,
-	s: { oidcConfigured: boolean; allowMemberPassword: boolean },
+	user: { role?: string | null } | null | undefined,
+	policy: { oidcConfigured: boolean; allowMemberPassword: boolean },
 ) {
-	return role === "admin" || !s.oidcConfigured || s.allowMemberPassword;
+	return isAdmin(user) || !policy.oidcConfigured || policy.allowMemberPassword;
 }
 
 /** Startup entry point of Instance Setup: uses ADMIN_EMAIL/ADMIN_PASSWORD when both are set. */
 export async function bootstrapDefaultAdmin(
 	env: { ADMIN_EMAIL?: string; ADMIN_PASSWORD?: string },
-	admins: Admins,
+	setupInstance: (admin: {
+		email: string;
+		password: string;
+	}) => Promise<boolean>,
 ) {
 	if (!env.ADMIN_EMAIL || !env.ADMIN_PASSWORD) return false;
-	return setupInstance(admins, {
+	return setupInstance({
 		email: env.ADMIN_EMAIL,
 		password: env.ADMIN_PASSWORD,
 	});

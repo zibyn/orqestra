@@ -5,7 +5,7 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { authClient } from "#/lib/auth-client";
-import { displayName } from "#/lib/identity";
+import { displayName, isAdmin } from "#/lib/identity";
 
 export const Route = createFileRoute("/console/")({ component: Users });
 
@@ -22,7 +22,9 @@ function Users() {
 		},
 	});
 
-	async function run(action: Promise<{ error: { message?: string } | null }>) {
+	async function applyAndRefetch(
+		action: Promise<{ error: { message?: string } | null }>,
+	) {
 		const { error } = await action;
 		setError(error ? (error.message ?? "Request failed") : "");
 		await users.refetch();
@@ -33,7 +35,7 @@ function Users() {
 		const form = e.currentTarget;
 		const data = new FormData(form);
 		const email = String(data.get("email"));
-		await run(
+		await applyAndRefetch(
 			authClient.admin.createUser({
 				email,
 				password: String(data.get("password")),
@@ -77,31 +79,29 @@ function Users() {
 				<tbody>
 					{users.data?.map((u) => (
 						<tr key={u.id} className="border-t">
-							<td className="py-2">
-								{displayName(u as { email: string; phoneNumber?: string })}
-							</td>
-							<td>{u.role === "admin" ? "Admin" : "Member"}</td>
+							<td className="py-2">{displayName(u)}</td>
+							<td>{isAdmin(u) ? "Admin" : "Member"}</td>
 							<td>{u.banned ? "Banned" : "Active"}</td>
 							<td className="flex justify-end gap-2 py-2">
 								<Button
 									size="sm"
 									variant="outline"
 									onClick={() =>
-										run(
+										applyAndRefetch(
 											authClient.admin.setRole({
 												userId: u.id,
-												role: u.role === "admin" ? "user" : "admin",
+												role: isAdmin(u) ? "user" : "admin",
 											}),
 										)
 									}
 								>
-									{u.role === "admin" ? "Make Member" : "Make Admin"}
+									{isAdmin(u) ? "Make Member" : "Make Admin"}
 								</Button>
 								<Button
 									size="sm"
 									variant={u.banned ? "outline" : "destructive"}
 									onClick={() =>
-										run(
+										applyAndRefetch(
 											u.banned
 												? authClient.admin.unbanUser({ userId: u.id })
 												: authClient.admin.banUser({ userId: u.id }),

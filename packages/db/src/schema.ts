@@ -92,4 +92,6 @@ export const instanceSettings = pgTable("instance_settings", {
 	allowMemberPassword: boolean("allow_member_password")
 		.default(false)
 		.notNull(),
+	// Set once by Instance Setup and never cleared, so /setup stays closed for good
+	setupCompleted: boolean("setup_completed").default(false).notNull(),
 });

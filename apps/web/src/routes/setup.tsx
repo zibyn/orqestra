@@ -31,7 +31,7 @@ function Setup() {
 		<main className="mx-auto max-w-sm p-8">
 			<h1 className="mb-2 text-2xl font-semibold">Set up Orqestra</h1>
 			<p className="mb-6 text-sm text-muted-foreground">
-				Create the Default Admin account.
+				Create the Default Admin.
 			</p>
 			<form onSubmit={onSubmit} className="flex flex-col gap-4">
 				<Label htmlFor="email">Email</Label>
@@ -45,7 +45,7 @@ function Setup() {
 					required
 				/>
 				{error && <p className="text-sm text-destructive">{error}</p>}
-				<Button type="submit">Create admin</Button>
+				<Button type="submit">Create Default Admin</Button>
 			</form>
 		</main>
 	);

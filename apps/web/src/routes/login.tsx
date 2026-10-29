@@ -9,7 +9,7 @@ import { getLoginOptions } from "#/lib/instance";
 
 const errors: Record<string, string> = {
 	account_not_linked:
-		"An account with this email already exists, but Polaris has not verified the email, so they cannot be merged.",
+		"A user with this email already exists, but Polaris has not verified the email, so they cannot be merged.",
 };
 
 export const Route = createFileRoute("/login")({

@@ -71,6 +71,9 @@ importers:
       cn:
         specifier: ^0.5.0
         version: 0.5.0
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       lucide-react:
         specifier: ^0.577.0
         version: 0.577.0(react@19.3.1)
