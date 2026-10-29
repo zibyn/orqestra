@@ -150,5 +150,11 @@
   "add_header": "Add header",
   "remove": "Remove",
   "mcp_header_unreadable": "A stored header value cannot be decrypted (ORQESTRA_ENCRYPTION_KEY changed?), so this MCP Server is unavailable. Enter it again.",
-  "delete_mcp_server_confirm": "Delete this MCP Server with its headers?"
+  "delete_mcp_server_confirm": "Delete this MCP Server with its headers?",
+  "mcp_test_ok": "Saved and connected. This MCP Server offers these Tools:",
+  "mcp_test_no_tools": "Saved and connected, but this MCP Server offers no Tools.",
+  "mcp_test_auth": "Saved, but authentication failed; check the headers: {detail}",
+  "mcp_test_unreachable": "Saved, but the MCP Server cannot be reached; check the URL: {detail}",
+  "mcp_test_timeout": "Saved, but the MCP Server did not answer in time.",
+  "mcp_test_failed": "Saved, but the connection test failed: {detail}"
 }

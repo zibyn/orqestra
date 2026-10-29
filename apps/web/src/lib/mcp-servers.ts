@@ -5,6 +5,7 @@ import { agent, mcpServer } from "@orqestra/db/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { reloadConfig } from "#/lib/config";
+import { type McpTestResult, testMcpServer } from "#/lib/mcp-connection";
 import { requireAdmin } from "#/lib/session";
 
 // MCP Servers, edited by Admins in /console/providers. Header values only go in.
@@ -27,7 +28,7 @@ export const getMcpServers = createServerFn().handler(async () => {
 	}));
 });
 
-/** Field errors by name (`id`, `headers`); empty when it was saved. */
+/** Field errors by name (`id`, `headers`); empty when it was saved, then with the connection test's result. */
 export const saveMcpServer = createServerFn({ method: "POST" })
 	.validator(
 		z.object({
@@ -46,7 +47,7 @@ export const saveMcpServer = createServerFn({ method: "POST" })
 			),
 		}),
 	)
-	.handler(async ({ data }): Promise<{ errors: Record<string, string> }> => {
+	.handler(async ({ data }): Promise<SaveResult> => {
 		await requireAdmin();
 		const id = mcpServerId.safeParse(data.id);
 		if (!id.success) return { errors: { id: id.error.issues[0].message } };
@@ -57,6 +58,7 @@ export const saveMcpServer = createServerFn({ method: "POST" })
 			return { errors: { id: "An MCP Server with this id already exists" } };
 		if (!data.create && !stored) throw new Error("MCP Server not found");
 		const headers = [];
+		const plain: Record<string, string> = {};
 		const seen = new Set<string>();
 		for (const h of data.headers) {
 			if (!headerName.test(h.name))
@@ -75,6 +77,7 @@ export const saveMcpServer = createServerFn({ method: "POST" })
 			if (!value)
 				return { errors: { headers: `Enter a value for header ${h.name}` } };
 			headers.push({ name: h.name, value });
+			plain[h.name] = h.value || (decryptSecret(value) as string);
 		}
 		const values = {
 			name: data.name,
@@ -86,8 +89,14 @@ export const saveMcpServer = createServerFn({ method: "POST" })
 			await db.update(mcpServer).set(values).where(eq(mcpServer.id, data.id));
 		else await db.insert(mcpServer).values({ id: data.id, ...values });
 		await reloadConfig();
-		return { errors: {} };
+		// saved either way, so the Admin can fix the URL or headers later
+		return {
+			errors: {},
+			test: await testMcpServer({ url: data.url, headers: plain }),
+		};
 	});
+
+type SaveResult = { errors: Record<string, string>; test?: McpTestResult };
 
 export const setMcpServerEnabled = createServerFn({ method: "POST" })
 	.validator(z.object({ id: mcpServerId, enabled: z.boolean() }))

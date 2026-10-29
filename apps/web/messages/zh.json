@@ -150,5 +150,11 @@
   "add_header": "添加请求头",
   "remove": "移除",
   "mcp_header_unreadable": "已保存的请求头值无法解密（ORQESTRA_ENCRYPTION_KEY 是否更换过？），此 MCP Server 不可用。请重新填写。",
-  "delete_mcp_server_confirm": "删除这个 MCP Server 及其请求头？"
+  "delete_mcp_server_confirm": "删除这个 MCP Server 及其请求头？",
+  "mcp_test_ok": "已保存，连接成功。该 MCP Server 提供以下 Tool：",
+  "mcp_test_no_tools": "已保存，连接成功，但该 MCP Server 没有提供 Tool。",
+  "mcp_test_auth": "已保存，但认证失败，请检查请求头：{detail}",
+  "mcp_test_unreachable": "已保存，但无法连接到该 MCP Server，请检查 URL：{detail}",
+  "mcp_test_timeout": "已保存，但该 MCP Server 未在规定时间内响应。",
+  "mcp_test_failed": "已保存，但连接测试失败：{detail}"
 }

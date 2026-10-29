@@ -12,6 +12,7 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Switch } from "#/components/ui/switch";
+import type { McpTestResult } from "#/lib/mcp-connection";
 import {
 	deleteMcpServer,
 	getMcpServers,
@@ -574,12 +575,14 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 	const [headers, setHeaders] = useState(blank);
 	const [busy, setBusy] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
+	const [test, setTest] = useState<McpTestResult>();
 	const fieldId = (field: string) => `mcp-${existing?.id ?? "new"}-${field}`;
 	const setHeader = (i: number, fields: Partial<(typeof headers)[number]>) =>
 		setHeaders(headers.map((h, j) => (j === i ? { ...h, ...fields } : h)));
 
 	async function save() {
 		setBusy(true);
+		setTest(undefined);
 		try {
 			const result = await saveMcpServer({
 				data: {
@@ -592,6 +595,7 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 				},
 			});
 			setErrors(result.errors);
+			setTest(result.test);
 			if (!Object.keys(result.errors).length) {
 				if (!existing) {
 					setName("");
@@ -719,7 +723,39 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 				{busy && <Loader2Icon className="animate-spin" />}
 				{existing ? m.save() : m.add_mcp_server()}
 			</Button>
+			{test && <McpTestOutcome result={test} />}
 			{errors[""] && <p className="text-destructive">{errors[""]}</p>}
 		</form>
+	);
+}
+
+/** The Tools a just-saved MCP Server offers, or why connecting to it failed. */
+function McpTestOutcome({ result }: { result: McpTestResult }) {
+	if (!result.ok) {
+		const message = {
+			auth: m.mcp_test_auth,
+			unreachable: m.mcp_test_unreachable,
+			timeout: m.mcp_test_timeout,
+			failed: m.mcp_test_failed,
+		}[result.reason];
+		return (
+			<p className="text-destructive">{message({ detail: result.detail })}</p>
+		);
+	}
+	if (!result.tools.length) return <p>{m.mcp_test_no_tools()}</p>;
+	return (
+		<div className="flex flex-col gap-2">
+			<p>{m.mcp_test_ok()}</p>
+			<ul className="flex flex-col gap-1">
+				{result.tools.map((t) => (
+					<li key={t.name}>
+						<code className={inlineCode}>{t.name}</code>
+						{t.description && (
+							<span className="text-muted-foreground"> {t.description}</span>
+						)}
+					</li>
+				))}
+			</ul>
+		</div>
 	);
 }
