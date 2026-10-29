@@ -24,6 +24,7 @@ import {
 	Fragment,
 	useContext,
 	useEffect,
+	useRef,
 	useState,
 } from "react";
 import {
@@ -144,6 +145,9 @@ function ConversationView() {
 		.filter((row) => row.message.role === "user")
 		.at(-1);
 	const results = toolResults(conversation.messages.map((row) => row.message));
+	const delivered = conversation.messages.filter((row) => !row.queued);
+	// still in the inbox: shown after the reply that is generating, and after a failure that awaits Retry
+	const queued = conversation.messages.filter((row) => row.queued);
 
 	return (
 		<PanelContext
@@ -152,7 +156,7 @@ function ConversationView() {
 			<div className="flex min-h-0 flex-1 flex-col">
 				<div className="flex-1 overflow-y-auto">
 					<div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
-						{conversation.messages.map((row) => (
+						{delivered.map((row) => (
 							<Fragment key={row.id}>
 								{conversation.compactedBefore.includes(row.id) && (
 									<div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -166,24 +170,12 @@ function ConversationView() {
 										<NotificationLine
 											subagentId={row.subagentId}
 											text={messageText(row.message)}
-											className={row.id < 0 ? "order-1" : undefined}
 										/>
 									) : row.message.role === "user" ? (
-										// still in the inbox: shown after the reply that is generating
-										<Message
-											from="user"
-											className={row.id < 0 ? "order-1" : undefined}
-										>
-											<MessageContent
-												className={row.id < 0 ? "opacity-60" : undefined}
-											>
+										<Message from="user">
+											<MessageContent>
 												{messageText(row.message)}
 											</MessageContent>
-											{row.id < 0 && (
-												<span className="text-xs text-muted-foreground">
-													{m.queued()}
-												</span>
-											)}
 										</Message>
 									) : row.message.role === "assistant" ? (
 										<AgentReply message={row.message} results={results} />
@@ -223,6 +215,24 @@ function ConversationView() {
 									{m.retry()}
 								</Button>
 							</div>
+						)}
+						{queued.map((row) =>
+							row.subagentId ? (
+								<NotificationLine
+									key={`queued-${row.id}`}
+									subagentId={row.subagentId}
+									text={messageText(row.message)}
+								/>
+							) : (
+								<Message key={`queued-${row.id}`} from="user">
+									<MessageContent className="opacity-60">
+										{messageText(row.message)}
+									</MessageContent>
+									<span className="text-xs text-muted-foreground">
+										{m.queued()}
+									</span>
+								</Message>
+							),
 						)}
 					</div>
 				</div>
@@ -285,10 +295,10 @@ type SubagentTranscript = {
 	brief: string;
 	// only older ones carry their transcript; a row's loads when its panel opens
 	messages?: PiMessage[];
-	status?: (typeof Route.types.loaderData)["subagents"][number]["status"];
+	outcome?: (typeof Route.types.loaderData)["subagents"][number]["outcome"];
 };
 
-const statusLabel = (status = "completed") =>
+const outcomeLabel = (outcome = "completed") =>
 	(
 		({
 			queued: m.subagent_queued(),
@@ -298,7 +308,7 @@ const statusLabel = (status = "completed") =>
 			failed: m.subagent_failed(),
 			stopped: m.subagent_stopped(),
 		}) as Record<string, string>
-	)[status];
+	)[outcome];
 
 function useSubagentName(run?: SubagentTranscript) {
 	const { agents } = app.useLoaderData();
@@ -351,12 +361,12 @@ function ToolCallView({
 	);
 }
 
-/** A Subagent as one line in its parent's reply, with what it is writing; open it for its own session. */
+/** A Subagent as one line in its parent's reply, with what it is writing; open it for its own Conversation. */
 function SubagentView({ run }: { run: SubagentTranscript }) {
 	const { replies, open } = useContext(PanelContext);
 	const name = useSubagentName(run);
-	const running = run.status === "running";
-	// a crashed Run never sends `end`: its reply stops showing with the status
+	const running = run.outcome === "running";
+	// a crashed Run never sends `end`: its reply stops showing with its outcome
 	const live = running && run.id ? replies[run.id] : undefined;
 	const preview = live?.at(-1)?.text.trim().split("\n").at(-1);
 	return (
@@ -377,9 +387,9 @@ function SubagentView({ run }: { run: SubagentTranscript }) {
 					/>
 				) : (
 					<span
-						className={`ml-auto shrink-0 text-xs ${run.status === "failed" ? "text-destructive" : ""}`}
+						className={`ml-auto shrink-0 text-xs ${run.outcome === "failed" ? "text-destructive" : ""}`}
 					>
-						{statusLabel(run.status)}
+						{outcomeLabel(run.outcome)}
 					</span>
 				)}
 				<ChevronRightIcon className="size-3.5 shrink-0" />
@@ -393,32 +403,30 @@ function SubagentView({ run }: { run: SubagentTranscript }) {
 function NotificationLine({
 	subagentId,
 	text,
-	className,
 }: {
 	subagentId: string;
 	text: string;
-	className?: string;
 }) {
 	const { subagents } = Route.useLoaderData();
 	const { open } = useContext(PanelContext);
 	const run = subagents.find((s) => s.id === subagentId);
 	// how it ended this time: a continued Subagent notifies again
-	const status = text.match(/^<task-notification [^>]*status="(\w+)"/)?.[1];
+	const outcome = text.match(/^<task-notification [^>]*status="(\w+)"/)?.[1];
 	if (!run) return null;
 	return (
 		<button
 			type="button"
 			onClick={() => open(run)}
-			className={`flex items-center gap-3 text-xs text-muted-foreground hover:text-foreground ${className ?? ""}`}
+			className="flex items-center gap-3 text-xs text-muted-foreground hover:text-foreground"
 		>
 			<Separator className="flex-1" />
-			{m.subagent_number({ number: run.number })} · {statusLabel(status)}
+			{m.subagent_number({ number: run.number })} · {outcomeLabel(outcome)}
 			<Separator className="flex-1" />
 		</button>
 	);
 }
 
-/** A Subagent's own session, read-only: the User can stop it, but only the Agent that started it writes to it. */
+/** A Subagent's own Conversation, read-only: the User can stop it, but only the Agent that started it writes to it. */
 function SubagentPanel({
 	run,
 	open,
@@ -432,6 +440,8 @@ function SubagentPanel({
 	const { replies } = useContext(PanelContext);
 	const name = useSubagentName(run);
 	const [stopping, setStopping] = useState(false);
+	// focus lands on the title, not on Stop, so a stray Enter does not stop the Subagent
+	const title = useRef<HTMLHeadingElement>(null);
 	const id = run?.id;
 	const loaded = useQuery({
 		queryKey: ["subagent", id],
@@ -440,19 +450,24 @@ function SubagentPanel({
 	});
 	const messages = run?.messages ?? loaded.data ?? [];
 	const results = toolResults(messages);
-	const running = run?.status === "running";
+	const running = run?.outcome === "running";
 	const live = running && id ? replies[id] : undefined;
-	const active = running || run?.status === "queued";
+	const active = running || run?.outcome === "queued";
 	return (
 		<Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-			<SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
+			<SheetContent
+				className="data-[side=right]:w-full data-[side=right]:sm:max-w-2xl"
+				initialFocus={title}
+			>
 				<SheetHeader className="flex-row items-center gap-3 border-b pr-12">
 					<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-						<SheetTitle>{name}</SheetTitle>
+						<SheetTitle ref={title} tabIndex={-1} className="outline-none">
+							{name}
+						</SheetTitle>
 						<SheetDescription>
 							{run?.number !== undefined &&
 								`${m.subagent_number({ number: run.number })} · `}
-							{statusLabel(run?.status)}
+							{outcomeLabel(run?.outcome)}
 						</SheetDescription>
 					</div>
 					{active && id && (
@@ -498,7 +513,7 @@ function SubagentPanel({
 						) : null,
 					)}
 					{live && <LiveReply parts={live} />}
-					{(run?.status === "queued" ||
+					{(run?.outcome === "queued" ||
 						(running && !live) ||
 						(loaded.isFetching && !loaded.data)) && (
 						<Loader2Icon
