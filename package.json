@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter @orqestra/web dev",
+    "dev": "pnpm --parallel --filter @orqestra/web --filter @orqestra/worker dev",
+    "web": "pnpm --filter @orqestra/web dev",
     "build": "pnpm --filter @orqestra/web build",
     "test": "pnpm -r --if-present test",
     "worker": "pnpm --filter @orqestra/worker dev",
