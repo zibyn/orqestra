@@ -5,7 +5,7 @@ import * as schema from "./schema.ts";
 export const db = drizzle(process.env.DATABASE_URL!, { schema });
 
 // so apps (the worker) can query without their own drizzle-orm dependency
-export { and, asc, desc, eq, ne, sql } from "drizzle-orm";
+export { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
 /** BullMQ queue with one job `{ conversationId }` per message to reply to. */
 export const AGENT_RUNS_QUEUE = "agent-runs";

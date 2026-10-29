@@ -32,7 +32,7 @@ import {
 } from "@orqestra/db";
 import { compaction, conversation, message } from "@orqestra/db/schema";
 import { createPostgresBackend, Worker } from "bullmq";
-import { limiter, searchTools, subagentTool } from "./tools.ts";
+import { limiter, searchTools, stopSubagents, subagentTools } from "./tools.ts";
 
 type Turn = NonNullable<ReturnType<typeof resolveTurn>>;
 type Row = typeof message.$inferSelect & { message: Message };
@@ -95,20 +95,23 @@ async function reply(
 	if (!turn) throw new Error(`Agent "${conv.agentId}" is no longer configured`);
 	const streamFn: StreamFn = config.streamSimple;
 	const tools = searchTools(config, turn.agent.tools);
+	const subagents = subagentTools(
+		config,
+		{ model: turn.model, thinking: turn.thinking },
+		tools,
+		{
+			conversationId,
+			signal,
+			onChange: () => notify(conversationId, { type: "saved" }),
+		},
+	);
 
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: turn.agent.instructions,
 			model: turn.model,
 			thinkingLevel: turn.thinking,
-			tools: [
-				...tools,
-				subagentTool(
-					config,
-					{ model: turn.model, thinking: turn.thinking },
-					tools,
-				),
-			],
+			tools: [...tools, ...subagents.tools],
 			messages: await context(conversationId, rows, turn, streamFn, signal),
 		},
 		streamFn,
@@ -147,7 +150,12 @@ async function reply(
 
 	signal.throwIfAborted(); // stopped before the reply began
 	signal.addEventListener("abort", () => agent.abort());
-	await agent.continue();
+	try {
+		await agent.continue();
+	} finally {
+		// the reply is done: Subagents it did not wait for are stopped, not left running past the Run
+		await subagents.close();
+	}
 	const answer = agent.state.messages.at(-1) as AssistantMessage;
 	// fails the job so the reason (e.g. an unreadable API key) is logged; runTurn marks the Conversation failed
 	if (answer.stopReason === "error")
@@ -374,7 +382,12 @@ export async function startAgentWorker(
 	);
 	worker.on("failed", (job, err) => {
 		console.error(`job ${job?.id} failed`, err);
-		if (job) void setStatus(job.data.conversationId, "failed");
+		if (!job) return;
+		void setStatus(job.data.conversationId, "failed");
+		// a crashed worker never closed its Subagents
+		void stopSubagents(job.data.conversationId).catch((error) =>
+			console.error("stopping subagents failed", error),
+		);
 	});
 	worker.on("error", (err) => console.error("worker error", err));
 	// the pg backend doesn't emit 'error' on connect failure, so fail fast instead of idling silently

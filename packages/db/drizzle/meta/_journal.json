@@ -43,6 +43,13 @@
       "when": 1793264211292,
       "tag": "0005_search_provider_base_url",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793268670168,
+      "tag": "0006_subagents",
+      "breakpoints": true
     }
   ]
 }

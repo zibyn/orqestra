@@ -1,5 +1,6 @@
 import {
 	type AssistantMessage,
+	type FauxResponseStep,
 	fauxAssistantMessage,
 	fauxProvider,
 	fauxText,
@@ -108,6 +109,41 @@ const text = (events: ConversationEvent[], kind: "text" | "thinking") =>
 	events
 		.map((e) => (e.type === "delta" && e.kind === kind ? e.delta : ""))
 		.join("");
+
+// Subagents run alongside their parent, so each request takes the next faux reply meant for whoever sent it,
+// told apart by the system prompt it starts with
+function script(replies: {
+	parent: FauxResponseStep[];
+	sub?: FauxResponseStep[];
+}) {
+	const queues = {
+		parent: [...replies.parent],
+		sub: [...(replies.sub ?? [])],
+		title: [fauxAssistantMessage("T")],
+	};
+	const total = Object.values(queues).reduce((n, q) => n + q.length, 0);
+	faux.setResponses(
+		Array.from({ length: total }, () => (context, ...rest) => {
+			const head = JSON.stringify(context.messages[0]);
+			const queue = head.includes("Write a title")
+				? queues.title
+				: head.includes("You carry out one task")
+					? queues.sub
+					: queues.parent;
+			const next = queue.shift();
+			if (!next) throw new Error(`No faux reply left for ${head.slice(0, 80)}`);
+			return typeof next === "function" ? next(context, ...rest) : next;
+		}),
+	);
+}
+
+// a Subagent reply that never comes; it ends only when the request is aborted
+const hang: FauxResponseStep = (_context, options) =>
+	new Promise((_, reject) =>
+		options?.signal?.addEventListener("abort", () =>
+			reject(new Error("aborted")),
+		),
+	);
 
 async function waitFor<T>(read: () => Promise<T>, ok: (v: T) => boolean) {
 	for (let i = 0; i < 100; i++) {
@@ -422,19 +458,23 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		expect(JSON.stringify(result.content)).toContain("https://pi.dev");
 	});
 
-	it("hands a task to a Subagent that starts fresh and only returns its final answer", async () => {
+	it("hands a task to a Subagent that starts fresh and returns its final answer when waited for", async () => {
 		const seen: { messages: { role: string; toolsAdded?: unknown }[] }[] = [];
-		faux.setResponses([
-			fauxAssistantMessage(
-				fauxToolCall("subagent", { tasks: [{ brief: "find pi" }] }),
-			),
-			(context) => {
-				seen.push(context as (typeof seen)[number]);
-				return fauxAssistantMessage("pi is at pi.dev");
-			},
-			fauxAssistantMessage("Done"),
-			fauxAssistantMessage("T"),
-		]);
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", { tasks: [{ brief: "find pi" }] }),
+				),
+				fauxAssistantMessage(fauxToolCall("subagent_wait", {})),
+				fauxAssistantMessage("Done"),
+			],
+			sub: [
+				(context) => {
+					seen.push(context as (typeof seen)[number]);
+					return fauxAssistantMessage("pi is at pi.dev");
+				},
+			],
+		});
 		const id = await conversations.sendMessage(userId, {
 			agentId: "faux",
 			text: "research pi",
@@ -452,38 +492,54 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			"assistant",
 			"toolResult",
 			"assistant",
+			"toolResult",
+			"assistant",
 		]);
-		const result = view?.messages[2].message as ToolResultMessage;
-		expect(JSON.stringify(result.content)).toContain("pi is at pi.dev");
-		// its whole process is kept with the Turn
-		expect(result.details).toMatchObject({
-			subagents: [
-				{
-					brief: "find pi",
-					messages: [{ role: "user" }, { role: "assistant" }],
-				},
-			],
-		});
+		const started = view?.messages[2].message as ToolResultMessage;
+		expect(JSON.stringify(started.content)).toContain("Started subagent 1");
+		const waited = view?.messages[4].message as ToolResultMessage;
+		expect(JSON.stringify(waited.content)).toContain(
+			'<result subagent=\\"1\\" status=\\"completed\\">\\npi is at pi.dev',
+		);
+		// its whole process is kept under the call that started it
+		expect(view?.subagents).toMatchObject([
+			{
+				toolCallId: started.toolCallId,
+				number: 1,
+				brief: "find pi",
+				status: "completed",
+				messages: [{ role: "user" }, { role: "assistant" }],
+			},
+		]);
 	});
 
-	it("ends a Subagent at its step limit with its partial result", async () => {
+	it("gives a Subagent at its step limit one last request without Tools for its answer", async () => {
 		vi.stubGlobal(
 			"fetch",
 			async () => new Response(JSON.stringify({ results: [] })),
 		);
-		faux.setResponses([
-			fauxAssistantMessage(
-				fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }),
-			),
-			...Array.from({ length: MAX_SUBAGENT_STEPS }, (_, i) =>
-				fauxAssistantMessage([
-					fauxText(`step ${i + 1}`),
-					fauxToolCall("search", { query: "more" }),
-				]),
-			),
-			fauxAssistantMessage("Done"),
-			fauxAssistantMessage("T"),
-		]);
+		let last: unknown;
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }),
+				),
+				fauxAssistantMessage(fauxToolCall("subagent_wait", {})),
+				fauxAssistantMessage("Done"),
+			],
+			sub: [
+				...Array.from({ length: MAX_SUBAGENT_STEPS - 1 }, (_, i) =>
+					fauxAssistantMessage([
+						fauxText(`step ${i + 1}`),
+						fauxToolCall("search", { query: "more" }),
+					]),
+				),
+				(context) => {
+					last = context;
+					return fauxAssistantMessage("what I found");
+				},
+			],
+		});
 		const id = await conversations.sendMessage(userId, {
 			agentId: "faux",
 			text: "dig deep",
@@ -492,11 +548,93 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			() => conversations.getConversation(userId, id),
 			(v) => v?.title === "T",
 		);
-		const result = view?.messages[2].message as ToolResultMessage;
-		expect(JSON.stringify(result.content)).toContain(
-			`step ${MAX_SUBAGENT_STEPS}`,
+		expect(JSON.stringify(last)).toContain("step limit");
+		const waited = view?.messages[4].message as ToolResultMessage;
+		expect(JSON.stringify(waited.content)).toContain('status=\\"partial\\"');
+		expect(JSON.stringify(waited.content)).toContain("what I found");
+		expect(view?.subagents[0].status).toBe("partial");
+	});
+
+	it("passes a message to a running Subagent after its current step", async () => {
+		vi.stubGlobal(
+			"fetch",
+			async () => new Response(JSON.stringify({ results: [] })),
 		);
-		expect(JSON.stringify(result.content)).toContain("step limit");
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		let second: unknown;
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", { tasks: [{ brief: "look" }] }),
+				),
+				fauxAssistantMessage(
+					fauxToolCall("subagent_message", {
+						number: 1,
+						message: "also check the docs",
+					}),
+				),
+				() => {
+					release();
+					return fauxAssistantMessage(fauxToolCall("subagent_wait", {}));
+				},
+				fauxAssistantMessage("Done"),
+			],
+			sub: [
+				async () => {
+					await gate;
+					return fauxAssistantMessage(fauxToolCall("search", { query: "a" }));
+				},
+				(context) => {
+					second = context;
+					return fauxAssistantMessage("checked");
+				},
+			],
+		});
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "look",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.title === "T",
+		);
+		expect(JSON.stringify(second)).toContain("also check the docs");
+		expect(view?.subagents[0].status).toBe("completed");
+	});
+
+	it("stops a Subagent on request, and those still running once the reply is done", async () => {
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", {
+						tasks: [{ brief: "one" }, { brief: "two" }],
+					}),
+				),
+				fauxAssistantMessage(fauxToolCall("subagent_stop", { numbers: [1] })),
+				fauxAssistantMessage("Done"),
+			],
+			sub: [hang, hang],
+		});
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "go",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.title === "T",
+		);
+		const stopped = view?.messages[4].message as ToolResultMessage;
+		expect(JSON.stringify(stopped.content)).toContain(
+			'<result subagent=\\"1\\" status=\\"stopped\\">',
+		);
+		expect(view?.status).toBe("idle");
+		expect(view?.subagents.map((s) => s.status)).toEqual([
+			"stopped",
+			"stopped",
+		]);
 	});
 
 	it("hides a Conversation from everyone but its owner", async () => {

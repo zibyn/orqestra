@@ -123,5 +123,9 @@
   "delete_search_provider_confirm": "Delete this Search Provider with its API key? Tools it serves become unavailable.",
   "tool_served_by": "{tool} served by",
   "none": "None",
-  "general_worker": "General worker"
+  "general_worker": "General worker",
+  "subagent_queued": "Queued",
+  "subagent_partial": "Hit its step limit",
+  "subagent_failed": "Failed",
+  "subagent_stopped": "Stopped"
 }

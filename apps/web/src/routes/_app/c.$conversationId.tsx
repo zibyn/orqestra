@@ -194,12 +194,12 @@ const toolResults = (messages: PiMessage[]): Results =>
 			.map((m) => [m.toolCallId, m]),
 	);
 
-/** One Subagent's process, as the subagent Tool keeps it in its result's details (see apps/worker/src/tools.ts). */
+/** One Subagent's process: a subagent row, or one kept in the Tool result's details by Runs from before the subagent table. */
 type SubagentTranscript = {
-	template?: string;
+	template?: string | null;
 	brief: string;
 	messages: PiMessage[];
-	result: string;
+	status?: (typeof Route.types.loaderData)["subagents"][number]["status"];
 };
 
 const collapsible =
@@ -216,10 +216,11 @@ function ToolCallView({
 	call: ToolCall;
 	result?: ToolResultMessage;
 }) {
-	const runs = (
-		result?.details as { subagents?: SubagentTranscript[] } | undefined
-	)?.subagents;
-	if (call.name === "subagent" && runs)
+	const { subagents } = Route.useLoaderData();
+	const runs =
+		(result?.details as { subagents?: SubagentTranscript[] } | undefined)
+			?.subagents ?? subagents.filter((s) => s.toolCallId === call.id);
+	if (call.name === "subagent" && runs.length)
 		return runs.map((run, i) => (
 			// biome-ignore lint/suspicious/noArrayIndexKey: saved runs never reorder
 			<SubagentView key={i} run={run} />
@@ -252,6 +253,14 @@ function SubagentView({ run }: { run: SubagentTranscript }) {
 		? (agents.find((a) => a.id === run.template)?.name ?? run.template)
 		: m.general_worker();
 	const results = toolResults(run.messages);
+	const status = (
+		{
+			queued: m.subagent_queued(),
+			partial: m.subagent_partial(),
+			failed: m.subagent_failed(),
+			stopped: m.subagent_stopped(),
+		} as Partial<Record<NonNullable<SubagentTranscript["status"]>, string>>
+	)[run.status ?? "completed"];
 	return (
 		<details className={collapsible}>
 			<summary>
@@ -260,6 +269,19 @@ function SubagentView({ run }: { run: SubagentTranscript }) {
 					<span className="font-medium text-foreground">{name}</span>{" "}
 					{run.brief}
 				</span>
+				{status && (
+					<span
+						className={`ml-auto shrink-0 text-xs ${run.status === "failed" ? "text-destructive" : ""}`}
+					>
+						{status}
+					</span>
+				)}
+				{run.status === "running" && (
+					<Loader2Icon
+						aria-label={m.generating()}
+						className="ml-auto size-3.5 shrink-0 animate-spin"
+					/>
+				)}
 			</summary>
 			<div className="flex flex-col gap-3 border-t px-3 py-2">
 				<p className="whitespace-pre-wrap text-muted-foreground">{run.brief}</p>

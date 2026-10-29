@@ -12,7 +12,12 @@ import {
 	db,
 	STOP_CHANNEL,
 } from "@orqestra/db";
-import { compaction, conversation, message } from "@orqestra/db/schema";
+import {
+	compaction,
+	conversation,
+	message,
+	subagent,
+} from "@orqestra/db/schema";
 import { createPostgresBackend, Queue } from "bullmq";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import pg from "pg";
@@ -91,7 +96,7 @@ export const listConversations = (userId: string) =>
 export async function getConversation(userId: string, id: string) {
 	const conv = await owned(userId, id);
 	if (!conv) return undefined;
-	const [messages, compactions] = await Promise.all([
+	const [messages, compactions, subagents] = await Promise.all([
 		db
 			.select({
 				id: message.id,
@@ -106,6 +111,19 @@ export async function getConversation(userId: string, id: string) {
 			.select({ firstKeptMessageId: compaction.firstKeptMessageId })
 			.from(compaction)
 			.where(eq(compaction.conversationId, id)),
+		// shortcut: whole transcripts on every reload; load them per Subagent when opened if Conversations get heavy
+		db
+			.select({
+				toolCallId: subagent.toolCallId,
+				number: subagent.number,
+				template: subagent.template,
+				brief: subagent.brief,
+				status: subagent.status,
+				messages: subagent.messages,
+			})
+			.from(subagent)
+			.where(eq(subagent.conversationId, id))
+			.orderBy(asc(subagent.number)),
 	]);
 	return {
 		id: conv.id,
@@ -119,6 +137,10 @@ export async function getConversation(userId: string, id: string) {
 			message: m.message as Message,
 		})),
 		compactedBefore: compactions.map((c) => c.firstKeptMessageId),
+		subagents: subagents.map((s) => ({
+			...s,
+			messages: s.messages as Message[],
+		})),
 	};
 }
 
@@ -193,9 +215,12 @@ export async function retryRun(userId: string, id: string) {
 			.where(and(eq(conversation.id, id), eq(conversation.status, "failed")))
 			.returning({ id: conversation.id });
 		if (!claimed.length) throw new ConversationError("Nothing to retry");
-		// drop the failed reply, if one was saved
+		// drop the failed reply, if one was saved, with the Subagents it started
 		await tx.execute(
 			sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
+		);
+		await tx.execute(
+			sql`delete from ${subagent} where ${subagent.conversationId} = ${id} and ${subagent.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id})`,
 		);
 	});
 	await enqueue(id);

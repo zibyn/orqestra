@@ -41,7 +41,7 @@ The reusable description of an Agent, maintained by Admins: its name, descriptio
 _Avoid_: Profile, persona, preset
 
 **Subagent**:
-An Agent that another Agent starts during a Run to carry out one task from a fresh context, using an Agent Definition as its template or the built-in general worker; only its final result goes back to the Agent that started it. A Subagent belongs to that Run's Turn, cannot be continued by the User, and cannot start Subagents of its own.
+An Agent that another Agent starts during a Run to carry out one task from a fresh context, using an Agent Definition as its template or the built-in general worker. It works in the background while the starting Agent goes on: that Agent can wait for its result, send it further instructions, or stop it, and only its final result goes back. A Subagent belongs to that Run's Turn and ends with the Run's reply, cannot be continued by the User, and cannot start Subagents of its own.
 _Avoid_: Child agent, worker, delegate
 
 **Tool**:

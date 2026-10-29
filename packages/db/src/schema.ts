@@ -166,6 +166,35 @@ export const compaction = pgTable(
 	(table) => [index("compaction_conversationId_idx").on(table.conversationId)],
 );
 
+// One row per Subagent, rewritten after each of its steps so the UI follows it live; lives as long as its Conversation
+export const subagent = pgTable(
+	"subagent",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		conversationId: uuid("conversation_id")
+			.notNull()
+			.references(() => conversation.id, { onDelete: "cascade" }),
+		// the subagent Tool call that started it, so the UI shows it under that call
+		toolCallId: text("tool_call_id").notNull(),
+		// what the parent Agent calls it by within the Run: 1, 2, ...
+		number: integer("number").notNull(),
+		// Agent Definition id; null for the built-in general worker
+		template: text("template"),
+		brief: text("brief").notNull(),
+		status: text("status")
+			.$type<
+				"queued" | "running" | "completed" | "partial" | "failed" | "stopped"
+			>()
+			.default("queued")
+			.notNull(),
+		// pi user / assistant / toolResult messages as-is
+		messages: jsonb("messages").default([]).notNull(),
+		result: text("result"),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [index("subagent_conversationId_idx").on(table.conversationId)],
+);
+
 // Providers an Admin configured from the Catalog; at most one row per Catalog Provider
 export const provider = pgTable("provider", {
 	// the Catalog (pi) Provider id

@@ -123,5 +123,9 @@
   "delete_search_provider_confirm": "删除这个 Search Provider 及其 API Key？它提供的 Tool 将不可用。",
   "tool_served_by": "{tool} 由谁提供",
   "none": "无",
-  "general_worker": "通用 worker"
+  "general_worker": "通用 worker",
+  "subagent_queued": "排队中",
+  "subagent_partial": "已达步数上限",
+  "subagent_failed": "失败",
+  "subagent_stopped": "已停止"
 }
