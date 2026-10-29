@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "pnpm --filter @orqestra/web dev",
     "build": "pnpm --filter @orqestra/web build",
+    "test": "pnpm --filter @orqestra/web test",
     "worker": "pnpm --filter @orqestra/worker dev",
     "db:generate": "pnpm --filter @orqestra/db db:generate",
     "db:migrate": "pnpm --filter @orqestra/db db:migrate",
