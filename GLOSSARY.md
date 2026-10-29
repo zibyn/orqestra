@@ -61,8 +61,12 @@ How a Subagent's work stands: queued while it waits for a free slot, running, or
 _Avoid_: Status (of a Subagent), state, result
 
 **Tool**:
-A capability an Agent can call during a Run, such as Search or Scrape, served by an external service rather than by Orqestra itself. A Tool with no service to serve it is unavailable, and Agents that list it run without it.
+A capability an Agent can call during a Run, such as Search, Scrape or those of an MCP Server, served by an external service rather than by Orqestra itself. A Tool with no service to serve it is unavailable, and Agents that list it run without it.
 _Avoid_: Function, plugin, skill
+
+**MCP Server**:
+An external service, configured by an Admin, that serves Tools to Agents over the Model Context Protocol. An Agent Definition allows an MCP Server as a whole, and only by naming it; one the Admin has disabled or that cannot be reached is unavailable until it is back, while deleting one removes it from every Agent Definition.
+_Avoid_: Connector, integration, plugin
 
 **Search**:
 The Tool that queries the web and returns matching pages.
@@ -75,10 +79,6 @@ _Avoid_: Fetch, extract, crawl
 **Search Provider**:
 An external service that serves Search and Scrape, such as Tavily, Firecrawl or DeepSeek, configured by an Admin with its own API key, independently of any Provider. An Admin picks one Search Provider for Search and one for Scrape; only the Search Providers Orqestra supports can be configured, each at most once.
 _Avoid_: Tool Provider, Provider
-
-**MCP Server**:
-A remote service an Admin configured that serves Tools over the Model Context Protocol. An Agent gets its Tools only when its Agent Definition names it explicitly; an Agent Definition without a Tool list, and a Subagent without a template, get Search and Scrape but no MCP Server. A disabled or unreachable MCP Server is unavailable for the Run.
-_Avoid_: MCP, connector, plugin
 
 **Model**:
 A specific LLM offered by a Provider; an Agent runs on a Model but is not one. Only Models an Admin has enabled are offered; disabling one removes it from every Agent that allowed it.
