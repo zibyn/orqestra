@@ -1,7 +1,12 @@
+import { loadConfig } from '@orqestra/config'
 import { createPostgresBackend, Worker } from 'bullmq'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) throw new Error('DATABASE_URL is not set')
+
+// throws on a bad config dir so the worker never starts with it
+const config = await loadConfig()
+console.log(`loaded ${config.agents.length} agent(s), default "${config.defaultAgent.id}"`)
 
 const worker = new Worker(
   'agent-runs',

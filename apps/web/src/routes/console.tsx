@@ -43,6 +43,9 @@ function Console() {
 					<Link to="/console/settings" className={tab}>
 						{m.console_settings()}
 					</Link>
+					<Link to="/console/agents" className={tab}>
+						{m.console_agents()}
+					</Link>
 				</nav>
 			</header>
 			<Outlet />

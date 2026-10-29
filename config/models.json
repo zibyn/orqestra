@@ -1,0 +1,6 @@
+{
+	"$schema": "https://pi.dev/schemas/models.schema.json",
+	"providers": {
+		"deepseek": { "apiKey": "$DEEPSEEK_API_KEY" }
+	}
+}
