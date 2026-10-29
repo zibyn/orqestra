@@ -65,6 +65,7 @@
   "thinking_done": "Thought process",
   "stop": "Stop generating",
   "generating": "Generating",
+  "queued": "Not sent yet",
   "stopped": "Stopped",
   "run_failed": "This reply failed.",
   "retry": "Retry",

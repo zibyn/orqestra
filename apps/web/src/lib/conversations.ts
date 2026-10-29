@@ -189,16 +189,9 @@ export async function sendMessage(
 
 	const conversationId = await db.transaction(async (tx) => {
 		let id = existing?.id;
-		if (id) {
-			await lockRoot(tx, id);
-			const [conv] = await tx
-				.select({ status: conversation.status })
-				.from(conversation)
-				.where(eq(conversation.id, id));
-			// shortcut: refused while a Run goes; stage 4 of docs/design/subagent-sessions.md lets the inbox hold it
-			if (conv?.status === "running")
-				throw new ConversationError("A reply is still being generated");
-		} else {
+		// while a Run goes, it delivers this at its next step boundary; the lock keeps it from going idle past it
+		if (id) await lockRoot(tx, id);
+		else {
 			[{ id }] = await tx
 				.insert(conversation)
 				.values({ userId, agentId })
