@@ -38,10 +38,14 @@ ALTER TABLE "subagent" RENAME COLUMN "conversation_id" TO "parent_id";--> statem
 ALTER TABLE "subagent" RENAME COLUMN "id" TO "conversation_id";--> statement-breakpoint
 ALTER TABLE "subagent" ALTER COLUMN "conversation_id" DROP DEFAULT;--> statement-breakpoint
 ALTER TABLE "subagent" RENAME COLUMN "status" TO "outcome";--> statement-breakpoint
--- numbers restarted with every Run; they are now unique within the parent
+-- their Runs ended with the old worker: none of them is still at work
+UPDATE "subagent" SET "outcome" = 'stopped' WHERE "outcome" IN ('queued', 'running');--> statement-breakpoint
+-- numbers restarted with every Run; they are now unique within the parent.
+-- Parents whose numbers never repeated keep them, so their transcripts still name the right Subagent
 UPDATE "subagent" s SET "number" = n."number"
 FROM (SELECT "conversation_id", row_number() OVER (PARTITION BY "parent_id" ORDER BY "created_at", "number") AS "number" FROM "subagent") n
-WHERE n."conversation_id" = s."conversation_id";--> statement-breakpoint
+WHERE n."conversation_id" = s."conversation_id"
+	AND s."parent_id" IN (SELECT "parent_id" FROM "subagent" GROUP BY "parent_id" HAVING count(*) > count(DISTINCT "number"));--> statement-breakpoint
 ALTER TABLE "subagent" ADD CONSTRAINT "subagent_conversation_id_conversation_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversation"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "subagent" ADD CONSTRAINT "subagent_parent_id_conversation_id_fk" FOREIGN KEY ("parent_id") REFERENCES "public"."conversation"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "subagent" ADD CONSTRAINT "subagent_parent_id_number_unique" UNIQUE("parent_id","number");

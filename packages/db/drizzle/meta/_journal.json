@@ -55,7 +55,14 @@
       "idx": 7,
       "version": "7",
       "when": 1793272364867,
-      "tag": "0007_subagent_sessions",
+      "tag": "0007_subagent_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793275993142,
+      "tag": "0008_run_job_and_subagent_budget",
       "breakpoints": true
     }
   ]
