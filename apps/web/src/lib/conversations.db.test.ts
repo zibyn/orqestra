@@ -722,6 +722,62 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		]);
 	});
 
+	it("delivers a message sent while running at the next step boundary, into the model's context", async () => {
+		vi.stubGlobal(
+			"fetch",
+			async () => new Response(JSON.stringify({ results: [] })),
+		);
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		let replying = false;
+		let seen: string[] = [];
+		faux.setResponses([
+			async () => {
+				replying = true;
+				await gate;
+				return fauxAssistantMessage(fauxToolCall("search", { query: "x" }));
+			},
+			(context) => {
+				seen = context.messages.flatMap((m) =>
+					m.role === "user" && typeof m.content === "string" ? [m.content] : [],
+				);
+				return fauxAssistantMessage("Got both");
+			},
+			fauxAssistantMessage("T"),
+		]);
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "first",
+		});
+		await waitFor(async () => replying, Boolean);
+		await conversations.sendMessage(userId, {
+			conversationId: id,
+			text: "also this",
+		});
+		// queued, not yet delivered: shown with a negative id
+		const queued = await conversations.getConversation(userId, id);
+		expect(queued?.messages.at(-1)).toMatchObject({
+			message: { role: "user", content: "also this" },
+		});
+		expect(queued?.messages.at(-1)?.id).toBeLessThan(0);
+		release();
+
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.status === "idle" && v.title === "T",
+		);
+		expect(seen).toEqual(["first", "also this"]);
+		expect(view?.messages.map((m) => m.message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"user",
+			"assistant",
+		]);
+	});
+
 	it("hides a Conversation from everyone but its owner", async () => {
 		faux.setResponses([fauxAssistantMessage("hi"), fauxAssistantMessage("T")]);
 		const id = await conversations.sendMessage(userId, {

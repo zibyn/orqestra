@@ -140,10 +140,21 @@ function ConversationView() {
 								)}
 								{
 									row.message.role === "user" ? (
-										<Message from="user">
-											<MessageContent>
+										// still in the inbox: shown after the reply that is generating
+										<Message
+											from="user"
+											className={row.id < 0 ? "order-1" : undefined}
+										>
+											<MessageContent
+												className={row.id < 0 ? "opacity-60" : undefined}
+											>
 												{messageText(row.message)}
 											</MessageContent>
+											{row.id < 0 && (
+												<span className="text-xs text-muted-foreground">
+													{m.queued()}
+												</span>
+											)}
 										</Message>
 									) : row.message.role === "assistant" ? (
 										<AgentReply message={row.message} results={results} />

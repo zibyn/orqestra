@@ -60,7 +60,7 @@ export function PromptInputFooter({
 	);
 }
 
-/** Send button, or a stop button while a reply is generating. */
+/** Send button, with a stop button beside it while a reply is generating. */
 export function PromptInputSubmit({
 	running,
 	onStop,
@@ -73,25 +73,29 @@ export function PromptInputSubmit({
 	/** The message is being sent. */
 	busy?: boolean;
 }) {
-	return running ? (
-		<Button
-			type="button"
-			size="icon-sm"
-			aria-label={m.stop()}
-			className="ml-auto"
-			onClick={onStop}
-		>
-			<SquareIcon className="fill-current" />
-		</Button>
-	) : (
-		<Button
-			type="submit"
-			size="icon-sm"
-			aria-label={m.send()}
-			className="ml-auto"
-			disabled={disabled || busy}
-		>
-			{busy ? <Loader2Icon className="animate-spin" /> : <ArrowUpIcon />}
-		</Button>
+	return (
+		<>
+			{running && (
+				<Button
+					type="button"
+					size="icon-sm"
+					variant="outline"
+					aria-label={m.stop()}
+					className="ml-auto"
+					onClick={onStop}
+				>
+					<SquareIcon className="fill-current" />
+				</Button>
+			)}
+			<Button
+				type="submit"
+				size="icon-sm"
+				aria-label={m.send()}
+				className={running ? undefined : "ml-auto"}
+				disabled={disabled || busy}
+			>
+				{busy ? <Loader2Icon className="animate-spin" /> : <ArrowUpIcon />}
+			</Button>
+		</>
 	);
 }

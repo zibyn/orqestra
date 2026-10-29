@@ -65,6 +65,7 @@
   "thinking_done": "思考过程",
   "stop": "停止生成",
   "generating": "生成中",
+  "queued": "待发送",
   "stopped": "已停止生成",
   "run_failed": "这一轮回复生成失败。",
   "retry": "重试",
