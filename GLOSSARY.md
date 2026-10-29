@@ -41,8 +41,12 @@ The reusable description of an Agent, maintained by Admins: its name, descriptio
 _Avoid_: Profile, persona, preset
 
 **Subagent**:
-An Agent that another Agent starts during a Run to carry out one task from a fresh context, using an Agent Definition as its template or the built-in general worker. It works in the background while the starting Agent goes on: that Agent can wait for its result, send it further instructions, or stop it, and only its final result goes back. A Subagent belongs to that Run's Turn and ends with the Run's reply, cannot be continued by the User, and cannot start Subagents of its own.
+An Agent that another Agent starts to carry out one task from a fresh context, in a Conversation of its own nested under the starting one, using an Agent Definition as its template or the built-in general worker. It works in the background and can outlive the Run that started it; when it finishes, its result goes back as a Notification. The starting Agent can send it further instructions, continue it once finished, or stop it; the User can only view and stop it. A Subagent cannot start Subagents of its own.
 _Avoid_: Child agent, worker, delegate
+
+**Notification**:
+The input that hands a finished Subagent's result to the Agent that started it. It reaches that Agent between two steps of its current Run, or starts a new Run when none is going. A Subagent the User stopped sends one too, but it waits for the next User message instead of starting a Run.
+_Avoid_: Callback, event, result message
 
 **Tool**:
 A capability an Agent can call during a Run, such as Search or Scrape, served by an external service rather than by Orqestra itself. A Tool with no service to serve it is unavailable, and Agents that list it run without it.
@@ -73,13 +77,13 @@ Every Provider and Model Orqestra knows about, with their defaults such as conte
 _Avoid_: Preset, registry, template
 
 **Conversation**:
-An ordered series of messages between one User and the Agent, owned by and visible only to that User.
+An ordered series of messages between one User and the Agent, owned by and visible only to that User. A Subagent's Conversation is nested under the one that started it and is seen only through it.
 _Avoid_: Session, thread, chat
 
 **Turn**:
-One user message and the Agent's reply to it, with the Model and thinking level picked for that message. Compaction never splits a Turn.
+One input, a user message or a Notification, and the Agent's reply to it, with the Model and thinking level picked for that input. Compaction never splits a Turn.
 _Avoid_: Exchange, round
 
 **Run**:
-The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time; Subagents run inside it, and stopping it stops them.
+The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time; inputs that arrive meanwhile are delivered between its steps, and it ends only once none are left. Each Subagent runs in Runs of its own, and the User stopping a Conversation stops its Subagents too.
 _Avoid_: Job, task, generation
