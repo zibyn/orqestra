@@ -40,6 +40,13 @@ export const agentId = z
 /** An MCP Server's id, like an Agent's; never changes, since Agent Definitions and Tool names refer to it. */
 export const mcpServerId = agentId;
 
+/** An Agent's Tool entry: a built-in Tool, or `mcp:<serverId>` for every Tool of that MCP Server. */
+export const agentTool = z.union([
+	toolName,
+	z.templateLiteral(["mcp:", mcpServerId]),
+]);
+export type AgentTool = z.infer<typeof agentTool>;
+
 /** A name turned into an Agent or MCP Server id; "" when nothing usable is left (e.g. a Chinese name). */
 export const slugify = (name: string) =>
 	name
@@ -63,8 +70,8 @@ export const agentDefinition = z.strictObject({
 			allowed: z.array(thinkingLevel).min(1).optional(),
 		})
 		.optional(),
-	/** Omitted means every Tool. */
-	tools: z.array(toolName).optional(),
+	/** Omitted means Search and Scrape, never an MCP Server. */
+	tools: z.array(agentTool).optional(),
 	compaction: z
 		.strictObject({
 			reserveTokens: z.number().int().positive().optional(),

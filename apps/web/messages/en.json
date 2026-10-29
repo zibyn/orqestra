@@ -117,6 +117,7 @@
   "agent_template_only": "template only",
   "delete_agent_confirm": "Delete this Agent? Its conversations become read-only.",
   "tool_unavailable": "Warning: Tool {tool} has no usable Search Provider, so Agents run without it.",
+  "mcp_server_unavailable": "Warning: MCP Server {server} is disabled or not configured, so Agents run without it.",
   "search_providers": "Search Providers",
   "search_providers_hint": "External services that serve the Search and Scrape Tools.",
   "search_provider": "Search Provider",

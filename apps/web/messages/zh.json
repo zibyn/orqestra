@@ -117,6 +117,7 @@
   "agent_template_only": "仅作模板",
   "delete_agent_confirm": "删除这个 Agent？它的对话将变为只读。",
   "tool_unavailable": "警告：Tool {tool} 没有可用的 Search Provider，Agent 将不带它运行。",
+  "mcp_server_unavailable": "警告：MCP Server {server} 已停用或未配置，Agent 将不带它运行。",
   "search_providers": "Search Provider",
   "search_providers_hint": "为 Search 与 Scrape 这两个 Tool 提供服务的外部服务。",
   "search_provider": "Search Provider",

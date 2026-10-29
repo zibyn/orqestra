@@ -1,7 +1,7 @@
 import { mcpServerId } from "@orqestra/config";
 import { decryptSecret, encryptSecret } from "@orqestra/config/secret";
-import { db, eq } from "@orqestra/db";
-import { mcpServer } from "@orqestra/db/schema";
+import { db, eq, sql } from "@orqestra/db";
+import { agent, mcpServer } from "@orqestra/db/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { reloadConfig } from "#/lib/config";
@@ -106,6 +106,13 @@ export const deleteMcpServer = createServerFn({ method: "POST" })
 	.validator(mcpServerId)
 	.handler(async ({ data }) => {
 		await requireAdmin();
-		await db.delete(mcpServer).where(eq(mcpServer.id, data));
+		const ref = `mcp:${data}`;
+		await db.transaction(async (tx) => {
+			await tx.delete(mcpServer).where(eq(mcpServer.id, data));
+			// no Agent Definition may keep pointing at it
+			await tx.execute(
+				sql`update ${agent} set definition = jsonb_set(definition, '{tools}', (definition->'tools') - ${ref}::text) where definition->'tools' @> ${JSON.stringify([ref])}::jsonb`,
+			);
+		});
 		await reloadConfig();
 	});

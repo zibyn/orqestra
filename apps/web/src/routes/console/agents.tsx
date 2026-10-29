@@ -137,7 +137,9 @@ function AgentCard({
 			)}
 			{missingTools.map((tool) => (
 				<p key={tool} className="text-destructive">
-					{m.tool_unavailable({ tool })}
+					{tool.startsWith("mcp:")
+						? m.mcp_server_unavailable({ server: tool.slice(4) })
+						: m.tool_unavailable({ tool })}
 				</p>
 			))}
 			{error && <p className="text-destructive">{error}</p>}
@@ -162,7 +164,7 @@ const empty: AgentDefinitionInput = {
 /** Creates an Agent, or edits `agent`; its id is fixed once created. */
 function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 	const router = useRouter();
-	const { enabledModels } = Route.useLoaderData();
+	const { enabledModels, mcpServers } = Route.useLoaderData();
 	const [def, setDef] = useState<AgentDefinitionInput>(
 		agent?.definition ?? empty,
 	);
@@ -369,17 +371,25 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 			<Toggles
 				label={m.agent_tools()}
 				error={fieldError("tools")}
-				items={toolName.options.map((t) => ({ value: t, label: t }))}
+				items={[
+					...toolName.options.map((t) => ({ value: t, label: t })),
+					...mcpServers.map((s) => ({
+						value: `mcp:${s.id}` as const,
+						label: `${s.name} (MCP)`,
+					})),
+				]}
 				checked={def.tools ?? toolName.options}
 				onToggle={(tool, on) => {
 					const tools = on
-						? [...(def.tools ?? []), tool]
+						? [...(def.tools ?? toolName.options), tool]
 						: (def.tools ?? toolName.options).filter((t) => t !== tool);
-					// every Tool checked: keep "all", so Tools added later apply too
+					// Search and Scrape without MCP Servers is what omitting `tools` means
 					update({
-						tools: toolName.options.every((t) => tools.includes(t))
-							? undefined
-							: tools,
+						tools:
+							toolName.options.every((t) => tools.includes(t)) &&
+							!tools.some((t) => t.startsWith("mcp:"))
+								? undefined
+								: tools,
 					});
 				}}
 				idPrefix={fieldId("tool")}

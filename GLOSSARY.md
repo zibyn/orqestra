@@ -76,6 +76,10 @@ _Avoid_: Fetch, extract, crawl
 An external service that serves Search and Scrape, such as Tavily, Firecrawl or DeepSeek, configured by an Admin with its own API key, independently of any Provider. An Admin picks one Search Provider for Search and one for Scrape; only the Search Providers Orqestra supports can be configured, each at most once.
 _Avoid_: Tool Provider, Provider
 
+**MCP Server**:
+A remote service an Admin configured that serves Tools over the Model Context Protocol. An Agent gets its Tools only when its Agent Definition names it explicitly; an Agent Definition without a Tool list, and a Subagent without a template, get Search and Scrape but no MCP Server. A disabled or unreachable MCP Server is unavailable for the Run.
+_Avoid_: MCP, connector, plugin
+
 **Model**:
 A specific LLM offered by a Provider; an Agent runs on a Model but is not one. Only Models an Admin has enabled are offered; disabling one removes it from every Agent that allowed it.
 _Avoid_: Agent, engine

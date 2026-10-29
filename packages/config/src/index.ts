@@ -12,6 +12,7 @@ import {
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { z } from "zod";
 import {
+	type AgentTool,
 	agentDefinition,
 	definitionIssues,
 	type SearchProviderId,
@@ -39,8 +40,8 @@ export interface AgentDefinition {
 	/** As written; resolve per Model with `resolveThinking`. */
 	thinking: { default?: ThinkingLevel; allowed?: ThinkingLevel[] };
 	compaction?: { reserveTokens?: number; keepRecentTokens?: number };
-	/** As written; only those with a Search Provider are offered in a Run. */
-	tools: ToolName[];
+	/** As written; only built-in Tools with a Search Provider and available MCP Servers are offered in a Run. */
+	tools: AgentTool[];
 	/** Users can start Conversations with it; any Agent can be a Subagent template. */
 	pickable: boolean;
 	default: boolean;
@@ -322,7 +323,7 @@ export function resolveThinking(
 export const GENERAL_WORKER =
 	"You carry out one task for another agent, starting without any prior context. Work through it with the tools you have, then reply with a complete, self-contained answer: it is all the other agent will see.";
 
-/** The built-in Agent a Subagent without a template runs as: any enabled Model, every Tool. */
+/** The built-in Agent a Subagent without a template runs as: any enabled Model, Search and Scrape, no MCP Server. */
 const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
 	id: "",
 	name: "General worker",
