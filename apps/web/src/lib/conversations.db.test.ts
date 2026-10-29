@@ -124,7 +124,11 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		loaded.registry.registerProvider(faux.provider);
 		loaded.models.push(...faux.models);
 		loaded.agents.push(fauxAgent, smallAgent);
-		loaded.tools.search = { provider: "tavily", apiKey: "k" };
+		loaded.tools.search = {
+			provider: "tavily",
+			apiKey: "k",
+			baseUrl: "https://api.tavily.com",
+		};
 		stopWorker = await startAgentWorker(config.get, url as string);
 	});
 	afterAll(() => stopWorker?.());

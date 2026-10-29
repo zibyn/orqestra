@@ -195,6 +195,8 @@ export const searchProvider = pgTable("search_provider", {
 	id: text("id").primaryKey(),
 	// encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
 	apiKey: text("api_key").notNull(),
+	// null: the official endpoint; set for a self-hosted service or a reverse proxy
+	baseUrl: text("base_url"),
 	createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

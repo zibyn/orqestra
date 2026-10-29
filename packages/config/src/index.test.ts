@@ -155,20 +155,29 @@ describe("loadConfig", () => {
 		it("serves each Tool from the Search Provider picked for it", async () => {
 			const config = await loadConfig(
 				settings({ search: "tavily", scrape: "deepseek" }, [
-					{ id: "tavily", apiKey: "tv" },
-					{ id: "deepseek", apiKey: "ds" },
+					{ id: "tavily", apiKey: "tv", baseUrl: null },
+					{ id: "deepseek", apiKey: "ds", baseUrl: "https://ds.example.com" },
 				]),
 			);
+			// no baseUrl: the official one
 			expect(config.tools).toEqual({
-				search: { provider: "tavily", apiKey: "tv" },
-				scrape: { provider: "deepseek", apiKey: "ds" },
+				search: {
+					provider: "tavily",
+					apiKey: "tv",
+					baseUrl: "https://api.tavily.com",
+				},
+				scrape: {
+					provider: "deepseek",
+					apiKey: "ds",
+					baseUrl: "https://ds.example.com",
+				},
 			});
 		});
 
 		it("leaves a Tool unavailable when its Search Provider is not picked, deleted or has an unreadable key", async () => {
 			const config = await loadConfig(
 				settings({ search: "firecrawl", scrape: "tavily" }, [
-					{ id: "tavily", apiKey: undefined },
+					{ id: "tavily", apiKey: undefined, baseUrl: null },
 				]),
 			);
 			expect(config.tools).toEqual({});

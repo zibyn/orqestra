@@ -15,6 +15,7 @@ import {
 	agentDefinition,
 	definitionIssues,
 	type SearchProviderId,
+	searchProviders,
 	type ToolName,
 	toolName,
 } from "./shared.ts";
@@ -59,8 +60,12 @@ export interface Settings {
 	enabledModels: string[];
 	/** Agent Definitions as stored, validated by `loadConfig`. */
 	agents: { id: string; definition: unknown }[];
-	/** `apiKey` is undefined when the stored key cannot be decrypted. */
-	searchProviders: { id: SearchProviderId; apiKey: string | undefined }[];
+	/** `apiKey` is undefined when the stored key cannot be decrypted; `baseUrl` null means the official one. */
+	searchProviders: {
+		id: SearchProviderId;
+		apiKey: string | undefined;
+		baseUrl: string | null;
+	}[];
 	/** The Search Provider picked for each Tool. */
 	servedBy: Record<ToolName, SearchProviderId | null>;
 }
@@ -69,6 +74,8 @@ export interface Settings {
 export interface ToolService {
 	provider: SearchProviderId;
 	apiKey: string;
+	/** The configured one, else the official one. */
+	baseUrl: string;
 }
 
 export interface OrqestraConfig {
@@ -198,10 +205,16 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 	const tools: OrqestraConfig["tools"] = {};
 	for (const tool of toolName.options) {
 		const picked = settings.servedBy[tool];
-		const apiKey = settings.searchProviders.find(
-			(p) => p.id === picked,
-		)?.apiKey;
-		if (picked && apiKey) tools[tool] = { provider: picked, apiKey };
+		const stored = settings.searchProviders.find((p) => p.id === picked);
+		if (picked && stored?.apiKey)
+			tools[tool] = {
+				provider: picked,
+				apiKey: stored.apiKey,
+				baseUrl:
+					stored.baseUrl ||
+					searchProviders.find((p) => p.id === picked)?.baseUrl ||
+					"",
+			};
 	}
 
 	return {

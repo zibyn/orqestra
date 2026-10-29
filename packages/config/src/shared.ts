@@ -23,11 +23,11 @@ export const messageText = (message: Message) =>
 export const toolName = z.enum(["search", "scrape"]);
 export type ToolName = z.infer<typeof toolName>;
 
-/** The Search Providers Orqestra supports; each can be configured at most once. */
+/** The Search Providers Orqestra supports, with their official baseUrl; each can be configured at most once. */
 export const searchProviders = [
-	{ id: "tavily", name: "Tavily" },
-	{ id: "firecrawl", name: "Firecrawl" },
-	{ id: "deepseek", name: "DeepSeek" },
+	{ id: "tavily", name: "Tavily", baseUrl: "https://api.tavily.com" },
+	{ id: "firecrawl", name: "Firecrawl", baseUrl: "https://api.firecrawl.dev" },
+	{ id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com" },
 ] as const;
 export const searchProviderId = z.enum(searchProviders.map((p) => p.id));
 export type SearchProviderId = z.infer<typeof searchProviderId>;

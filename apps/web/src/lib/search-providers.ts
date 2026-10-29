@@ -20,6 +20,7 @@ export const getSearchProviders = createServerFn().handler(async () => {
 		configured: rows.map((r) => ({
 			id: r.id,
 			keyReadable: decryptSecret(r.apiKey) !== undefined,
+			baseUrl: r.baseUrl,
 		})),
 		servedBy: {
 			search: settings?.searchServedBy ?? null,
@@ -32,15 +33,32 @@ export const getSearchProviders = createServerFn().handler(async () => {
 
 export const saveSearchProvider = createServerFn({ method: "POST" })
 	.validator(
-		z.object({ id: searchProviderId, apiKey: z.string().trim().min(1) }),
+		z.object({
+			id: searchProviderId,
+			// blank keeps the stored key
+			apiKey: z.string().trim().optional(),
+			// blank means the official one; set for a self-hosted service or a reverse proxy
+			baseUrl: z
+				.union([z.url({ protocol: /^https?$/ }), z.literal("")])
+				.optional(),
+		}),
 	)
 	.handler(async ({ data }) => {
 		await requireAdmin();
-		const apiKey = encryptSecret(data.apiKey);
-		await db
-			.insert(searchProvider)
-			.values({ id: data.id, apiKey })
-			.onConflictDoUpdate({ target: searchProvider.id, set: { apiKey } });
+		const baseUrl = data.baseUrl || null;
+		const apiKey = data.apiKey ? encryptSecret(data.apiKey) : undefined;
+		const stored = await db.query.searchProvider.findFirst({
+			where: eq(searchProvider.id, data.id),
+		});
+		if (stored)
+			await db
+				.update(searchProvider)
+				.set({ baseUrl, ...(apiKey && { apiKey }) })
+				.where(eq(searchProvider.id, data.id));
+		else {
+			if (!apiKey) throw new Error("An API key is required");
+			await db.insert(searchProvider).values({ id: data.id, apiKey, baseUrl });
+		}
 		await reloadConfig();
 	});
 

@@ -40,6 +40,7 @@ export const Route = createFileRoute("/console/providers")({
 
 type Data = Awaited<ReturnType<typeof getProviders>>;
 type SearchData = Awaited<ReturnType<typeof getSearchProviders>>;
+type SearchConfigured = SearchData["configured"][number];
 type CatalogProvider = Data["catalog"][number];
 type Configured = Data["configured"][number];
 
@@ -307,7 +308,9 @@ function SearchProviders({ data }: { data: SearchData }) {
 	// the picked one may have just been added
 	const adding =
 		unconfigured.find((p) => p.id === picked)?.id ?? unconfigured[0]?.id;
+	// unsaved form values by Search Provider id
 	const [keys, setKeys] = useState<Record<string, string>>({});
+	const [urls, setUrls] = useState<Record<string, string>>({});
 
 	async function act(key: string, action: () => Promise<unknown>) {
 		setBusy(key);
@@ -315,6 +318,7 @@ function SearchProviders({ data }: { data: SearchData }) {
 			await action();
 			setError("");
 			setKeys({});
+			setUrls({});
 			await router.invalidate();
 		} catch (e) {
 			setError(errorText(e));
@@ -323,31 +327,53 @@ function SearchProviders({ data }: { data: SearchData }) {
 		}
 	}
 
-	const keyForm = (id: SearchProviderId, keyReadable: boolean) => (
+	/** Adds Search Provider `id`, or edits `existing`; the API key is write-only. */
+	const keyForm = (id: SearchProviderId, existing?: SearchConfigured) => (
 		<form
-			className="flex flex-wrap items-end gap-2"
+			className="flex flex-col gap-4"
 			onSubmit={(e) => {
 				e.preventDefault();
 				void act(`save-${id}`, () =>
-					saveSearchProvider({ data: { id, apiKey: keys[id] ?? "" } }),
+					saveSearchProvider({
+						data: {
+							id,
+							apiKey: keys[id] ?? "",
+							baseUrl: urls[id] ?? existing?.baseUrl ?? "",
+						},
+					}),
 				);
 			}}
 		>
-			<div className="flex flex-1 flex-col gap-2">
+			<div className="flex flex-col gap-2">
 				<Label htmlFor={`search-${id}-key`}>{m.api_key()}</Label>
 				<Input
 					id={`search-${id}-key`}
 					type="password"
 					autoComplete="off"
-					required
+					required={!existing?.keyReadable}
 					value={keys[id] ?? ""}
 					onChange={(e) => setKeys({ ...keys, [id]: e.target.value })}
-					placeholder={keyReadable ? m.api_key_set() : ""}
+					placeholder={existing?.keyReadable ? m.api_key_set() : ""}
 				/>
 			</div>
-			<Button type="submit" variant="outline" disabled={!!busy}>
+			<div className="flex flex-col gap-2">
+				<Label htmlFor={`search-${id}-url`}>{m.base_url()}</Label>
+				<Input
+					id={`search-${id}-url`}
+					type="url"
+					value={urls[id] ?? existing?.baseUrl ?? ""}
+					onChange={(e) => setUrls({ ...urls, [id]: e.target.value })}
+					placeholder={searchProviders.find((p) => p.id === id)?.baseUrl}
+				/>
+			</div>
+			<Button
+				type="submit"
+				className="self-start"
+				variant={existing ? "outline" : "default"}
+				disabled={!!busy}
+			>
 				{busy === `save-${id}` && <Loader2Icon className="animate-spin" />}
-				{keyReadable ? m.save() : m.add_search_provider()}
+				{existing ? m.save() : m.add_search_provider()}
 			</Button>
 		</form>
 	);
@@ -415,7 +441,7 @@ function SearchProviders({ data }: { data: SearchData }) {
 					{!p.keyReadable && (
 						<p className="text-destructive">{m.provider_key_unreadable()}</p>
 					)}
-					{keyForm(p.id as SearchProviderId, p.keyReadable)}
+					{keyForm(p.id as SearchProviderId, p)}
 				</div>
 			))}
 			{adding && (
@@ -427,7 +453,7 @@ function SearchProviders({ data }: { data: SearchData }) {
 						onChange={(v) => setAdding(v as SearchProviderId)}
 						items={unconfigured.map((p) => ({ value: p.id, label: p.name }))}
 					/>
-					{keyForm(adding, false)}
+					{keyForm(adding)}
 				</div>
 			)}
 			{error && <p className="text-sm text-destructive">{error}</p>}

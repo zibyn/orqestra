@@ -48,6 +48,7 @@ export async function loadSettings(): Promise<Settings> {
 		searchProviders: searchProviders.map((p) => ({
 			id: p.id as SearchProviderId,
 			apiKey: decryptSecret(p.apiKey, key),
+			baseUrl: p.baseUrl,
 		})),
 		servedBy: {
 			search: (instance?.searchServedBy ?? null) as SearchProviderId | null,

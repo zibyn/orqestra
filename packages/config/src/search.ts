@@ -10,13 +10,13 @@ export interface SearchResult {
 }
 
 async function post(
-	{ provider, apiKey }: ToolService,
-	url: string,
+	{ provider, apiKey, baseUrl }: ToolService,
+	path: string,
 	body: unknown,
 	signal?: AbortSignal,
 	// biome-ignore lint/suspicious/noExplicitAny: each service's JSON, read field by field
 ): Promise<any> {
-	const response = await fetch(url, {
+	const response = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
 		method: "POST",
 		headers: {
 			authorization: `Bearer ${apiKey}`,
@@ -47,7 +47,7 @@ export async function search(
 	if (tool.provider === "tavily") {
 		const data = await post(
 			tool,
-			"https://api.tavily.com/search",
+			"/search",
 			{ query, max_results: count },
 			signal,
 		);
@@ -62,7 +62,7 @@ export async function search(
 	if (tool.provider === "firecrawl") {
 		const data = await post(
 			tool,
-			"https://api.firecrawl.dev/v2/search",
+			"/v2/search",
 			{ query, limit: count },
 			signal,
 		);
@@ -74,12 +74,7 @@ export async function search(
 			}),
 		);
 	}
-	const data = await post(
-		tool,
-		"https://api.deepseek.com/v1/tools/search",
-		{ query, count },
-		signal,
-	);
+	const data = await post(tool, "/v1/tools/search", { query, count }, signal);
 	// shortcut: field names from DeepSeek's launch docs (2026-10); recheck if results come back empty
 	return data.results.map(
 		(r: {
@@ -104,31 +99,14 @@ export async function scrape(
 	let markdown: string | undefined;
 	if (tool.provider === "tavily")
 		markdown = (
-			await post(
-				tool,
-				"https://api.tavily.com/extract",
-				{ urls: [url], format: "markdown" },
-				signal,
-			)
+			await post(tool, "/extract", { urls: [url], format: "markdown" }, signal)
 		).results[0]?.raw_content;
 	else if (tool.provider === "firecrawl")
 		markdown = (
-			await post(
-				tool,
-				"https://api.firecrawl.dev/v2/scrape",
-				{ url, formats: ["markdown"] },
-				signal,
-			)
+			await post(tool, "/v2/scrape", { url, formats: ["markdown"] }, signal)
 		).data?.markdown;
 	else
-		markdown = (
-			await post(
-				tool,
-				"https://api.deepseek.com/v1/tools/fetch",
-				{ url },
-				signal,
-			)
-		).content;
+		markdown = (await post(tool, "/v1/tools/fetch", { url }, signal)).content;
 	if (!markdown) throw new Error(`${url} returned no content`);
 	return markdown;
 }
