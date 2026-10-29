@@ -41,12 +41,16 @@ The reusable description of an Agent: its name, instructions, allowed Models and
 _Avoid_: Profile, persona, preset
 
 **Model**:
-A specific LLM offered by a Provider; an Agent runs on a Model but is not one.
+A specific LLM offered by a Provider; an Agent runs on a Model but is not one. Only Models an Admin has enabled are offered; disabling one removes it from every Agent that allowed it.
 _Avoid_: Agent, engine
 
 **Provider**:
-A vendor or endpoint that serves Models, such as DeepSeek or Anthropic.
+A vendor endpoint that serves Models, such as DeepSeek or Anthropic, picked from the Catalog and configured by an Admin with an API key. Each Catalog Provider can be configured at most once.
 _Avoid_: Vendor, backend
+
+**Catalog**:
+Every Provider and Model Orqestra knows about, with their defaults such as context length. Admins configure Providers and enable Models from it; nothing outside it can be used.
+_Avoid_: Preset, registry, template
 
 **Conversation**:
 An ordered series of messages between one User and the Agent, owned by and visible only to that User.
