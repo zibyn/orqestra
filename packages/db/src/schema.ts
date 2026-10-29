@@ -2,9 +2,12 @@ import {
 	boolean,
 	index,
 	integer,
+	jsonb,
 	pgTable,
+	serial,
 	text,
 	timestamp,
+	uuid,
 } from "drizzle-orm/pg-core";
 
 // better-auth tables (core + admin plugin + phoneNumber), shaped as `@better-auth/cli generate` emits them
@@ -95,3 +98,66 @@ export const instanceSettings = pgTable("instance_settings", {
 	// Set once by Instance Setup and never cleared, so /setup stays closed for good
 	setupCompleted: boolean("setup_completed").default(false).notNull(),
 });
+
+// Visible only to its owner: every query filters on userId, Admins included
+export const conversation = pgTable(
+	"conversation",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		// fixed once the first message is sent
+		agentId: text("agent_id").notNull(),
+		// null until generated after the first reply
+		title: text("title"),
+		titleEdited: boolean("title_edited").default(false).notNull(),
+		// "failed" lets the UI offer a retry
+		status: text("status")
+			.$type<"idle" | "running" | "failed">()
+			.default("idle")
+			.notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+		updatedAt: timestamp("updated_at")
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [index("conversation_userId_idx").on(table.userId)],
+);
+
+// Completed messages only; a reply is written once it finishes streaming
+export const message = pgTable(
+	"message",
+	{
+		id: serial("id").primaryKey(),
+		conversationId: uuid("conversation_id")
+			.notNull()
+			.references(() => conversation.id, { onDelete: "cascade" }),
+		// pi's UserMessage / AssistantMessage as-is, including DeepSeek reasoning_content (thinkingSignature)
+		message: jsonb("message").notNull(),
+		// `provider/id` and thinking level picked for (user) or used by (assistant) this message
+		model: text("model").notNull(),
+		thinkingLevel: text("thinking_level").notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [index("message_conversationId_idx").on(table.conversationId)],
+);
+
+// The model sees `summary` plus the messages from firstKeptMessageId on; users still see everything
+export const compaction = pgTable(
+	"compaction",
+	{
+		id: serial("id").primaryKey(),
+		conversationId: uuid("conversation_id")
+			.notNull()
+			.references(() => conversation.id, { onDelete: "cascade" }),
+		summary: text("summary").notNull(),
+		firstKeptMessageId: integer("first_kept_message_id")
+			.notNull()
+			.references(() => message.id, { onDelete: "cascade" }),
+		tokensBefore: integer("tokens_before").notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [index("compaction_conversationId_idx").on(table.conversationId)],
+);

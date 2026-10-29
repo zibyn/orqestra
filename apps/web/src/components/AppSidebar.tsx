@@ -1,10 +1,19 @@
-import { Link } from "@tanstack/react-router";
+import {
+	Link,
+	useNavigate,
+	useParams,
+	useRouter,
+} from "@tanstack/react-router";
 import {
 	ChevronsUpDownIcon,
 	LogOutIcon,
+	MoreHorizontalIcon,
+	PencilIcon,
 	SettingsIcon,
 	SquarePenIcon,
+	Trash2Icon,
 } from "lucide-react";
+import { useState } from "react";
 import ParaglideLocaleSwitcher from "#/components/LocaleSwitcher";
 import { ThemeSwitcher } from "#/components/ThemeSwitcher";
 import { Button } from "#/components/ui/button";
@@ -24,25 +33,23 @@ import {
 	SidebarGroup,
 	SidebarGroupLabel,
 	SidebarHeader,
+	SidebarInput,
 	SidebarMenu,
+	SidebarMenuAction,
 	SidebarMenuButton,
 	SidebarMenuItem,
 } from "#/components/ui/sidebar";
 import { signOut } from "#/lib/auth-client";
+import { deleteConversation, renameConversation } from "#/lib/conversation-fns";
 import { displayName, isAdmin } from "#/lib/identity";
 import { m } from "#/paraglide/messages";
 
-// shortcut: placeholder Conversations until real data lands in #4
-const placeholderConversations = [
-	{ id: "1", title: "周报草稿" },
-	{ id: "2", title: "Translate release notes" },
-	{ id: "3", title: "SQL 查询优化" },
-];
-
 export function AppSidebar({
 	user,
+	conversations,
 }: {
 	user: { email: string; phoneNumber?: string | null; role?: string | null };
+	conversations: { id: string; title: string | null }[];
 }) {
 	return (
 		<Sidebar>
@@ -61,12 +68,8 @@ export function AppSidebar({
 				<SidebarGroup>
 					<SidebarGroupLabel>{m.conversations()}</SidebarGroupLabel>
 					<SidebarMenu>
-						{placeholderConversations.map((c) => (
-							<SidebarMenuItem key={c.id}>
-								<SidebarMenuButton>
-									<span>{c.title}</span>
-								</SidebarMenuButton>
-							</SidebarMenuItem>
+						{conversations.map((c) => (
+							<ConversationItem key={c.id} conversation={c} />
 						))}
 					</SidebarMenu>
 				</SidebarGroup>
@@ -111,5 +114,83 @@ export function AppSidebar({
 				</SidebarMenu>
 			</SidebarFooter>
 		</Sidebar>
+	);
+}
+
+function ConversationItem({
+	conversation,
+}: {
+	conversation: { id: string; title: string | null };
+}) {
+	const router = useRouter();
+	const navigate = useNavigate();
+	const params = useParams({ strict: false });
+	const active = params.conversationId === conversation.id;
+	const [editing, setEditing] = useState(false);
+	const title = conversation.title ?? m.untitled_conversation();
+
+	const rename = async (value: string) => {
+		setEditing(false);
+		if (!value.trim() || value === title) return;
+		await renameConversation({ data: { id: conversation.id, title: value } });
+		await router.invalidate();
+	};
+
+	if (editing)
+		return (
+			<SidebarMenuItem>
+				<SidebarInput
+					autoFocus
+					aria-label={m.rename()}
+					defaultValue={title}
+					onBlur={(e) => void rename(e.currentTarget.value)}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") e.currentTarget.blur();
+						if (e.key === "Escape") setEditing(false);
+					}}
+				/>
+			</SidebarMenuItem>
+		);
+
+	return (
+		<SidebarMenuItem>
+			<SidebarMenuButton
+				isActive={active}
+				render={
+					<Link
+						to="/c/$conversationId"
+						params={{ conversationId: conversation.id }}
+					/>
+				}
+			>
+				<span>{title}</span>
+			</SidebarMenuButton>
+			<DropdownMenu>
+				<DropdownMenuTrigger
+					render={<SidebarMenuAction showOnHover aria-label={m.more()} />}
+				>
+					<MoreHorizontalIcon />
+				</DropdownMenuTrigger>
+				<DropdownMenuContent side="right" align="start">
+					<DropdownMenuItem onClick={() => setEditing(true)}>
+						<PencilIcon />
+						{m.rename()}
+					</DropdownMenuItem>
+					<DropdownMenuItem
+						variant="destructive"
+						onClick={async () => {
+							// shortcut: native confirm until the app has an AlertDialog component
+							if (!window.confirm(m.delete_confirm())) return;
+							await deleteConversation({ data: conversation.id });
+							if (active) await navigate({ to: "/" });
+							await router.invalidate();
+						}}
+					>
+						<Trash2Icon />
+						{m.delete()}
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</SidebarMenuItem>
 	);
 }

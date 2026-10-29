@@ -1,0 +1,264 @@
+import {
+	type AssistantMessage,
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxText,
+	fauxThinking,
+} from "@earendil-works/pi-ai";
+import type { AgentDefinition } from "@orqestra/config";
+import type { ConversationEvent } from "@orqestra/db";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+// Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
+const url = process.env.TEST_DATABASE_URL;
+if (url) process.env.DATABASE_URL = url;
+const { db } = await import("@orqestra/db");
+const schema = await import("@orqestra/db/schema");
+const { sql } = await import("drizzle-orm");
+const { config } = await import("#/lib/config");
+const conversations = await import("#/lib/conversations");
+// the worker runs in-process so the test drives the real queue -> worker -> NOTIFY path
+const { startAgentWorker } = await import("../../../worker/src/run.ts");
+
+const faux = fauxProvider({
+	provider: "faux",
+	models: [
+		{ id: "faux-1", reasoning: true },
+		{ id: "faux-small", contextWindow: 2000 },
+	],
+	tokensPerSecond: 400,
+});
+// a tiny context window so a short history already needs compaction
+const smallAgent: AgentDefinition = {
+	id: "small",
+	name: "Small",
+	description: "test Agent",
+	instructions: "",
+	models: ["faux/faux-small"],
+	defaultModel: "faux/faux-small",
+	thinking: {},
+	compaction: { reserveTokens: 1000, keepRecentTokens: 50 },
+	default: false,
+};
+const fauxAgent: AgentDefinition = {
+	id: "faux",
+	name: "Faux",
+	description: "test Agent",
+	instructions: "You are a test.",
+	models: ["faux/faux-1"],
+	defaultModel: "faux/faux-1",
+	thinking: {},
+	default: false,
+};
+const userId = "u1";
+
+// Reads SSE events from a Response body until `until` returns true
+async function collect(
+	response: Response,
+	until: (events: ConversationEvent[]) => boolean,
+	onEvent?: (event: ConversationEvent) => void,
+) {
+	const reader = response
+		.body!.pipeThrough(new TextDecoderStream())
+		.getReader();
+	const events: ConversationEvent[] = [];
+	let buffer = "";
+	while (!until(events)) {
+		const { value, done } = await reader.read();
+		if (done) break;
+		buffer += value;
+		const frames = buffer.split("\n\n");
+		buffer = frames.pop() ?? "";
+		for (const frame of frames) {
+			const data = frame.match(/^data: (.*)$/m)?.[1];
+			if (!data) continue;
+			const event = JSON.parse(data) as ConversationEvent;
+			events.push(event);
+			onEvent?.(event);
+		}
+	}
+	await reader.cancel();
+	return events;
+}
+
+const text = (events: ConversationEvent[], kind: "text" | "thinking") =>
+	events
+		.map((e) => (e.type === "delta" && e.kind === kind ? e.delta : ""))
+		.join("");
+
+async function waitFor<T>(read: () => Promise<T>, ok: (v: T) => boolean) {
+	for (let i = 0; i < 100; i++) {
+		const v = await read();
+		if (ok(v)) return v;
+		await new Promise((r) => setTimeout(r, 50));
+	}
+	throw new Error("timed out");
+}
+
+describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
+	let stopWorker: () => Promise<void>;
+
+	beforeAll(async () => {
+		const loaded = await config;
+		loaded.registry.registerProvider(faux.provider);
+		loaded.models.push(...faux.models);
+		loaded.agents.push(fauxAgent, smallAgent);
+		stopWorker = await startAgentWorker(loaded, url as string);
+	});
+	afterAll(() => stopWorker?.());
+
+	beforeEach(async () => {
+		await db.execute(sql`truncate "user" cascade`);
+		await db
+			.insert(schema.user)
+			.values({ id: userId, name: "U", email: "u@x.io" });
+	});
+
+	it("streams a reply over SSE, then saves it and a title", async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		faux.setResponses([
+			async () => {
+				await gate;
+				return fauxAssistantMessage([
+					fauxThinking("let me think"),
+					fauxText("Hello there"),
+				]);
+			},
+			fauxAssistantMessage("A greeting"),
+		]);
+
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "hi",
+		});
+		const response = await conversations.conversationEvents(
+			userId,
+			id,
+			new AbortController().signal,
+		);
+		expect(response?.headers.get("content-type")).toBe("text/event-stream");
+		// the reply starts only once the SSE stream is listening
+		release();
+		const events = await collect(
+			response as Response,
+			(es) => es.some((e) => e.type === "start") && es.at(-1)?.type === "saved",
+		);
+
+		expect(text(events, "thinking")).toBe("let me think");
+		expect(text(events, "text")).toBe("Hello there");
+
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.title === "A greeting",
+		);
+		expect(view?.status).toBe("idle");
+		expect(view?.readOnly).toBe(false);
+		expect(view?.messages.map((m) => m.message.role)).toEqual([
+			"user",
+			"assistant",
+		]);
+		const reply = view?.messages[1];
+		expect(reply?.model).toBe("faux/faux-1");
+		expect((reply?.message as AssistantMessage).content).toMatchObject([
+			{ type: "thinking", thinking: "let me think" },
+			{ type: "text", text: "Hello there" },
+		]);
+	});
+
+	it("stops generating when asked and keeps what was generated", async () => {
+		const long = "word ".repeat(2000);
+		faux.setResponses([fauxAssistantMessage(long), fauxAssistantMessage("T")]);
+
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "write a lot",
+		});
+		const response = await conversations.conversationEvents(
+			userId,
+			id,
+			new AbortController().signal,
+		);
+		let stopped = false;
+		await collect(
+			response as Response,
+			(es) => es.at(-1)?.type === "saved",
+			(e) => {
+				if (e.type === "delta" && !stopped) {
+					stopped = true;
+					void conversations.stopRun(userId, id);
+				}
+			},
+		);
+
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.messages.length === 2 && v.status !== "running",
+		);
+		const reply = view?.messages[1].message as AssistantMessage;
+		expect(reply.stopReason).toBe("aborted");
+		expect(JSON.stringify(reply.content).length).toBeLessThan(long.length);
+	});
+
+	it("compacts a long history before the turn but keeps it all visible", async () => {
+		const [conv] = await db
+			.insert(schema.conversation)
+			.values({ userId, agentId: "small", title: "t" })
+			.returning();
+		const old = fauxAssistantMessage("b".repeat(2000));
+		old.usage.totalTokens = 1500; // what the provider reported for that turn
+		await db.insert(schema.message).values(
+			[{ role: "user", content: "a".repeat(4000), timestamp: 1 }, old].map(
+				(m) => ({
+					conversationId: conv.id,
+					message: m,
+					model: "faux/faux-small",
+					thinkingLevel: "off",
+				}),
+			),
+		);
+		let seen = "";
+		faux.setResponses([
+			fauxAssistantMessage("SUMMARY OF EARLIER"),
+			(ctx) => {
+				seen = JSON.stringify(ctx.messages);
+				return fauxAssistantMessage("ok");
+			},
+		]);
+
+		await conversations.sendMessage(userId, {
+			conversationId: conv.id,
+			text: "next?",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, conv.id),
+			(v) => v?.status === "idle",
+		);
+		expect(seen).toContain("SUMMARY OF EARLIER");
+		expect(seen).not.toContain("aaaa");
+		expect(view?.messages).toHaveLength(4);
+		expect(view?.compactedBefore).toEqual([view?.messages[2].id]);
+	});
+
+	it("hides a Conversation from everyone but its owner", async () => {
+		faux.setResponses([fauxAssistantMessage("hi"), fauxAssistantMessage("T")]);
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "hi",
+		});
+		await db
+			.insert(schema.user)
+			.values({ id: "admin", name: "A", email: "a@x.io", role: "admin" });
+		expect(await conversations.getConversation("admin", id)).toBeUndefined();
+		expect(await conversations.listConversations("admin")).toEqual([]);
+		expect(
+			await conversations.conversationEvents(
+				"admin",
+				id,
+				new AbortController().signal,
+			),
+		).toBeUndefined();
+	});
+});
