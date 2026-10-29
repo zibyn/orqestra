@@ -1,46 +1,45 @@
 // Locale switcher refs:
 // - Paraglide docs: https://inlang.com/m/gerre34r/library-inlang-paraglideJs
 // - Router example: https://github.com/TanStack/router/tree/main/examples/react/i18n-paraglide#switching-locale
-import { getLocale, locales, setLocale } from '#/paraglide/runtime'
-import { m } from '#/paraglide/messages'
+import { LanguagesIcon } from "lucide-react";
+import {
+	DropdownMenuRadioGroup,
+	DropdownMenuRadioItem,
+	DropdownMenuSub,
+	DropdownMenuSubContent,
+	DropdownMenuSubTrigger,
+} from "#/components/ui/dropdown-menu";
+import { m } from "#/paraglide/messages";
+import {
+	getLocale,
+	type Locale,
+	locales,
+	setLocale,
+} from "#/paraglide/runtime";
 
+// Each language is named in itself, so it is findable whatever the current locale
+const names: Record<Locale, string> = { zh: "中文", en: "English" };
+
+/** Language submenu for a DropdownMenu; switching sets the locale cookie and reloads. */
 export default function ParaglideLocaleSwitcher() {
-  const currentLocale = getLocale()
-
-  return (
-    <div
-      style={{
-        display: 'flex',
-        gap: '0.5rem',
-        alignItems: 'center',
-        color: 'inherit',
-      }}
-      aria-label={m.language_label()}
-    >
-      <span style={{ opacity: 0.85 }}>
-        {m.current_locale({ locale: currentLocale })}
-      </span>
-      <div style={{ display: 'flex', gap: '0.25rem' }}>
-        {locales.map((locale) => (
-          <button
-            key={locale}
-            onClick={() => setLocale(locale)}
-            aria-pressed={locale === currentLocale}
-            style={{
-              cursor: 'pointer',
-              padding: '0.35rem 0.75rem',
-              borderRadius: '999px',
-              border: '1px solid #d1d5db',
-              background: locale === currentLocale ? '#0f172a' : 'transparent',
-              color: locale === currentLocale ? '#f8fafc' : 'inherit',
-              fontWeight: locale === currentLocale ? 700 : 500,
-              letterSpacing: '0.01em',
-            }}
-          >
-            {locale.toUpperCase()}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
+	return (
+		<DropdownMenuSub>
+			<DropdownMenuSubTrigger>
+				<LanguagesIcon />
+				{m.language_label()}
+			</DropdownMenuSubTrigger>
+			<DropdownMenuSubContent>
+				<DropdownMenuRadioGroup
+					value={getLocale()}
+					onValueChange={(locale) => setLocale(locale as Locale)}
+				>
+					{locales.map((locale) => (
+						<DropdownMenuRadioItem key={locale} value={locale}>
+							{names[locale]}
+						</DropdownMenuRadioItem>
+					))}
+				</DropdownMenuRadioGroup>
+			</DropdownMenuSubContent>
+		</DropdownMenuSub>
+	);
 }

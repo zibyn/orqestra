@@ -9,17 +9,17 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppRouteImport } from './routes/_app'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleSettingsRouteImport } from './routes/console/settings'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConsoleRoute = ConsoleRouteImport.update({
@@ -36,6 +36,11 @@ const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRoute,
 } as any)
 const ConsoleIndexRoute = ConsoleIndexRouteImport.update({
   id: '/',
@@ -54,7 +59,7 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
   '/console': typeof ConsoleRouteWithChildren
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
@@ -63,20 +68,21 @@ export interface FileRoutesByFullPath {
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/console/settings': typeof ConsoleSettingsRoute
+  '/': typeof AppIndexRoute
   '/console': typeof ConsoleIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_app': typeof AppRouteWithChildren
   '/console': typeof ConsoleRouteWithChildren
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/console/settings': typeof ConsoleSettingsRoute
+  '/_app/': typeof AppIndexRoute
   '/console/': typeof ConsoleIndexRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
@@ -92,20 +98,21 @@ export interface FileRouteTypes {
     | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
   to:
-    '/' | '/login' | '/setup' | '/console/settings' | '/console' | '/api/auth/$'
+    '/login' | '/setup' | '/console/settings' | '/' | '/console' | '/api/auth/$'
   id:
     | '__root__'
-    | '/'
+    | '/_app'
     | '/console'
     | '/login'
     | '/setup'
     | '/console/settings'
+    | '/_app/'
     | '/console/'
     | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
   ConsoleRoute: typeof ConsoleRouteWithChildren
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRoute
@@ -114,11 +121,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
+    '/_app': {
+      id: '/_app'
+      path: ''
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+      preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/console': {
@@ -141,6 +148,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/setup'
       preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_app/': {
+      id: '/_app/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
     }
     '/console/': {
       id: '/console/'
@@ -166,6 +180,16 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AppRouteChildren {
+  AppIndexRoute: typeof AppIndexRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppIndexRoute: AppIndexRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 interface ConsoleRouteChildren {
   ConsoleSettingsRoute: typeof ConsoleSettingsRoute
   ConsoleIndexRoute: typeof ConsoleIndexRoute
@@ -180,7 +204,7 @@ const ConsoleRouteWithChildren =
   ConsoleRoute._addFileChildren(ConsoleRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
   ConsoleRoute: ConsoleRouteWithChildren,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRoute,
