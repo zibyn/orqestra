@@ -1,4 +1,8 @@
-import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
+import {
+	Agent,
+	type AgentEvent,
+	type AgentTool,
+} from "@earendil-works/pi-agent-core";
 import {
 	type Api,
 	type AssistantMessage,
@@ -15,7 +19,7 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/config";
 import { scrape, search } from "@orqestra/config/search";
-import { and, db, eq, inArray } from "@orqestra/db";
+import { and, type ConversationEvent, db, eq, inArray } from "@orqestra/db";
 import { subagent } from "@orqestra/db/schema";
 
 /** Subagents running at once in one Run; more wait their turn. */
@@ -133,6 +137,28 @@ export function limiter(max: number) {
 	};
 }
 
+type Notify = (event: ConversationEvent) => Promise<unknown>;
+
+/** Relays an Agent's reply as it streams; `subagent` (the row id) marks a Subagent's. */
+export async function relay(
+	event: AgentEvent,
+	notify: Notify,
+	subagent?: string,
+) {
+	if (event.type === "message_start" && event.message.role === "assistant")
+		await notify({ type: "start", subagent });
+	if (event.type !== "message_update") return;
+	const e = event.assistantMessageEvent;
+	if (e.type === "text_delta" || e.type === "thinking_delta")
+		await notify({
+			type: "delta",
+			kind: e.type === "text_delta" ? "text" : "thinking",
+			index: e.contentIndex,
+			delta: e.delta,
+			subagent,
+		});
+}
+
 const GENERAL_WORKER =
 	"You carry out one task for another agent, starting without any prior context. Work through it with the tools you have, then reply with a complete, self-contained answer: it is all the other agent will see.";
 const STEP_LIMIT =
@@ -189,8 +215,8 @@ export function subagentTools(
 	run: {
 		conversationId: string;
 		signal: AbortSignal;
-		/** Called after every saved change, so the UI reloads. */
-		onChange: () => Promise<unknown>;
+		/** Sends the UI what streams and, after every saved change, what to reload. */
+		notify: Notify;
 	},
 ) {
 	const limit = limiter(MAX_SUBAGENTS);
@@ -202,9 +228,10 @@ export function subagentTools(
 	async function save(
 		id: string,
 		values: Partial<typeof subagent.$inferInsert>,
+		event: ConversationEvent = { type: "saved" },
 	) {
 		await db.update(subagent).set(values).where(eq(subagent.id, id));
-		await run.onChange();
+		await run.notify(event);
 	}
 
 	async function work(
@@ -259,8 +286,15 @@ export function subagentTools(
 					m.role === "toolResult",
 			);
 		agent.subscribe(async (event) => {
+			await relay(event, run.notify, id);
 			if (event.type === "message_end")
-				await save(id, { messages: transcript() });
+				await save(
+					id,
+					{ messages: transcript() },
+					event.message.role === "assistant"
+						? { type: "end", subagent: id }
+						: undefined,
+				);
 		});
 		const abort = () => agent.abort();
 		signal.addEventListener("abort", abort);
@@ -407,7 +441,7 @@ export function subagentTools(
 				);
 			}
 			await rows;
-			await run.onChange();
+			await run.notify({ type: "saved" });
 			const started = picked.map((_, i) => first + i);
 			return {
 				content: text(

@@ -513,6 +513,51 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		]);
 	});
 
+	it("streams a Subagent's reply over SSE under its row id", async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", { tasks: [{ brief: "find pi" }] }),
+				),
+				fauxAssistantMessage(fauxToolCall("subagent_wait", {})),
+				fauxAssistantMessage("Done"),
+			],
+			sub: [
+				async () => {
+					await gate;
+					return fauxAssistantMessage("pi is at pi.dev");
+				},
+			],
+		});
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "research pi",
+		});
+		const response = await conversations.conversationEvents(
+			userId,
+			id,
+			new AbortController().signal,
+		);
+		release();
+		const events = await collect(response as Response, (es) =>
+			es.some((e) => e.type === "end" && e.subagent),
+		);
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.title === "T",
+		);
+		const sub = view?.subagents[0].id;
+		const mine = events.filter((e) => "subagent" in e && e.subagent === sub);
+		expect(mine.map((e) => e.type)).toEqual(
+			expect.arrayContaining(["start", "delta", "end"]),
+		);
+		expect(text(mine, "text")).toBe("pi is at pi.dev");
+	});
+
 	it("gives a Subagent at its step limit one last request without Tools for its answer", async () => {
 		vi.stubGlobal(
 			"fetch",

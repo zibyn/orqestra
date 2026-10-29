@@ -114,6 +114,7 @@ export async function getConversation(userId: string, id: string) {
 		// shortcut: whole transcripts on every reload; load them per Subagent when opened if Conversations get heavy
 		db
 			.select({
+				id: subagent.id,
 				toolCallId: subagent.toolCallId,
 				number: subagent.number,
 				template: subagent.template,

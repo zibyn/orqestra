@@ -32,7 +32,13 @@ import {
 } from "@orqestra/db";
 import { compaction, conversation, message } from "@orqestra/db/schema";
 import { createPostgresBackend, Worker } from "bullmq";
-import { limiter, searchTools, stopSubagents, subagentTools } from "./tools.ts";
+import {
+	limiter,
+	relay,
+	searchTools,
+	stopSubagents,
+	subagentTools,
+} from "./tools.ts";
 
 type Turn = NonNullable<ReturnType<typeof resolveTurn>>;
 type Row = typeof message.$inferSelect & { message: Message };
@@ -102,7 +108,7 @@ async function reply(
 		{
 			conversationId,
 			signal,
-			onChange: () => notify(conversationId, { type: "saved" }),
+			notify: (event) => notify(conversationId, event),
 		},
 	);
 
@@ -118,34 +124,22 @@ async function reply(
 		sessionId: conversationId,
 	});
 	agent.subscribe(async (event) => {
-		if (event.type === "message_start" && event.message.role === "assistant")
-			await notify(conversationId, { type: "start" });
-		if (event.type === "message_update") {
-			const e = event.assistantMessageEvent;
-			if (e.type === "text_delta" || e.type === "thinking_delta")
-				await notify(conversationId, {
-					type: "delta",
-					kind: e.type === "text_delta" ? "text" : "thinking",
-					index: e.contentIndex,
-					delta: e.delta,
-				});
-		}
+		await relay(event, (e) => notify(conversationId, e));
+		if (event.type !== "message_end") return;
+		const { role } = event.message;
+		if (role !== "toolResult" && role !== "assistant") return;
 		// finished and stopped replies are saved (a stopped one keeps what was generated), and so are Tool results;
 		// failed replies are not, the turn is retried instead, dropping everything after the user message
-		if (
-			event.type === "message_end" &&
-			(event.message.role === "toolResult" ||
-				(event.message.role === "assistant" &&
-					event.message.stopReason !== "error"))
-		) {
+		if (role === "toolResult" || event.message.stopReason !== "error")
 			await db.insert(message).values({
 				conversationId,
 				message: event.message,
 				model: modelRef(turn.model),
 				thinkingLevel: turn.thinking,
 			});
-			await notify(conversationId, { type: "saved" });
-		}
+		await notify(conversationId, {
+			type: role === "assistant" ? "end" : "saved",
+		});
 	});
 
 	signal.throwIfAborted(); // stopped before the reply began

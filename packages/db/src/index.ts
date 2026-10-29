@@ -20,7 +20,15 @@ export const STOP_CHANNEL = "conversation_stop";
 /** NOTIFY channel, no payload: Providers or enabled Models changed, reload the config (web -> web and worker). */
 export const CONFIG_CHANNEL = "config_changed";
 
+// `subagent` is the subagent row id when the streaming reply is a Subagent's; without it, the Conversation's own
 export type ConversationEvent =
-	| { type: "start" } // an Agent reply began streaming
-	| { type: "delta"; kind: "text" | "thinking"; index: number; delta: string }
+	| { type: "start"; subagent?: string } // an Agent reply began streaming
+	| {
+			type: "delta";
+			kind: "text" | "thinking";
+			index: number;
+			delta: string;
+			subagent?: string;
+	  }
+	| { type: "end"; subagent?: string } // that reply finished, saved or failed: reload, then drop its live copy
 	| { type: "saved" }; // messages, title, status or compaction changed in the db: reload them
