@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { config } from "#/lib/config";
-import { requireAdmin } from "#/lib/instance";
+import { requireAdmin } from "#/lib/session";
 
 export const listAgents = createServerFn().handler(async () => {
 	await requireAdmin();
