@@ -45,6 +45,7 @@ export async function passwordPolicy() {
 
 export const auth = betterAuth({
 	database: drizzleAdapter(db, { provider: "pg", schema }),
+	trustedOrigins: env.BETTER_AUTH_TRUSTED_ORIGINS,
 	emailAndPassword: { enabled: true, disableSignUp: true },
 	user: {
 		additionalFields: {

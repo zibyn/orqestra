@@ -4,6 +4,17 @@ import { z } from "zod";
 export const env = createEnv({
 	server: {
 		SERVER_URL: z.string().url().optional(),
+		// Comma-separated extra origins allowed to sign in besides BETTER_AUTH_URL, e.g. a LAN address
+		BETTER_AUTH_TRUSTED_ORIGINS: z
+			.string()
+			.optional()
+			.transform(
+				(s) =>
+					s
+						?.split(",")
+						.map((o) => o.trim())
+						.filter(Boolean) ?? [],
+			),
 		ADMIN_EMAIL: z.string().email().optional(),
 		ADMIN_PASSWORD: z.string().min(8).optional(),
 		OIDC_ISSUER: z.string().url().optional(),
