@@ -37,8 +37,28 @@ A role the user converses with, such as a general assistant or a translator, def
 _Avoid_: Bot, assistant, model, persona
 
 **Agent Definition**:
-The reusable description of an Agent: its name, instructions, allowed Models and thinking levels. The same definition can back a Conversation or, later, serve as a subagent.
+The reusable description of an Agent, maintained by Admins: its name, description, instructions, allowed Models, thinking levels and Tools, and whether Users can pick it. Users start Conversations only with Agents they can pick; any definition can serve as the template for a Subagent.
 _Avoid_: Profile, persona, preset
+
+**Subagent**:
+An Agent that another Agent starts during a Run to carry out one task from a fresh context, using an Agent Definition as its template or the built-in general worker; only its final result goes back to the Agent that started it. A Subagent belongs to that Run's Turn, cannot be continued by the User, and cannot start Subagents of its own.
+_Avoid_: Child agent, worker, delegate
+
+**Tool**:
+A capability an Agent can call during a Run, such as Search or Scrape, served by an external service rather than by Orqestra itself. A Tool with no service to serve it is unavailable, and Agents that list it run without it.
+_Avoid_: Function, plugin, skill
+
+**Search**:
+The Tool that queries the web and returns matching pages.
+_Avoid_: Web search, lookup
+
+**Scrape**:
+The Tool that reads one web page and returns its content as Markdown.
+_Avoid_: Fetch, extract, crawl
+
+**Search Provider**:
+An external service that serves Search and Scrape, such as Tavily, Firecrawl or DeepSeek, configured by an Admin with its own API key, independently of any Provider. An Admin picks one Search Provider for Search and one for Scrape; only the Search Providers Orqestra supports can be configured, each at most once.
+_Avoid_: Tool Provider, Provider
 
 **Model**:
 A specific LLM offered by a Provider; an Agent runs on a Model but is not one. Only Models an Admin has enabled are offered; disabling one removes it from every Agent that allowed it.
@@ -61,5 +81,5 @@ One user message and the Agent's reply to it, with the Model and thinking level 
 _Avoid_: Exchange, round
 
 **Run**:
-The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time.
+The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time; Subagents run inside it, and stopping it stops them.
 _Avoid_: Job, task, generation
