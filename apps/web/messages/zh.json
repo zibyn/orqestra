@@ -128,5 +128,9 @@
   "subagent_queued": "排队中",
   "subagent_partial": "已达步数上限",
   "subagent_failed": "失败",
-  "subagent_stopped": "已停止"
+  "subagent_stopped": "已停止",
+  "subagent_completed": "已完成",
+  "subagent_number": "子智能体 {number}",
+  "stop_subagent": "停止",
+  "background_subagents": "子智能体运行中"
 }

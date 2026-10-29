@@ -128,5 +128,9 @@
   "subagent_queued": "Queued",
   "subagent_partial": "Hit its step limit",
   "subagent_failed": "Failed",
-  "subagent_stopped": "Stopped"
+  "subagent_stopped": "Stopped",
+  "subagent_completed": "Completed",
+  "subagent_number": "Subagent {number}",
+  "stop_subagent": "Stop",
+  "background_subagents": "Subagents at work"
 }

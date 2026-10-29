@@ -6,13 +6,19 @@ import type {
 } from "@earendil-works/pi-ai";
 import { messageText } from "@orqestra/config/shared";
 import type { ConversationEvent } from "@orqestra/db";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	createFileRoute,
 	getRouteApi,
 	notFound,
 	useRouter,
 } from "@tanstack/react-router";
-import { ChevronRightIcon, Loader2Icon, RotateCcwIcon } from "lucide-react";
+import {
+	ChevronRightIcon,
+	Loader2Icon,
+	RotateCcwIcon,
+	SquareIcon,
+} from "lucide-react";
 import {
 	createContext,
 	Fragment,
@@ -38,9 +44,11 @@ import {
 } from "#/components/ui/sheet";
 import {
 	getConversation,
+	getSubagentMessages,
 	retryRun,
 	sendMessage,
 	stopRun,
+	stopSubagent,
 } from "#/lib/conversation-fns";
 import { m } from "#/paraglide/messages";
 
@@ -60,7 +68,11 @@ const app = getRouteApi("/_app");
 type Part = { kind: "text" | "thinking"; text: string };
 /** Replies streaming to this tab, by subagent row id; the Conversation's own under "". */
 type Live = Record<string, Part[]>;
-const LiveContext = createContext<Live>({});
+/** What a Subagent's card or Notification needs: the live replies, and a way to open its panel. */
+const PanelContext = createContext<{
+	replies: Live;
+	open: (run: SubagentTranscript) => void;
+}>({ replies: {}, open: () => {} });
 
 /**
  * The replies being generated, from the SSE stream: the Conversation's and its Subagents', each streaming at once.
@@ -68,21 +80,28 @@ const LiveContext = createContext<Live>({});
  */
 function useLiveReplies(conversationId: string) {
 	const router = useRouter();
+	const queryClient = useQueryClient();
 	const [live, setLive] = useState<Live>({});
 	useEffect(() => {
+		// an open Subagent panel loads its transcript apart from the Conversation, so it reloads too
+		const reload = () =>
+			Promise.all([
+				router.invalidate(),
+				queryClient.invalidateQueries({ queryKey: ["subagent"] }),
+			]);
 		const source = new EventSource(
 			`/api/conversations/${conversationId}/events`,
 		);
 		// on (re)connect: load what is saved first, then follow the stream; an `end` missed meanwhile left a stale reply
 		source.onopen = () => {
 			setLive({});
-			void router.invalidate();
+			void reload();
 		};
 		// counts replies started per stream, so a reload finishing late keeps the reply that began meanwhile
 		const started: Record<string, number> = {};
 		source.onmessage = (e) => {
 			const event = JSON.parse(e.data) as ConversationEvent;
-			if (event.type === "saved") return void router.invalidate();
+			if (event.type === "saved") return void reload();
 			const key = event.subagent ?? "";
 			if (event.type === "start") {
 				started[key] = (started[key] ?? 0) + 1;
@@ -97,16 +116,13 @@ function useLiveReplies(conversationId: string) {
 				});
 			else {
 				const at = started[key];
-				void router
-					.invalidate()
-					.then(
-						() =>
-							at === started[key] && setLive(({ [key]: _, ...rest }) => rest),
-					);
+				void reload().then(
+					() => at === started[key] && setLive(({ [key]: _, ...rest }) => rest),
+				);
 			}
 		};
 		return () => source.close();
-	}, [conversationId, router]);
+	}, [conversationId, router, queryClient]);
 	return live;
 }
 
@@ -118,6 +134,11 @@ function ConversationView() {
 	// a crashed Run never sends `end`: its reply stops showing with the status
 	const live = conversation.status === "running" ? replies[""] : undefined;
 	const [retrying, setRetrying] = useState(false);
+	// kept on close so the panel keeps its content while it slides out
+	const [panel, setPanel] = useState<{
+		run: SubagentTranscript;
+		open: boolean;
+	}>();
 	const running = conversation.status === "running";
 	const lastUser = conversation.messages
 		.filter((row) => row.message.role === "user")
@@ -125,7 +146,9 @@ function ConversationView() {
 	const results = toolResults(conversation.messages.map((row) => row.message));
 
 	return (
-		<LiveContext value={replies}>
+		<PanelContext
+			value={{ replies, open: (run) => setPanel({ run, open: true }) }}
+		>
 			<div className="flex min-h-0 flex-1 flex-col">
 				<div className="flex-1 overflow-y-auto">
 					<div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
@@ -139,7 +162,13 @@ function ConversationView() {
 									</div>
 								)}
 								{
-									row.message.role === "user" ? (
+									row.message.role === "user" && row.subagentId ? (
+										<NotificationLine
+											subagentId={row.subagentId}
+											text={messageText(row.message)}
+											className={row.id < 0 ? "order-1" : undefined}
+										/>
+									) : row.message.role === "user" ? (
 										// still in the inbox: shown after the reply that is generating
 										<Message
 											from="user"
@@ -225,7 +254,17 @@ function ConversationView() {
 					/>
 				)}
 			</div>
-		</LiveContext>
+			<SubagentPanel
+				// the panel follows the Subagent's saved state; older ones carry their own
+				run={
+					panel &&
+					(conversation.subagents.find((s) => s.id === panel.run.id) ??
+						panel.run)
+				}
+				open={!!panel?.open}
+				onClose={() => setPanel((p) => p && { ...p, open: false })}
+			/>
+		</PanelContext>
 	);
 }
 
@@ -241,11 +280,32 @@ const toolResults = (messages: PiMessage[]): Results =>
 /** One Subagent's process: a subagent row, or one kept in the Tool result's details by Runs from before the subagent table. */
 type SubagentTranscript = {
 	id?: string;
+	number?: number;
 	template?: string | null;
 	brief: string;
-	messages: PiMessage[];
+	// only older ones carry their transcript; a row's loads when its panel opens
+	messages?: PiMessage[];
 	status?: (typeof Route.types.loaderData)["subagents"][number]["status"];
 };
+
+const statusLabel = (status = "completed") =>
+	(
+		({
+			queued: m.subagent_queued(),
+			running: m.generating(),
+			completed: m.subagent_completed(),
+			partial: m.subagent_partial(),
+			failed: m.subagent_failed(),
+			stopped: m.subagent_stopped(),
+		}) as Record<string, string>
+	)[status];
+
+function useSubagentName(run?: SubagentTranscript) {
+	const { agents } = app.useLoaderData();
+	return run?.template
+		? (agents.find((a) => a.id === run.template)?.name ?? run.template)
+		: m.general_worker();
+}
 
 const collapsible =
 	"group rounded-md border text-sm [&_summary]:flex [&_summary]:cursor-pointer [&_summary]:items-center [&_summary]:gap-1.5 [&_summary]:px-3 [&_summary]:py-1.5 [&_summary]:text-muted-foreground";
@@ -293,93 +353,162 @@ function ToolCallView({
 
 /** A Subagent as one line in its parent's reply, with what it is writing; open it for its own session. */
 function SubagentView({ run }: { run: SubagentTranscript }) {
-	const { agents } = app.useLoaderData();
-	const replies = useContext(LiveContext);
-	const [open, setOpen] = useState(false);
-	const name = run.template
-		? (agents.find((a) => a.id === run.template)?.name ?? run.template)
-		: m.general_worker();
-	const results = toolResults(run.messages);
+	const { replies, open } = useContext(PanelContext);
+	const name = useSubagentName(run);
 	const running = run.status === "running";
 	// a crashed Run never sends `end`: its reply stops showing with the status
 	const live = running && run.id ? replies[run.id] : undefined;
 	const preview = live?.at(-1)?.text.trim().split("\n").at(-1);
-	const status = (
-		{
-			queued: m.subagent_queued(),
-			running: m.generating(),
-			partial: m.subagent_partial(),
-			failed: m.subagent_failed(),
-			stopped: m.subagent_stopped(),
-		} as Partial<Record<NonNullable<SubagentTranscript["status"]>, string>>
-	)[run.status ?? "completed"];
 	return (
-		<>
-			<button
-				type="button"
-				onClick={() => setOpen(true)}
-				className="flex flex-col gap-0.5 rounded-md border px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted/50"
-			>
-				<span className="flex w-full items-center gap-1.5">
-					<span className="truncate">
-						<span className="font-medium text-foreground">{name}</span>{" "}
-						{run.brief}
+		<button
+			type="button"
+			onClick={() => open(run)}
+			className="flex flex-col gap-0.5 rounded-md border px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted/50"
+		>
+			<span className="flex w-full items-center gap-1.5">
+				<span className="truncate">
+					<span className="font-medium text-foreground">{name}</span>{" "}
+					{run.brief}
+				</span>
+				{running ? (
+					<Loader2Icon
+						aria-label={m.generating()}
+						className="ml-auto size-3.5 shrink-0 animate-spin"
+					/>
+				) : (
+					<span
+						className={`ml-auto shrink-0 text-xs ${run.status === "failed" ? "text-destructive" : ""}`}
+					>
+						{statusLabel(run.status)}
 					</span>
-					{running ? (
+				)}
+				<ChevronRightIcon className="size-3.5 shrink-0" />
+			</span>
+			{preview && <span className="truncate text-xs">{preview}</span>}
+		</button>
+	);
+}
+
+/** A Subagent's Notification to its parent, as one system line: which one, and how it ended. */
+function NotificationLine({
+	subagentId,
+	text,
+	className,
+}: {
+	subagentId: string;
+	text: string;
+	className?: string;
+}) {
+	const { subagents } = Route.useLoaderData();
+	const { open } = useContext(PanelContext);
+	const run = subagents.find((s) => s.id === subagentId);
+	// how it ended this time: a continued Subagent notifies again
+	const status = text.match(/^<task-notification [^>]*status="(\w+)"/)?.[1];
+	if (!run) return null;
+	return (
+		<button
+			type="button"
+			onClick={() => open(run)}
+			className={`flex items-center gap-3 text-xs text-muted-foreground hover:text-foreground ${className ?? ""}`}
+		>
+			<Separator className="flex-1" />
+			{m.subagent_number({ number: run.number })} · {statusLabel(status)}
+			<Separator className="flex-1" />
+		</button>
+	);
+}
+
+/** A Subagent's own session, read-only: the User can stop it, but only the Agent that started it writes to it. */
+function SubagentPanel({
+	run,
+	open,
+	onClose,
+}: {
+	run?: SubagentTranscript;
+	open: boolean;
+	onClose: () => void;
+}) {
+	const router = useRouter();
+	const { replies } = useContext(PanelContext);
+	const name = useSubagentName(run);
+	const [stopping, setStopping] = useState(false);
+	const id = run?.id;
+	const loaded = useQuery({
+		queryKey: ["subagent", id],
+		queryFn: () => getSubagentMessages({ data: id as string }),
+		enabled: open && !!id && !run?.messages,
+	});
+	const messages = run?.messages ?? loaded.data ?? [];
+	const results = toolResults(messages);
+	const running = run?.status === "running";
+	const live = running && id ? replies[id] : undefined;
+	const active = running || run?.status === "queued";
+	return (
+		<Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+			<SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
+				<SheetHeader className="flex-row items-center gap-3 border-b pr-12">
+					<div className="flex min-w-0 flex-1 flex-col gap-0.5">
+						<SheetTitle>{name}</SheetTitle>
+						<SheetDescription>
+							{run?.number !== undefined &&
+								`${m.subagent_number({ number: run.number })} · `}
+							{statusLabel(run?.status)}
+						</SheetDescription>
+					</div>
+					{active && id && (
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={stopping}
+							onClick={async () => {
+								setStopping(true);
+								try {
+									await stopSubagent({ data: id });
+									await router.invalidate();
+								} finally {
+									setStopping(false);
+								}
+							}}
+						>
+							{stopping ? (
+								<Loader2Icon className="animate-spin" />
+							) : (
+								<SquareIcon />
+							)}
+							{m.stop_subagent()}
+						</Button>
+					)}
+				</SheetHeader>
+				<div className="flex flex-1 flex-col gap-6 overflow-y-auto px-4 pb-6">
+					<Message from="user">
+						<MessageContent className="whitespace-pre-wrap">
+							{run?.brief}
+						</MessageContent>
+					</Message>
+					{messages.map((message, i) =>
+						message.role === "assistant" ? (
+							// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
+							<AgentReply key={i} message={message} results={results} />
+						) : message.role === "user" && i > 0 ? (
+							// messages the parent sent while it worked; the first is the brief, shown above
+							// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
+							<Message key={i} from="user">
+								<MessageContent>{messageText(message)}</MessageContent>
+							</Message>
+						) : null,
+					)}
+					{live && <LiveReply parts={live} />}
+					{(run?.status === "queued" ||
+						(running && !live) ||
+						(loaded.isFetching && !loaded.data)) && (
 						<Loader2Icon
 							aria-label={m.generating()}
-							className="ml-auto size-3.5 shrink-0 animate-spin"
+							className="size-4 animate-spin text-muted-foreground"
 						/>
-					) : (
-						status && (
-							<span
-								className={`ml-auto shrink-0 text-xs ${run.status === "failed" ? "text-destructive" : ""}`}
-							>
-								{status}
-							</span>
-						)
 					)}
-					<ChevronRightIcon
-						className={`size-3.5 shrink-0 ${running || status ? "" : "ml-auto"}`}
-					/>
-				</span>
-				{preview && <span className="truncate text-xs">{preview}</span>}
-			</button>
-			<Sheet open={open} onOpenChange={setOpen}>
-				<SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-2xl">
-					<SheetHeader className="border-b pr-12">
-						<SheetTitle>{name}</SheetTitle>
-						{status && <SheetDescription>{status}</SheetDescription>}
-					</SheetHeader>
-					<div className="flex flex-1 flex-col gap-6 overflow-y-auto px-4 pb-6">
-						<Message from="user">
-							<MessageContent className="whitespace-pre-wrap">
-								{run.brief}
-							</MessageContent>
-						</Message>
-						{run.messages.map((message, i) =>
-							message.role === "assistant" ? (
-								// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
-								<AgentReply key={i} message={message} results={results} />
-							) : message.role === "user" && i > 0 ? (
-								// messages the parent sent while it worked; the first is the brief, shown above
-								// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
-								<Message key={i} from="user">
-									<MessageContent>{messageText(message)}</MessageContent>
-								</Message>
-							) : null,
-						)}
-						{live && <LiveReply parts={live} />}
-						{(run.status === "queued" || (running && !live)) && (
-							<Loader2Icon
-								aria-label={m.generating()}
-								className="size-4 animate-spin text-muted-foreground"
-							/>
-						)}
-					</div>
-				</SheetContent>
-			</Sheet>
-		</>
+				</div>
+			</SheetContent>
+		</Sheet>
 	);
 }
 

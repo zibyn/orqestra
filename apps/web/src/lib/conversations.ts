@@ -26,7 +26,7 @@ import {
 	message,
 	subagent,
 } from "@orqestra/db/schema";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import pg from "pg";
 import { config } from "#/lib/config";
 
@@ -70,6 +70,8 @@ export const listConversations = (userId: string) =>
 			id: conversation.id,
 			title: conversation.title,
 			status: conversation.status,
+			// Subagents still at work after the parent went idle
+			background: sql<boolean>`exists (select 1 from ${subagent} where ${subagent.parentId} = ${conversation.id} and ${subagent.outcome} in ('queued', 'running'))`,
 		})
 		.from(conversation)
 		// a Subagent's Conversation shows only within its parent
@@ -86,6 +88,7 @@ export async function getConversation(userId: string, id: string) {
 				message: message.message,
 				model: message.model,
 				thinkingLevel: message.thinkingLevel,
+				subagentId: message.subagentId,
 			})
 			.from(message)
 			.where(eq(message.conversationId, id))
@@ -97,6 +100,7 @@ export async function getConversation(userId: string, id: string) {
 				message: inbox.message,
 				model: inbox.model,
 				thinkingLevel: inbox.thinkingLevel,
+				subagentId: inbox.subagentId,
 			})
 			.from(inbox)
 			.where(eq(inbox.conversationId, id))
@@ -118,22 +122,6 @@ export async function getConversation(userId: string, id: string) {
 			.where(eq(subagent.parentId, id))
 			.orderBy(asc(subagent.number)),
 	]);
-	// shortcut: whole transcripts on every reload; load them per Subagent when opened if Conversations get heavy
-	const transcripts = subagents.length
-		? await db
-				.select({
-					conversationId: message.conversationId,
-					message: message.message,
-				})
-				.from(message)
-				.where(
-					inArray(
-						message.conversationId,
-						subagents.map((s) => s.id),
-					),
-				)
-				.orderBy(asc(message.id))
-		: [];
 	return {
 		id: conv.id,
 		agentId: conv.agentId,
@@ -146,13 +134,37 @@ export async function getConversation(userId: string, id: string) {
 			message: m.message as Message,
 		})),
 		compactedBefore: compactions.map((c) => c.firstKeptMessageId),
-		subagents: subagents.map((s) => ({
-			...s,
-			messages: transcripts
-				.filter((t) => t.conversationId === s.id)
-				.map((t) => t.message as Message),
-		})),
+		subagents,
 	};
+}
+
+/** The parent's Subagent with this Conversation id, when the parent is the user's. */
+const ownedSubagent = async (userId: string, id: string) => {
+	const [row] = await db
+		.select({ parentId: subagent.parentId, number: subagent.number })
+		.from(subagent)
+		.innerJoin(conversation, eq(conversation.id, subagent.parentId))
+		.where(
+			and(eq(subagent.conversationId, id), eq(conversation.userId, userId)),
+		);
+	return row;
+};
+
+/** A Subagent's transcript, loaded when its panel opens; undefined when it is not the user's. */
+export async function getSubagentMessages(userId: string, id: string) {
+	if (!(await ownedSubagent(userId, id))) return undefined;
+	const rows = await db
+		.select({ message: message.message })
+		.from(message)
+		.where(eq(message.conversationId, id))
+		.orderBy(asc(message.id));
+	return rows.map((r) => r.message as Message);
+}
+
+/** Stops one Subagent at the User's request; like the Agent's subagent_stop, it does not wake the parent. */
+export async function stopSubagent(userId: string, id: string) {
+	const row = await ownedSubagent(userId, id);
+	if (row) await stopSubagents(row.parentId, [row.number]);
 }
 
 export class ConversationError extends Error {

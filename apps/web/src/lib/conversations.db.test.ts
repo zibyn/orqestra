@@ -495,6 +495,10 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			(v) => v?.status === "idle" && v.messages.length === 4,
 		);
 		expect(replied?.subagents[0].status).toBe("running");
+		// the sidebar marks a Conversation whose Subagents still work in the background
+		expect(await conversations.listConversations(userId)).toMatchObject([
+			{ id, background: true },
+		]);
 		release();
 		const view = await waitFor(
 			() => conversations.getConversation(userId, id),
@@ -523,8 +527,22 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				number: 1,
 				brief: "find pi",
 				status: "completed",
-				messages: [{ role: "user" }, { role: "assistant" }],
 			},
+		]);
+		// the parent carries its Subagents' metadata only; a panel loads a transcript when opened
+		expect(view?.subagents[0]).not.toHaveProperty("messages");
+		const sub = view?.subagents[0].id as string;
+		expect(
+			(await conversations.getSubagentMessages(userId, sub))?.map(
+				(m) => m.role,
+			),
+		).toEqual(["user", "assistant"]);
+		expect(await conversations.getSubagentMessages("u2", sub)).toBeUndefined();
+		// the Notification knows which Subagent it came from, so it can open that panel
+		expect(view?.messages[4].subagentId).toBe(sub);
+		// the parent is idle with no Subagent left in the background
+		expect(await conversations.listConversations(userId)).toMatchObject([
+			{ id, background: false },
 		]);
 		// a Subagent's Conversation is reached through its parent only
 		expect(await conversations.listConversations(userId)).toMatchObject([
@@ -719,6 +737,42 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 				JSON.stringify(m.message.content).includes('status=\\"stopped\\"'),
 			),
 		).toHaveLength(2);
+	});
+
+	it("stops one Subagent from its panel, leaving the others and the parent as they are", async () => {
+		script({
+			parent: [
+				fauxAssistantMessage(
+					fauxToolCall("subagent", {
+						tasks: [{ brief: "one" }, { brief: "two" }],
+					}),
+				),
+				fauxAssistantMessage("Both started"),
+			],
+			sub: [hang, hang],
+		});
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "go",
+		});
+		const replied = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) =>
+				v?.status === "idle" &&
+				v.title === "T" &&
+				v.subagents.every((s) => s.status === "running"),
+		);
+		const [one, two] = replied?.subagents ?? [];
+		// nobody else can stop it
+		await conversations.stopSubagent("u2", one.id);
+		await conversations.stopSubagent(userId, one.id);
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.subagents[0]?.status === "stopped",
+		);
+		expect(view?.subagents[1]).toMatchObject({ id: two.id, status: "running" });
+		expect(view?.status).toBe("idle");
+		await conversations.stopRun(userId, id);
 	});
 
 	it("delivers a Notification that arrives while the parent runs between its steps, without another Run", async () => {
