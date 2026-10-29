@@ -132,5 +132,18 @@
   "subagent_completed": "已完成",
   "subagent_number": "子智能体 {number}",
   "stop_subagent": "停止",
-  "background_subagents": "子智能体运行中"
+  "background_subagents": "子智能体运行中",
+  "mcp_servers": "MCP Server",
+  "mcp_servers_hint": "通过 Model Context Protocol（Streamable HTTP）向 Agent 提供 Tool 的外部服务。",
+  "add_mcp_server": "添加 MCP Server",
+  "mcp_server_url": "URL",
+  "mcp_server_enabled": "启用",
+  "mcp_server_id_hint": "小写字母、数字和连字符；创建后不可更改。",
+  "mcp_headers": "请求头",
+  "header_name": "请求头名称",
+  "header_value": "值",
+  "add_header": "添加请求头",
+  "remove": "移除",
+  "mcp_header_unreadable": "已保存的请求头值无法解密（ORQESTRA_ENCRYPTION_KEY 是否更换过？），此 MCP Server 不可用。请重新填写。",
+  "delete_mcp_server_confirm": "删除这个 MCP Server 及其请求头？"
 }

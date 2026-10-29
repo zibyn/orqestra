@@ -132,5 +132,18 @@
   "subagent_completed": "Completed",
   "subagent_number": "Subagent {number}",
   "stop_subagent": "Stop",
-  "background_subagents": "Subagents at work"
+  "background_subagents": "Subagents at work",
+  "mcp_servers": "MCP Servers",
+  "mcp_servers_hint": "External services that serve Tools to Agents over the Model Context Protocol (Streamable HTTP).",
+  "add_mcp_server": "Add MCP Server",
+  "mcp_server_url": "URL",
+  "mcp_server_enabled": "Enabled",
+  "mcp_server_id_hint": "Lowercase letters, digits and dashes; cannot be changed later.",
+  "mcp_headers": "Headers",
+  "header_name": "Header name",
+  "header_value": "Value",
+  "add_header": "Add header",
+  "remove": "Remove",
+  "mcp_header_unreadable": "A stored header value cannot be decrypted (ORQESTRA_ENCRYPTION_KEY changed?), so this MCP Server is unavailable. Enter it again.",
+  "delete_mcp_server_confirm": "Delete this MCP Server with its headers?"
 }
