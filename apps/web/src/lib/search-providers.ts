@@ -1,4 +1,4 @@
-import { searchProviderId, toolName } from "@orqestra/config";
+import { searchProviderId, searchProviders, toolName } from "@orqestra/config";
 import { decryptSecret, encryptSecret } from "@orqestra/config/secret";
 import { db, eq } from "@orqestra/db";
 import { instanceSettings, searchProvider } from "@orqestra/db/schema";
@@ -37,15 +37,16 @@ export const saveSearchProvider = createServerFn({ method: "POST" })
 			id: searchProviderId,
 			// blank keeps the stored key
 			apiKey: z.string().trim().optional(),
-			// blank means the official one; set for a self-hosted service or a reverse proxy
-			baseUrl: z
-				.union([z.url({ protocol: /^https?$/ }), z.literal("")])
-				.optional(),
+			// the official one, or a self-hosted service or reverse proxy
+			baseUrl: z.url({ protocol: /^https?$/ }),
 		}),
 	)
 	.handler(async ({ data }) => {
 		await requireAdmin();
-		const baseUrl = data.baseUrl || null;
+		const official = searchProviders.find((p) => p.id === data.id)?.baseUrl;
+		// null keeps following the official one
+		const baseUrl =
+			data.baseUrl.replace(/\/+$/, "") === official ? null : data.baseUrl;
 		const apiKey = data.apiKey ? encryptSecret(data.apiKey) : undefined;
 		const stored = await db.query.searchProvider.findFirst({
 			where: eq(searchProvider.id, data.id),

@@ -25,7 +25,7 @@ Admin 在 `/console/providers` 里从目录（pi 内置的 Provider 列表）选
 
 ## 如何配置 Search 与 Scrape
 
-Agent 可以调用 Search（搜索网页）和 Scrape（读取一个网页，返回 Markdown）两个 Tool，由外部的 Search Provider（Tavily、Firecrawl、DeepSeek）提供。Admin 在 `/console/providers` 底部添加 Search Provider 并填写 API Key（与 Provider 一样加密保存、只写不读）和可选的 `baseUrl`（留空用官方地址；自部署的 Firecrawl 或经过反向代理时填写），再分别为 Search 和 Scrape 选一个。没有可用 Search Provider 的 Tool 不可用，Agent 照常运行但不带它。
+Agent 可以调用 Search（搜索网页）和 Scrape（读取一个网页，返回 Markdown）两个 Tool，由外部的 Search Provider（Tavily、Firecrawl、DeepSeek）提供。Admin 在 `/console/providers` 底部添加 Search Provider 并填写 API Key（与 Provider 一样加密保存、只写不读）和 `baseUrl`（默认填好官方地址；自部署的 Firecrawl 或经过反向代理时改成自己的地址），再分别为 Search 和 Scrape 选一个。没有可用 Search Provider 的 Tool 不可用，Agent 照常运行但不带它。
 
 ## 如何添加一个 Agent
 

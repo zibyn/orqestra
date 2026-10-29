@@ -328,55 +328,63 @@ function SearchProviders({ data }: { data: SearchData }) {
 	}
 
 	/** Adds Search Provider `id`, or edits `existing`; the API key is write-only. */
-	const keyForm = (id: SearchProviderId, existing?: SearchConfigured) => (
-		<form
-			className="flex flex-col gap-4"
-			onSubmit={(e) => {
-				e.preventDefault();
-				void act(`save-${id}`, () =>
-					saveSearchProvider({
-						data: {
-							id,
-							apiKey: keys[id] ?? "",
-							baseUrl: urls[id] ?? existing?.baseUrl ?? "",
-						},
-					}),
-				);
-			}}
-		>
-			<div className="flex flex-col gap-2">
-				<Label htmlFor={`search-${id}-key`}>{m.api_key()}</Label>
-				<Input
-					id={`search-${id}-key`}
-					type="password"
-					autoComplete="off"
-					required={!existing?.keyReadable}
-					value={keys[id] ?? ""}
-					onChange={(e) => setKeys({ ...keys, [id]: e.target.value })}
-					placeholder={existing?.keyReadable ? m.api_key_set() : ""}
-				/>
-			</div>
-			<div className="flex flex-col gap-2">
-				<Label htmlFor={`search-${id}-url`}>{m.base_url()}</Label>
-				<Input
-					id={`search-${id}-url`}
-					type="url"
-					value={urls[id] ?? existing?.baseUrl ?? ""}
-					onChange={(e) => setUrls({ ...urls, [id]: e.target.value })}
-					placeholder={searchProviders.find((p) => p.id === id)?.baseUrl}
-				/>
-			</div>
-			<Button
-				type="submit"
-				className="self-start"
-				variant={existing ? "outline" : "default"}
-				disabled={!!busy}
+	const keyForm = (id: SearchProviderId, existing?: SearchConfigured) => {
+		// shown in full, the official one included, so the Admin confirms where requests go
+		const baseUrl =
+			urls[id] ??
+			existing?.baseUrl ??
+			searchProviders.find((p) => p.id === id)?.baseUrl ??
+			"";
+		return (
+			<form
+				className="flex flex-col gap-4"
+				onSubmit={(e) => {
+					e.preventDefault();
+					void act(`save-${id}`, () =>
+						saveSearchProvider({
+							data: {
+								id,
+								apiKey: keys[id] ?? "",
+								baseUrl,
+							},
+						}),
+					);
+				}}
 			>
-				{busy === `save-${id}` && <Loader2Icon className="animate-spin" />}
-				{existing ? m.save() : m.add_search_provider()}
-			</Button>
-		</form>
-	);
+				<div className="flex flex-col gap-2">
+					<Label htmlFor={`search-${id}-key`}>{m.api_key()}</Label>
+					<Input
+						id={`search-${id}-key`}
+						type="password"
+						autoComplete="off"
+						required={!existing?.keyReadable}
+						value={keys[id] ?? ""}
+						onChange={(e) => setKeys({ ...keys, [id]: e.target.value })}
+						placeholder={existing?.keyReadable ? m.api_key_set() : ""}
+					/>
+				</div>
+				<div className="flex flex-col gap-2">
+					<Label htmlFor={`search-${id}-url`}>{m.base_url()}</Label>
+					<Input
+						id={`search-${id}-url`}
+						type="url"
+						required
+						value={baseUrl}
+						onChange={(e) => setUrls({ ...urls, [id]: e.target.value })}
+					/>
+				</div>
+				<Button
+					type="submit"
+					className="self-start"
+					variant={existing ? "outline" : "default"}
+					disabled={!!busy}
+				>
+					{busy === `save-${id}` && <Loader2Icon className="animate-spin" />}
+					{existing ? m.save() : m.add_search_provider()}
+				</Button>
+			</form>
+		);
+	};
 
 	return (
 		<>
