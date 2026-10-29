@@ -1,7 +1,6 @@
 import {
 	Agent,
 	type AgentMessage,
-	type AgentTool,
 	type StreamFn,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
@@ -33,6 +32,7 @@ import {
 } from "@orqestra/db";
 import { compaction, conversation, message } from "@orqestra/db/schema";
 import { createPostgresBackend, Worker } from "bullmq";
+import { subagentTool, searchTools } from "./tools.ts";
 
 type Turn = NonNullable<ReturnType<typeof resolveTurn>>;
 type Row = typeof message.$inferSelect & { message: Message };
@@ -94,13 +94,21 @@ async function reply(
 	});
 	if (!turn) throw new Error(`Agent "${conv.agentId}" is no longer configured`);
 	const streamFn: StreamFn = config.streamSimple;
+	const tools = searchTools(config, turn.agent.tools);
 
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: turn.agent.instructions,
 			model: turn.model,
 			thinkingLevel: turn.thinking,
-			tools: [] as AgentTool[], // no tools yet; they plug in here
+			tools: [
+				...tools,
+				subagentTool(
+					config,
+					{ model: turn.model, thinking: turn.thinking },
+					tools,
+				),
+			],
 			messages: await context(conversationId, rows, turn, streamFn, signal),
 		},
 		streamFn,
@@ -119,18 +127,22 @@ async function reply(
 					delta: e.delta,
 				});
 		}
-		// finished and stopped replies are saved (a stopped one keeps what was generated); failed ones are not, the turn is retried instead
+		// finished and stopped replies are saved (a stopped one keeps what was generated), and so are Tool results;
+		// failed replies are not, the turn is retried instead, dropping everything after the user message
 		if (
 			event.type === "message_end" &&
-			event.message.role === "assistant" &&
-			event.message.stopReason !== "error"
-		)
+			(event.message.role === "toolResult" ||
+				(event.message.role === "assistant" &&
+					event.message.stopReason !== "error"))
+		) {
 			await db.insert(message).values({
 				conversationId,
 				message: event.message,
 				model: modelRef(turn.model),
 				thinkingLevel: turn.thinking,
 			});
+			await notify(conversationId, { type: "saved" });
+		}
 	});
 
 	signal.throwIfAborted(); // stopped before the reply began

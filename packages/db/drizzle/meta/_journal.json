@@ -29,6 +29,13 @@
       "when": 1793256305934,
       "tag": "0003_providers",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793263015193,
+      "tag": "0004_agents_and_search",
+      "breakpoints": true
     }
   ]
 }

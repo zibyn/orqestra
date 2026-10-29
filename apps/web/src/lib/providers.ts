@@ -1,15 +1,13 @@
 import { catalogProviders, testConnection } from "@orqestra/config";
 import { decryptSecret, encryptSecret } from "@orqestra/config/secret";
-import { and, CONFIG_CHANNEL, db, eq, sql } from "@orqestra/db";
+import { and, db, eq } from "@orqestra/db";
 import { enabledModel, provider } from "@orqestra/db/schema";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { reloadConfig as reload } from "#/lib/config";
 import { requireAdmin } from "#/lib/session";
 
 // Providers and enabled Models, edited by Admins in /console/providers. API keys only go in, never back out.
-
-// web and worker reload their config on this
-const reload = () => db.execute(sql`select pg_notify(${CONFIG_CHANNEL}, '')`);
 
 async function catalogProvider(id: string) {
 	const found = (await catalogProviders()).find((p) => p.id === id);

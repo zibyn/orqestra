@@ -51,7 +51,7 @@ const owned = (userId: string, id: string) =>
 		where: and(eq(conversation.id, id), eq(conversation.userId, userId)),
 	});
 
-/** The Agents a new Conversation can use, with the Models and thinking levels each offers. */
+/** The online Agents, with the Models and thinking levels each offers; new Conversations only use `pickable` ones. */
 export async function listAgentOptions() {
 	const cfg = await config.get();
 	// an Agent without Models is offline
@@ -62,6 +62,7 @@ export async function listAgentOptions() {
 			name: a.name,
 			description: a.description,
 			default: a.default,
+			pickable: a.pickable,
 			defaultModel: a.defaultModel,
 			models: a.models.map((ref) => {
 				const model = cfg.models.find((m) => modelRef(m) === ref);
@@ -146,6 +147,9 @@ export async function sendMessage(
 	const agentId = existing?.agentId ?? input.agentId ?? cfg.defaultAgent.id;
 	const turn = resolveTurn(cfg, agentId, input);
 	if (!turn) throw new ConversationError("This Agent is offline");
+	// existing Conversations keep their Agent even after it stops being pickable
+	if (!existing && !turn.agent.pickable)
+		throw new ConversationError("This Agent cannot be picked");
 
 	const conversationId = await db.transaction(async (tx) => {
 		let id = existing?.id;

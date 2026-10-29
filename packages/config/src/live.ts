@@ -1,20 +1,40 @@
 import { CONFIG_CHANNEL, db } from "@orqestra/db";
-import { enabledModel, provider } from "@orqestra/db/schema";
 import {
+	agent,
+	enabledModel,
+	instanceSettings,
+	provider,
+	searchProvider,
+} from "@orqestra/db/schema";
+import {
+	generalAgent,
 	loadConfig,
-	type ModelSettings,
 	modelRef,
 	type OrqestraConfig,
+	type SearchProviderId,
+	type Settings,
+	toolName,
 } from "./index.ts";
 import { decryptSecret, encryptionKey } from "./secret.ts";
 
-/** The Providers and enabled Models saved in /console, with API keys decrypted. */
-export async function loadModelSettings(): Promise<ModelSettings> {
+/** Everything saved in /console, with API keys decrypted; writes the General Agent into a database without Agents. */
+export async function loadSettings(): Promise<Settings> {
 	const key = encryptionKey();
-	const [providers, enabled] = await Promise.all([
+	const [providers, enabled, searchProviders, [instance]] = await Promise.all([
 		db.select().from(provider),
 		db.select().from(enabledModel),
+		db.select().from(searchProvider),
+		db.select().from(instanceSettings),
 	]);
+	let agents = await db.select().from(agent).orderBy(agent.createdAt);
+	if (!agents.length) {
+		// web and worker may both get here first
+		await db
+			.insert(agent)
+			.values({ id: "general", definition: generalAgent })
+			.onConflictDoNothing();
+		agents = await db.select().from(agent).orderBy(agent.createdAt);
+	}
 	return {
 		providers: providers.map((p) => ({
 			id: p.id,
@@ -24,18 +44,30 @@ export async function loadModelSettings(): Promise<ModelSettings> {
 		enabledModels: enabled.map((m) =>
 			modelRef({ provider: m.providerId, id: m.modelId }),
 		),
+		agents,
+		searchProviders: searchProviders.map((p) => ({
+			id: p.id as SearchProviderId,
+			apiKey: decryptSecret(p.apiKey, key),
+		})),
+		servedBy: {
+			search: (instance?.searchServedBy ?? null) as SearchProviderId | null,
+			scrape: (instance?.scrapeServedBy ?? null) as SearchProviderId | null,
+		},
 	};
 }
 
 const logWarnings = (config: OrqestraConfig) => {
-	for (const agent of config.agents) {
-		for (const ref of agent.unavailableModels)
-			console.warn(`Agent "${agent.id}": Model "${ref}" is not available`);
-		if (!agent.models.length)
-			console.warn(
-				`Agent "${agent.id}": no Model is available, so it is offline`,
-			);
+	for (const a of config.agents) {
+		for (const ref of a.unavailableModels)
+			console.warn(`Agent "${a.id}": Model "${ref}" is not available`);
+		if (!a.models.length)
+			console.warn(`Agent "${a.id}": no Model is available, so it is offline`);
 	}
+	for (const tool of toolName.options)
+		if (!config.tools[tool])
+			console.warn(
+				`Tool "${tool}" has no usable Search Provider, so Agents run without it`,
+			);
 	return config;
 };
 
@@ -48,7 +80,7 @@ export function liveConfig() {
 	encryptionKey(); // fail at startup, not on first use
 	let current: Promise<OrqestraConfig> | undefined;
 	let listener: Promise<{ release(destroy: boolean): void }> | undefined;
-	const load = () => loadModelSettings().then(loadConfig).then(logWarnings);
+	const load = () => loadSettings().then(loadConfig).then(logWarnings);
 	const start = () => {
 		// LISTEN before the first load so no change slips in between
 		// shortcut: a dropped connection silently stops reloads; reconnect if that shows up in practice

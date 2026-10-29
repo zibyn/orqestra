@@ -1,4 +1,9 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	Message as PiMessage,
+	ToolCall,
+	ToolResultMessage,
+} from "@earendil-works/pi-ai";
 import { messageText } from "@orqestra/config/shared";
 import type { ConversationEvent } from "@orqestra/db";
 import {
@@ -7,7 +12,7 @@ import {
 	notFound,
 	useRouter,
 } from "@tanstack/react-router";
-import { Loader2Icon, RotateCcwIcon } from "lucide-react";
+import { ChevronRightIcon, Loader2Icon, RotateCcwIcon } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 import {
 	Message,
@@ -54,10 +59,14 @@ function useLiveReply(conversationId: string) {
 		);
 		// on (re)connect: load what is saved first, then follow the stream
 		source.onopen = () => void router.invalidate();
+		// counts replies started, so a reload finishing late keeps the reply that began meanwhile (Tool calls save mid-Run)
+		let started = 0;
 		source.onmessage = (e) => {
 			const event = JSON.parse(e.data) as ConversationEvent;
-			if (event.type === "start") setLive([]);
-			else if (event.type === "delta")
+			if (event.type === "start") {
+				started++;
+				setLive([]);
+			} else if (event.type === "delta")
 				// shortcut: a reply that began before we connected shows from the next delta on; replaying it needs a server-side buffer
 				setLive((parts) => {
 					const next = [...(parts ?? [])];
@@ -65,7 +74,10 @@ function useLiveReply(conversationId: string) {
 					next[event.index] = { ...part, text: part.text + event.delta };
 					return next;
 				});
-			else void router.invalidate().then(() => setLive(null));
+			else {
+				const at = started;
+				void router.invalidate().then(() => at === started && setLive(null));
+			}
 		};
 		return () => source.close();
 	}, [conversationId, router]);
@@ -82,6 +94,7 @@ function ConversationView() {
 	const lastUser = conversation.messages
 		.filter((row) => row.message.role === "user")
 		.at(-1);
+	const results = toolResults(conversation.messages.map((row) => row.message));
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col">
@@ -96,13 +109,15 @@ function ConversationView() {
 									<Separator className="flex-1" />
 								</div>
 							)}
-							{row.message.role === "user" ? (
-								<Message from="user">
-									<MessageContent>{messageText(row.message)}</MessageContent>
-								</Message>
-							) : (
-								<AgentReply message={row.message as AssistantMessage} />
-							)}
+							{
+								row.message.role === "user" ? (
+									<Message from="user">
+										<MessageContent>{messageText(row.message)}</MessageContent>
+									</Message>
+								) : row.message.role === "assistant" ? (
+									<AgentReply message={row.message} results={results} />
+								) : null /* Tool results show under their call */
+							}
 						</Fragment>
 					))}
 					{live && <LiveReply parts={live} />}
@@ -170,7 +185,102 @@ function ConversationView() {
 	);
 }
 
-function AgentReply({ message }: { message: AssistantMessage }) {
+type Results = Map<string, ToolResultMessage>;
+
+const toolResults = (messages: PiMessage[]): Results =>
+	new Map(
+		messages
+			.filter((m): m is ToolResultMessage => m.role === "toolResult")
+			.map((m) => [m.toolCallId, m]),
+	);
+
+/** One Subagent's process, as the subagent Tool keeps it in its result's details (see apps/worker/src/tools.ts). */
+type SubagentTranscript = {
+	template?: string;
+	brief: string;
+	messages: PiMessage[];
+	result: string;
+};
+
+const collapsible =
+	"group rounded-md border text-sm [&_summary]:flex [&_summary]:cursor-pointer [&_summary]:items-center [&_summary]:gap-1.5 [&_summary]:px-3 [&_summary]:py-1.5 [&_summary]:text-muted-foreground";
+const chevron = (
+	<ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
+);
+
+/** A Tool call folded into one line (name and arguments); open it for the result. */
+function ToolCallView({
+	call,
+	result,
+}: {
+	call: ToolCall;
+	result?: ToolResultMessage;
+}) {
+	const runs = (
+		result?.details as { subagents?: SubagentTranscript[] } | undefined
+	)?.subagents;
+	if (call.name === "subagent" && runs)
+		return runs.map((run, i) => (
+			// biome-ignore lint/suspicious/noArrayIndexKey: saved runs never reorder
+			<SubagentView key={i} run={run} />
+		));
+	return (
+		<details className={collapsible}>
+			<summary>
+				{chevron}
+				<span className="truncate">
+					<span className="font-medium text-foreground">{call.name}</span>{" "}
+					{Object.values(call.arguments).map(String).join(" · ")}
+				</span>
+				{!result && <Loader2Icon className="size-3.5 animate-spin" />}
+			</summary>
+			{result && (
+				<pre
+					className={`max-h-80 overflow-auto whitespace-pre-wrap border-t px-3 py-2 text-xs ${result.isError ? "text-destructive" : ""}`}
+				>
+					{messageText(result)}
+				</pre>
+			)}
+		</details>
+	);
+}
+
+/** A Subagent folded into one line (template and brief); open it for its process and result. */
+function SubagentView({ run }: { run: SubagentTranscript }) {
+	const { agents } = app.useLoaderData();
+	const name = run.template
+		? (agents.find((a) => a.id === run.template)?.name ?? run.template)
+		: m.general_worker();
+	const results = toolResults(run.messages);
+	return (
+		<details className={collapsible}>
+			<summary>
+				{chevron}
+				<span className="truncate">
+					<span className="font-medium text-foreground">{name}</span>{" "}
+					{run.brief}
+				</span>
+			</summary>
+			<div className="flex flex-col gap-3 border-t px-3 py-2">
+				<p className="whitespace-pre-wrap text-muted-foreground">{run.brief}</p>
+				{run.messages.map((message, i) =>
+					message.role === "assistant" ? (
+						// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
+						<AgentReply key={i} message={message} results={results} />
+					) : null,
+				)}
+			</div>
+		</details>
+	);
+}
+
+function AgentReply({
+	message,
+	results,
+}: {
+	message: AssistantMessage;
+	results: Results;
+}) {
 	return (
 		<Message from="assistant">
 			<MessageContent className="flex flex-col gap-3">
@@ -181,7 +291,13 @@ function AgentReply({ message }: { message: AssistantMessage }) {
 					) : part.type === "text" ? (
 						// biome-ignore lint/suspicious/noArrayIndexKey: saved content never reorders
 						<MessageResponse key={i}>{part.text}</MessageResponse>
-					) : null,
+					) : (
+						<ToolCallView
+							key={part.id}
+							call={part}
+							result={results.get(part.id)}
+						/>
+					),
 				)}
 				{message.stopReason === "aborted" && (
 					<p className="text-xs text-muted-foreground">{m.stopped()}</p>

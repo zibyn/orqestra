@@ -4,11 +4,22 @@ import {
 	fauxProvider,
 	fauxText,
 	fauxThinking,
+	fauxToolCall,
+	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/config";
 import type { ConversationEvent } from "@orqestra/db";
 import { createPostgresBackend, Worker } from "bullmq";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -20,6 +31,7 @@ const { config } = await import("#/lib/config");
 const conversations = await import("#/lib/conversations");
 // the worker runs in-process so the test drives the real queue -> worker -> NOTIFY path
 const { startAgentWorker } = await import("../../../worker/src/run.ts");
+const { MAX_SUBAGENT_STEPS } = await import("../../../worker/src/tools.ts");
 
 const faux = fauxProvider({
 	provider: "faux",
@@ -40,6 +52,9 @@ const smallAgent: AgentDefinition = {
 	thinking: {},
 	compaction: { reserveTokens: 1000, keepRecentTokens: 50 },
 	default: false,
+	pickable: true,
+	allModels: false,
+	tools: ["search", "scrape"],
 	unavailableModels: [],
 };
 const fauxAgent: AgentDefinition = {
@@ -51,6 +66,9 @@ const fauxAgent: AgentDefinition = {
 	defaultModel: "faux/faux-1",
 	thinking: {},
 	default: false,
+	pickable: true,
+	allModels: false,
+	tools: ["search", "scrape"],
 	unavailableModels: [],
 };
 const userId = "u1";
@@ -106,9 +124,11 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		loaded.registry.registerProvider(faux.provider);
 		loaded.models.push(...faux.models);
 		loaded.agents.push(fauxAgent, smallAgent);
+		loaded.tools.search = { provider: "tavily", apiKey: "k" };
 		stopWorker = await startAgentWorker(config.get, url as string);
 	});
 	afterAll(() => stopWorker?.());
+	afterEach(() => vi.unstubAllGlobals());
 
 	beforeEach(async () => {
 		await db.execute(sql`truncate "user" cascade`);
@@ -355,6 +375,119 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		expect(seen).not.toContain("aaaa");
 		expect(view?.messages).toHaveLength(4);
 		expect(view?.compactedBefore).toEqual([view?.messages[2].id]);
+	});
+
+	it("saves a Tool call and its result as part of the Turn", async () => {
+		vi.stubGlobal(
+			"fetch",
+			async () =>
+				new Response(
+					JSON.stringify({
+						results: [
+							{ title: "Pi", url: "https://pi.dev", content: "An agent" },
+						],
+					}),
+				),
+		);
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("search", { query: "pi", count: 1 })),
+			fauxAssistantMessage("Pi is an agent"),
+			fauxAssistantMessage("T"),
+		]);
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "what is pi?",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.title === "T",
+		);
+		expect(view?.messages.map((m) => m.message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"assistant",
+		]);
+		const result = view?.messages[2].message as ToolResultMessage;
+		expect(result.toolName).toBe("search");
+		expect(JSON.stringify(result.content)).toContain("https://pi.dev");
+	});
+
+	it("hands a task to a Subagent that starts fresh and only returns its final answer", async () => {
+		const seen: { messages: { role: string; toolsAdded?: unknown }[] }[] = [];
+		faux.setResponses([
+			fauxAssistantMessage(
+				fauxToolCall("subagent", { tasks: [{ brief: "find pi" }] }),
+			),
+			(context) => {
+				seen.push(context as (typeof seen)[number]);
+				return fauxAssistantMessage("pi is at pi.dev");
+			},
+			fauxAssistantMessage("Done"),
+			fauxAssistantMessage("T"),
+		]);
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "research pi",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.title === "T",
+		);
+		// the Subagent saw only the brief, not the Conversation, and cannot start Subagents in turn
+		const [system, ...rest] = seen[0].messages;
+		expect(rest).toMatchObject([{ role: "user", content: "find pi" }]);
+		expect(JSON.stringify(system.toolsAdded)).not.toContain("subagent");
+		expect(view?.messages.map((m) => m.message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"assistant",
+		]);
+		const result = view?.messages[2].message as ToolResultMessage;
+		expect(JSON.stringify(result.content)).toContain("pi is at pi.dev");
+		// its whole process is kept with the Turn
+		expect(result.details).toMatchObject({
+			subagents: [
+				{
+					brief: "find pi",
+					messages: [{ role: "user" }, { role: "assistant" }],
+				},
+			],
+		});
+	});
+
+	it("ends a Subagent at its step limit with its partial result", async () => {
+		vi.stubGlobal(
+			"fetch",
+			async () => new Response(JSON.stringify({ results: [] })),
+		);
+		faux.setResponses([
+			fauxAssistantMessage(
+				fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }),
+			),
+			...Array.from({ length: MAX_SUBAGENT_STEPS }, (_, i) =>
+				fauxAssistantMessage([
+					fauxText(`step ${i + 1}`),
+					fauxToolCall("search", { query: "more" }),
+				]),
+			),
+			fauxAssistantMessage("Done"),
+			fauxAssistantMessage("T"),
+		]);
+		const id = await conversations.sendMessage(userId, {
+			agentId: "faux",
+			text: "dig deep",
+		});
+		const view = await waitFor(
+			() => conversations.getConversation(userId, id),
+			(v) => v?.title === "T",
+		);
+		const result = view?.messages[2].message as ToolResultMessage;
+		expect(JSON.stringify(result.content)).toContain(
+			`step ${MAX_SUBAGENT_STEPS}`,
+		);
+		expect(JSON.stringify(result.content)).toContain("step limit");
 	});
 
 	it("hides a Conversation from everyone but its owner", async () => {

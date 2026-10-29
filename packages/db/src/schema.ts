@@ -98,6 +98,9 @@ export const instanceSettings = pgTable("instance_settings", {
 		.notNull(),
 	// Set once by Instance Setup and never cleared, so /setup stays closed for good
 	setupCompleted: boolean("setup_completed").default(false).notNull(),
+	// the Search Provider serving each Tool; null, or one no longer configured: the Tool is unavailable
+	searchServedBy: text("search_served_by"),
+	scrapeServedBy: text("scrape_served_by"),
 });
 
 // Visible only to its owner: every query filters on userId, Admins included
@@ -185,3 +188,20 @@ export const enabledModel = pgTable(
 	},
 	(table) => [primaryKey({ columns: [table.providerId, table.modelId] })],
 );
+
+// Search Providers an Admin configured; at most one row per supported Search Provider
+export const searchProvider = pgTable("search_provider", {
+	// one of the supported ids (tavily, firecrawl, deepseek)
+	id: text("id").primaryKey(),
+	// encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
+	apiKey: text("api_key").notNull(),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Agent Definitions edited by Admins in /console/agents; `conversation.agent_id` refers to the id, so it never changes
+export const agent = pgTable("agent", {
+	id: text("id").primaryKey(),
+	// @orqestra/config's agentDefinition, validated on save and on load
+	definition: jsonb("definition").notNull(),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+});

@@ -1,16 +1,15 @@
+import {
+	type SearchProviderId,
+	searchProviders,
+	toolName,
+} from "@orqestra/config/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { Loader2Icon } from "lucide-react";
 import { useState } from "react";
+import { Picker } from "#/components/Picker";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "#/components/ui/select";
 import { Switch } from "#/components/ui/switch";
 import {
 	deleteProvider,
@@ -19,15 +18,28 @@ import {
 	setModelEnabled,
 	testProvider,
 } from "#/lib/providers";
+import {
+	deleteSearchProvider,
+	getSearchProviders,
+	saveSearchProvider,
+	setServedBy,
+} from "#/lib/search-providers";
 import { inlineCode } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/console/providers")({
-	loader: () => getProviders(),
+	loader: async () => {
+		const [providers, search] = await Promise.all([
+			getProviders(),
+			getSearchProviders(),
+		]);
+		return { ...providers, search };
+	},
 	component: Providers,
 });
 
 type Data = Awaited<ReturnType<typeof getProviders>>;
+type SearchData = Awaited<ReturnType<typeof getSearchProviders>>;
 type CatalogProvider = Data["catalog"][number];
 type Configured = Data["configured"][number];
 
@@ -35,7 +47,7 @@ const errorText = (error: unknown) =>
 	error instanceof Error ? error.message : m.request_failed();
 
 function Providers() {
-	const { catalog, configured } = Route.useLoaderData();
+	const { catalog, configured, search } = Route.useLoaderData();
 	const unconfigured = catalog.filter(
 		(c) => !configured.some((p) => p.id === c.id),
 	);
@@ -57,6 +69,7 @@ function Providers() {
 					<ProviderForm choices={unconfigured} />
 				</div>
 			)}
+			<SearchProviders data={search} />
 		</section>
 	);
 }
@@ -277,36 +290,147 @@ function ProviderForm({
 	);
 }
 
-function Picker({
-	label,
-	value,
-	onChange,
-	items,
-}: {
-	label: string;
-	value: string;
-	onChange: (value: string) => void;
-	items: { value: string; label: string }[];
-}) {
+const searchProviderName = (id: string) =>
+	searchProviders.find((p) => p.id === id)?.name ?? id;
+
+const NONE = "none";
+
+/** Search Providers with their write-only keys, and which one serves each Tool. */
+function SearchProviders({ data }: { data: SearchData }) {
+	const router = useRouter();
+	const [busy, setBusy] = useState<string>();
+	const [error, setError] = useState("");
+	const unconfigured = searchProviders.filter(
+		(p) => !data.configured.some((c) => c.id === p.id),
+	);
+	const [picked, setAdding] = useState<SearchProviderId>();
+	// the picked one may have just been added
+	const adding =
+		unconfigured.find((p) => p.id === picked)?.id ?? unconfigured[0]?.id;
+	const [keys, setKeys] = useState<Record<string, string>>({});
+
+	async function act(key: string, action: () => Promise<unknown>) {
+		setBusy(key);
+		try {
+			await action();
+			setError("");
+			setKeys({});
+			await router.invalidate();
+		} catch (e) {
+			setError(errorText(e));
+		} finally {
+			setBusy(undefined);
+		}
+	}
+
+	const keyForm = (id: SearchProviderId, keyReadable: boolean) => (
+		<form
+			className="flex flex-wrap items-end gap-2"
+			onSubmit={(e) => {
+				e.preventDefault();
+				void act(`save-${id}`, () =>
+					saveSearchProvider({ data: { id, apiKey: keys[id] ?? "" } }),
+				);
+			}}
+		>
+			<div className="flex flex-1 flex-col gap-2">
+				<Label htmlFor={`search-${id}-key`}>{m.api_key()}</Label>
+				<Input
+					id={`search-${id}-key`}
+					type="password"
+					autoComplete="off"
+					required
+					value={keys[id] ?? ""}
+					onChange={(e) => setKeys({ ...keys, [id]: e.target.value })}
+					placeholder={keyReadable ? m.api_key_set() : ""}
+				/>
+			</div>
+			<Button type="submit" variant="outline" disabled={!!busy}>
+				{busy === `save-${id}` && <Loader2Icon className="animate-spin" />}
+				{keyReadable ? m.save() : m.add_search_provider()}
+			</Button>
+		</form>
+	);
+
 	return (
-		<div className="flex flex-col gap-2">
-			<Label>{label}</Label>
-			<Select
-				items={items}
-				value={value}
-				onValueChange={(v) => v && onChange(v)}
-			>
-				<SelectTrigger aria-label={label} className="min-w-48">
-					<SelectValue />
-				</SelectTrigger>
-				<SelectContent>
-					{items.map((item) => (
-						<SelectItem key={item.value} value={item.value}>
-							{item.label}
-						</SelectItem>
-					))}
-				</SelectContent>
-			</Select>
-		</div>
+		<>
+			<h2 className="mt-4 text-lg font-semibold">{m.search_providers()}</h2>
+			<p className="text-sm text-muted-foreground">
+				{m.search_providers_hint()}
+			</p>
+			<div className="flex flex-col gap-4 rounded-lg border p-4 text-sm">
+				{toolName.options.map((tool) => (
+					<div key={tool} className="flex flex-col gap-2">
+						<Picker
+							label={m.tool_served_by({ tool })}
+							value={data.servedBy[tool] ?? NONE}
+							onChange={(v) =>
+								act(`tool-${tool}`, () =>
+									setServedBy({
+										data: {
+											tool,
+											provider: v === NONE ? null : (v as SearchProviderId),
+										},
+									}),
+								)
+							}
+							items={[
+								{ value: NONE, label: m.none() },
+								...data.configured.map((c) => ({
+									value: c.id,
+									label: searchProviderName(c.id),
+								})),
+							]}
+						/>
+						{!data.available.includes(tool) && (
+							<p className="text-destructive">{m.tool_unavailable({ tool })}</p>
+						)}
+					</div>
+				))}
+			</div>
+			{data.configured.map((p) => (
+				<div
+					key={p.id}
+					className="flex flex-col gap-4 rounded-lg border p-4 text-sm"
+				>
+					<div className="flex items-center justify-between gap-2">
+						<h3 className="font-medium">{searchProviderName(p.id)}</h3>
+						<Button
+							size="sm"
+							variant="destructive"
+							disabled={!!busy}
+							onClick={() => {
+								if (confirm(m.delete_search_provider_confirm()))
+									void act(`delete-${p.id}`, () =>
+										deleteSearchProvider({ data: p.id as SearchProviderId }),
+									);
+							}}
+						>
+							{busy === `delete-${p.id}` && (
+								<Loader2Icon className="animate-spin" />
+							)}
+							{m.delete()}
+						</Button>
+					</div>
+					{!p.keyReadable && (
+						<p className="text-destructive">{m.provider_key_unreadable()}</p>
+					)}
+					{keyForm(p.id as SearchProviderId, p.keyReadable)}
+				</div>
+			))}
+			{adding && (
+				<div className="flex flex-col gap-4 rounded-lg border p-4 text-sm">
+					<h3 className="font-medium">{m.add_search_provider()}</h3>
+					<Picker
+						label={m.search_provider()}
+						value={adding}
+						onChange={(v) => setAdding(v as SearchProviderId)}
+						items={unconfigured.map((p) => ({ value: p.id, label: p.name }))}
+					/>
+					{keyForm(adding, false)}
+				</div>
+			)}
+			{error && <p className="text-sm text-destructive">{error}</p>}
+		</>
 	);
 }

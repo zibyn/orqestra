@@ -1,6 +1,3 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
 	type Api,
 	type AssistantMessageEventStream,
@@ -13,56 +10,45 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { parse as parseYaml } from "yaml";
-import { z } from "zod";
-import { thinkingLevel } from "./shared.ts";
+import type { z } from "zod";
+import {
+	agentDefinition,
+	definitionIssues,
+	type SearchProviderId,
+	type ToolName,
+	toolName,
+} from "./shared.ts";
 
-export { messageText, thinkingLevel } from "./shared.ts";
+export * from "./shared.ts";
 
 export type ThinkingLevel = ModelThinkingLevel;
 
-// strict: an Agent Definition must not carry Conversation- or User-specific fields, so it can back a subagent later
-const frontmatterSchema = z.strictObject({
-	name: z.string().min(1),
-	description: z.string().min(1),
-	models: z.array(z.string()).min(1).optional(),
-	defaultModel: z.string().optional(),
-	thinking: z
-		.strictObject({
-			default: thinkingLevel.optional(),
-			allowed: z.array(thinkingLevel).min(1).optional(),
-		})
-		.optional(),
-	compaction: z
-		.strictObject({
-			reserveTokens: z.number().int().positive().optional(),
-			keepRecentTokens: z.number().int().positive().optional(),
-		})
-		.optional(),
-	default: z.boolean().optional(),
-});
-
 export interface AgentDefinition {
-	/** File name without `.md`. */
 	id: string;
 	name: string;
 	description: string;
 	/** System prompt: the Markdown body. */
 	instructions: string;
-	/** Allowed Models as `provider/id`, only those available; every enabled Model when the file has no `models`. Empty: the Agent is offline. */
+	/** Allowed Models as `provider/id`, only those available; every enabled Model when the definition has no `models`. Empty: the Agent is offline. */
 	models: string[];
+	/** The definition names no Models; a Subagent from it then runs on the Model of the Agent that started it. */
+	allModels: boolean;
 	/** One of `models`, or "" when the Agent is offline. */
 	defaultModel: string;
 	/** As written; resolve per Model with `resolveThinking`. */
 	thinking: { default?: ThinkingLevel; allowed?: ThinkingLevel[] };
 	compaction?: { reserveTokens?: number; keepRecentTokens?: number };
+	/** As written; only those with a Search Provider are offered in a Run. */
+	tools: ToolName[];
+	/** Users can start Conversations with it; any Agent can be a Subagent template. */
+	pickable: boolean;
 	default: boolean;
-	/** Models the file names that are not available (disabled, deleted, or gone from the Catalog), as `provider/id`. */
+	/** Models the definition names that are not available (disabled, deleted, or gone from the Catalog), as `provider/id`. */
 	unavailableModels: string[];
 }
 
-/** The Providers and enabled Models an Admin configured in /console, as stored in the database. */
-export interface ModelSettings {
+/** What an Admin configured in /console, as stored in the database. */
+export interface Settings {
 	/** `apiKey` is undefined when the stored key cannot be decrypted; `baseUrl` null means the Catalog's. */
 	providers: {
 		id: string;
@@ -71,6 +57,18 @@ export interface ModelSettings {
 	}[];
 	/** As `provider/id`. */
 	enabledModels: string[];
+	/** Agent Definitions as stored, validated by `loadConfig`. */
+	agents: { id: string; definition: unknown }[];
+	/** `apiKey` is undefined when the stored key cannot be decrypted. */
+	searchProviders: { id: SearchProviderId; apiKey: string | undefined }[];
+	/** The Search Provider picked for each Tool. */
+	servedBy: Record<ToolName, SearchProviderId | null>;
+}
+
+/** A Tool's Search Provider and its decrypted key. */
+export interface ToolService {
+	provider: SearchProviderId;
+	apiKey: string;
 }
 
 export interface OrqestraConfig {
@@ -80,6 +78,8 @@ export interface OrqestraConfig {
 	models: Model<Api>[];
 	agents: AgentDefinition[];
 	defaultAgent: AgentDefinition;
+	/** Tools with a usable Search Provider; the others are unavailable. */
+	tools: Partial<Record<ToolName, ToolService>>;
 	/** pi's streamSimple with the Provider's configured API key. */
 	streamSimple: StreamSimple;
 }
@@ -96,11 +96,6 @@ export class ConfigError extends Error {
 
 export const modelRef = (m: { provider: string; id: string }) =>
 	`${m.provider}/${m.id}`;
-
-// shortcut: resolves to the repo's config/ from the source tree; a bundled build must set ORQESTRA_CONFIG_DIR
-const defaultConfigDir = () =>
-	process.env.ORQESTRA_CONFIG_DIR ||
-	fileURLToPath(new URL("../../../config", import.meta.url));
 
 // in-memory stores keep pi from reading or writing ~/.pi; no models.json, so only pi's built-in Catalog.
 // Shared by every load, so a Provider registered on it (tests do) survives reloads
@@ -142,14 +137,10 @@ export async function catalogProviders() {
 }
 
 /**
- * Loads Agent Definitions from the config directory (`ORQESTRA_CONFIG_DIR`, default `config/` at the repo root)
- * against the Providers and Models configured in the database.
- * Throws a ConfigError naming each bad file and field; a Model that is not available only warns.
+ * Resolves the stored Agent Definitions against the configured Providers, Models and Search Providers.
+ * Throws a ConfigError naming each bad Agent and field; a Model that is not available only warns.
  */
-export async function loadConfig(
-	settings: ModelSettings,
-	dir = defaultConfigDir(),
-): Promise<OrqestraConfig> {
+export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 	const registry = await catalogRegistry();
 	const enabled = new Set(settings.enabledModels);
 	const models = (await catalogProviders()).flatMap((p) => {
@@ -162,59 +153,63 @@ export async function loadConfig(
 	const known = models.map(modelRef);
 
 	const errors: string[] = [];
-	const agentsDir = join(dir, "agents");
-	const files = existsSync(agentsDir)
-		? readdirSync(agentsDir)
-				.filter((f) => f.endsWith(".md"))
-				.sort()
-		: [];
 	const agents: AgentDefinition[] = [];
-	for (const file of files) {
-		const path = join(agentsDir, file);
+	for (const row of settings.agents) {
 		const fail = (field: string, message: string) =>
-			errors.push(`${path}: ${field ? `${field}: ` : ""}${message}`);
-		const agent = parseAgent(path, readFileSync(path, "utf8"), fail);
-		if (!agent) continue;
-
-		if (
-			agent.models.length &&
-			agent.defaultModel &&
-			!agent.models.includes(agent.defaultModel)
-		)
-			fail(
-				"defaultModel",
-				`"${agent.defaultModel}" is not one of the Agent's allowed Models`,
-			);
-		agent.unavailableModels = agent.models.filter(
-			(ref) => !known.includes(ref),
-		);
-		agent.models = agent.models.length
-			? agent.models.filter((ref) => known.includes(ref))
+			errors.push(`Agent "${row.id}": ${field ? `${field}: ` : ""}${message}`);
+		const parsed = agentDefinition.safeParse(row.definition);
+		if (!parsed.success) {
+			for (const issue of parsed.error.issues)
+				fail(issueField(issue), issue.message);
+			continue;
+		}
+		const def = parsed.data;
+		for (const issue of definitionIssues(def)) fail(issue.field, issue.message);
+		const { models: named, defaultModel, thinking, tools, ...rest } = def;
+		const available = named
+			? named.filter((ref) => known.includes(ref))
 			: [...known];
-		agent.defaultModel ||= process.env.ORQESTRA_DEFAULT_MODEL ?? "";
-		if (!agent.models.includes(agent.defaultModel))
-			agent.defaultModel = agent.models[0] ?? "";
-		const { default: level, allowed } = agent.thinking;
-		if (level && allowed && !allowed.includes(level))
-			fail("thinking.default", `"${level}" is not in thinking.allowed`);
-		agents.push(agent);
+		let fallback = defaultModel ?? named?.[0] ?? "";
+		fallback ||= process.env.ORQESTRA_DEFAULT_MODEL ?? "";
+		agents.push({
+			...rest,
+			id: row.id,
+			models: available,
+			allModels: !named,
+			defaultModel: available.includes(fallback)
+				? fallback
+				: (available[0] ?? ""),
+			thinking: thinking ?? {},
+			tools: tools ?? [...toolName.options],
+			unavailableModels: (named ?? []).filter((ref) => !known.includes(ref)),
+		});
 	}
 
 	const defaults = agents.filter((a) => a.default);
 	if (defaults.length !== 1)
 		errors.push(
-			`${agentsDir}: exactly one Agent must have \`default: true\` (found ${
+			`exactly one Agent must be the default (found ${
 				defaults.map((a) => a.id).join(", ") || "none"
 			})`,
 		);
 	if (errors.length)
 		throw new ConfigError(`Invalid configuration:\n  ${errors.join("\n  ")}`);
 
+	const tools: OrqestraConfig["tools"] = {};
+	for (const tool of toolName.options) {
+		const picked = settings.servedBy[tool];
+		const apiKey = settings.searchProviders.find(
+			(p) => p.id === picked,
+		)?.apiKey;
+		if (picked && apiKey) tools[tool] = { provider: picked, apiKey };
+	}
+
 	return {
 		registry,
 		models,
 		agents,
 		defaultAgent: defaults[0],
+		tools,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);
 			if (provider && provider.apiKey === undefined)
@@ -250,38 +245,6 @@ export async function testConnection(
 	} catch (error) {
 		return (error as Error).message;
 	}
-}
-
-function parseAgent(
-	path: string,
-	text: string,
-	fail: (field: string, message: string) => void,
-): AgentDefinition | undefined {
-	const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/.exec(text);
-	if (!match) return void fail("", "missing YAML frontmatter");
-	let data: unknown;
-	try {
-		data = parseYaml(match[1]);
-	} catch (e) {
-		return void fail("", `invalid YAML: ${(e as Error).message}`);
-	}
-	const parsed = frontmatterSchema.safeParse(data ?? {});
-	if (!parsed.success) {
-		for (const issue of parsed.error.issues)
-			fail(issueField(issue), issue.message);
-		return;
-	}
-	const { models, defaultModel, thinking, ...rest } = parsed.data;
-	return {
-		...rest,
-		id: basename(path, ".md"),
-		instructions: match[2].trim(),
-		models: models ?? [],
-		defaultModel: defaultModel ?? models?.[0] ?? "",
-		thinking: thinking ?? {},
-		default: rest.default ?? false,
-		unavailableModels: [],
-	};
 }
 
 const issueField = (issue: z.core.$ZodIssue) =>

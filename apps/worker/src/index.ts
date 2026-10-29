@@ -4,7 +4,7 @@ import { startAgentWorker } from "./run.ts";
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL is not set");
 
-// throws on a missing ORQESTRA_ENCRYPTION_KEY or a bad config dir so the worker never starts with it
+// throws on a missing ORQESTRA_ENCRYPTION_KEY or invalid stored config so the worker never starts with it
 const config = liveConfig();
 const loaded = await config.get();
 console.log(

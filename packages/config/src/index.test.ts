@@ -1,42 +1,44 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	catalogProviders,
 	loadConfig,
-	type ModelSettings,
 	resolveThinking,
 	resolveTurn,
+	type Settings,
 } from "./index";
+
+const general = {
+	name: "General",
+	description: "Helps with anything",
+	instructions: "You are a helpful assistant.",
+	default: true,
+};
+const agentWith = (fields: Record<string, unknown>) => ({
+	name: "G",
+	description: "d",
+	instructions: "hi",
+	default: true,
+	...fields,
+});
 
 const deepseek = (
 	enabled = ["deepseek-flash", "deepseek-v4-pro"],
-	provider: Partial<ModelSettings["providers"][number]> = {},
-): ModelSettings => ({
+	provider: Partial<Settings["providers"][number]> = {},
+	agents: Record<string, unknown> = { general },
+): Settings => ({
 	providers: [
 		{ id: "deepseek", apiKey: "sk-test", baseUrl: null, ...provider },
 	],
 	enabledModels: enabled.map((id) => `deepseek/${id}`),
+	agents: Object.entries(agents).map(([id, definition]) => ({
+		id,
+		definition,
+	})),
+	searchProviders: [],
+	servedBy: { search: null, scrape: null },
 });
-
-function configDir(agents: Record<string, string>) {
-	const dir = mkdtempSync(join(tmpdir(), "orqestra-config-"));
-	mkdirSync(join(dir, "agents"));
-	for (const [id, text] of Object.entries(agents))
-		writeFileSync(join(dir, "agents", `${id}.md`), text);
-	return dir;
-}
-
-const general = `---
-name: General
-description: Helps with anything
-default: true
----
-You are a helpful assistant.
-`;
-const agentWith = (frontmatter: string) =>
-	`---\nname: G\ndescription: d\ndefault: true\n${frontmatter}\n---\nhi`;
+const withAgents = (agents: Record<string, unknown>, enabled?: string[]) =>
+	deepseek(enabled, {}, agents);
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -60,7 +62,7 @@ describe("catalogProviders", () => {
 describe("loadConfig", () => {
 	it("loads an Agent Definition with its instructions", async () => {
 		vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-flash");
-		const config = await loadConfig(deepseek(), configDir({ general }));
+		const config = await loadConfig(deepseek());
 		expect(config.defaultAgent).toMatchObject({
 			id: "general",
 			name: "General",
@@ -68,14 +70,14 @@ describe("loadConfig", () => {
 			instructions: "You are a helpful assistant.",
 			defaultModel: "deepseek/deepseek-flash",
 			unavailableModels: [],
+			pickable: true,
+			allModels: true,
+			tools: ["search", "scrape"],
 		});
 	});
 
 	it("allows every enabled Model when `models` is omitted", async () => {
-		const config = await loadConfig(
-			deepseek(["deepseek-v4-pro"]),
-			configDir({ general }),
-		);
+		const config = await loadConfig(deepseek(["deepseek-v4-pro"]));
 		// disabled Models and Providers nobody configured stay out
 		expect(config.defaultAgent.models).toEqual(["deepseek/deepseek-v4-pro"]);
 		expect(config.defaultAgent.defaultModel).toBe("deepseek/deepseek-v4-pro");
@@ -84,7 +86,6 @@ describe("loadConfig", () => {
 	it("sends a Provider's Models to its custom baseUrl, keeping the Catalog's compat", async () => {
 		const config = await loadConfig(
 			deepseek(["deepseek-flash"], { baseUrl: "http://10.0.0.1:8080" }),
-			configDir({ general }),
 		);
 		expect(config.models[0]).toMatchObject({
 			baseUrl: "http://10.0.0.1:8080",
@@ -95,12 +96,18 @@ describe("loadConfig", () => {
 	describe("Models an Agent references but that are not available", () => {
 		it("drops them with a warning instead of failing", async () => {
 			const config = await loadConfig(
-				deepseek(["deepseek-flash"]),
-				configDir({
-					general: agentWith(
-						"models: [deepseek/deepseek-flash, deepseek/deepseek-v4-pro, deepseek/gone]",
-					),
-				}),
+				withAgents(
+					{
+						general: agentWith({
+							models: [
+								"deepseek/deepseek-flash",
+								"deepseek/deepseek-v4-pro",
+								"deepseek/gone",
+							],
+						}),
+					},
+					["deepseek-flash"],
+				),
 			);
 			expect(config.defaultAgent.models).toEqual(["deepseek/deepseek-flash"]);
 			expect(config.defaultAgent.unavailableModels).toEqual([
@@ -111,21 +118,20 @@ describe("loadConfig", () => {
 
 		it("falls back to the first remaining Model when the default is gone", async () => {
 			const config = await loadConfig(
-				deepseek(["deepseek-flash"]),
-				configDir({
-					general: agentWith(
-						"models: [deepseek/deepseek-v4-pro, deepseek/deepseek-flash]",
-					),
-				}),
+				withAgents(
+					{
+						general: agentWith({
+							models: ["deepseek/deepseek-v4-pro", "deepseek/deepseek-flash"],
+						}),
+					},
+					["deepseek-flash"],
+				),
 			);
 			expect(config.defaultAgent.defaultModel).toBe("deepseek/deepseek-flash");
 		});
 
 		it("takes the Agent offline when none are left", async () => {
-			const config = await loadConfig(
-				{ providers: [], enabledModels: [] },
-				configDir({ general }),
-			);
+			const config = await loadConfig(deepseek([]));
 			expect(config.defaultAgent.models).toEqual([]);
 			expect(resolveTurn(config, "general")).toBeUndefined();
 		});
@@ -134,89 +140,125 @@ describe("loadConfig", () => {
 	it("fails a request to a Provider whose API key cannot be decrypted", async () => {
 		const config = await loadConfig(
 			deepseek(["deepseek-flash"], { apiKey: undefined }),
-			configDir({ general }),
 		);
 		expect(() =>
 			config.streamSimple(config.models[0], { messages: [] }),
 		).toThrow(/API key of Provider "deepseek" cannot be decrypted/);
 	});
 
-	describe("rejects invalid configuration", () => {
-		const fails = async (agents: Record<string, string>, pattern: RegExp) => {
-			vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-flash");
-			await expect(loadConfig(deepseek(), configDir(agents))).rejects.toThrow(
-				pattern,
+	describe("Tools", () => {
+		const settings = (
+			servedBy: Settings["servedBy"],
+			searchProviders: Settings["searchProviders"],
+		) => ({ ...deepseek(), servedBy, searchProviders });
+
+		it("serves each Tool from the Search Provider picked for it", async () => {
+			const config = await loadConfig(
+				settings({ search: "tavily", scrape: "deepseek" }, [
+					{ id: "tavily", apiKey: "tv" },
+					{ id: "deepseek", apiKey: "ds" },
+				]),
 			);
+			expect(config.tools).toEqual({
+				search: { provider: "tavily", apiKey: "tv" },
+				scrape: { provider: "deepseek", apiKey: "ds" },
+			});
+		});
+
+		it("leaves a Tool unavailable when its Search Provider is not picked, deleted or has an unreadable key", async () => {
+			const config = await loadConfig(
+				settings({ search: "firecrawl", scrape: "tavily" }, [
+					{ id: "tavily", apiKey: undefined },
+				]),
+			);
+			expect(config.tools).toEqual({});
+			expect(
+				(await loadConfig(settings({ search: null, scrape: null }, []))).tools,
+			).toEqual({});
+		});
+
+		it("keeps an Agent's `tools` as written", async () => {
+			const config = await loadConfig(
+				withAgents({ general: agentWith({ tools: ["scrape"] }) }),
+			);
+			expect(config.defaultAgent.tools).toEqual(["scrape"]);
+		});
+	});
+
+	it("tells Agents with and without their own Models apart", async () => {
+		const config = await loadConfig(
+			withAgents({
+				general,
+				pinned: agentWith({
+					default: false,
+					pickable: false,
+					models: ["deepseek/deepseek-v4-pro"],
+				}),
+			}),
+		);
+		expect(config.agents.find((a) => a.id === "pinned")).toMatchObject({
+			allModels: false,
+			pickable: false,
+		});
+	});
+
+	describe("rejects invalid configuration", () => {
+		const fails = async (agents: Record<string, unknown>, pattern: RegExp) => {
+			vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-flash");
+			await expect(loadConfig(withAgents(agents))).rejects.toThrow(pattern);
 		};
 
 		it("a defaultModel outside `models`", () =>
 			fails(
 				{
-					general: agentWith(
-						"models: [deepseek/deepseek-flash]\ndefaultModel: deepseek/deepseek-v4-pro",
-					),
+					general: agentWith({
+						models: ["deepseek/deepseek-flash"],
+						defaultModel: "deepseek/deepseek-v4-pro",
+					}),
 				},
-				/general\.md: defaultModel/,
+				/Agent "general": defaultModel/,
 			));
 
 		it("no default Agent", () =>
 			fails(
-				{ general: general.replace("default: true\n", "") },
-				/exactly one Agent must have `default: true`/,
+				{ general: { ...general, default: false } },
+				/exactly one Agent must be the default \(found none\)/,
 			));
 
 		it("two default Agents", () =>
 			fails(
 				{ general, other: general },
-				/exactly one Agent must have `default: true` \(found general, other\)/,
+				/exactly one Agent must be the default \(found general, other\)/,
 			));
 
-		it("missing frontmatter", () =>
-			fails({ general: "just text" }, /general\.md: missing YAML frontmatter/));
-
-		it("malformed YAML", () =>
+		it("a default Agent Users cannot pick", () =>
 			fails(
-				{ general: "---\nname: [oops\n---\nhi" },
-				/general\.md: invalid YAML/,
+				{ general: { ...general, pickable: false } },
+				/Agent "general": pickable/,
 			));
 
 		it("a missing name", () =>
-			fails(
-				{ general: general.replace("name: General\n", "") },
-				/general\.md: name/,
-			));
+			fails({ general: { ...general, name: undefined } }, /"general": name/));
 
 		it("a field the definition does not know, such as a user", () =>
-			fails(
-				{
-					general: general.replace(
-						"default: true",
-						"default: true\nuserId: u1",
-					),
-				},
-				/general\.md: .*userId/,
-			));
+			fails({ general: { ...general, userId: "u1" } }, /"general": .*userId/));
 
 		it("an unknown thinking level", () =>
 			fails(
-				{
-					general: general.replace(
-						"default: true",
-						"default: true\nthinking: { default: huge }",
-					),
-				},
-				/general\.md: thinking\.default/,
+				{ general: agentWith({ thinking: { default: "huge" } }) },
+				/"general": thinking\.default/,
+			));
+
+		it("an unknown Tool", () =>
+			fails(
+				{ general: agentWith({ tools: ["search", "browse"] }) },
+				/"general": tools\.1/,
 			));
 
 		it("a non-positive compaction budget", () =>
 			fails(
-				{
-					general: general.replace(
-						"default: true",
-						"default: true\ncompaction: { reserveTokens: 0 }",
-					),
-				},
-				/general\.md: compaction\.reserveTokens/,
+				{ general: agentWith({ compaction: { reserveTokens: 0 } }) },
+				/"general": compaction\.reserveTokens/,
 			));
 	});
 });
@@ -279,8 +321,14 @@ describe("resolveThinking", () => {
 });
 
 describe("resolveTurn", () => {
-	const twoModels = `---\nname: G\ndescription: d\ndefault: true\nmodels: [deepseek/deepseek-flash, deepseek/deepseek-v4-pro]\n---\nhi`;
-	const load = () => loadConfig(deepseek(), configDir({ general: twoModels }));
+	const load = () =>
+		loadConfig(
+			withAgents({
+				general: agentWith({
+					models: ["deepseek/deepseek-flash", "deepseek/deepseek-v4-pro"],
+				}),
+			}),
+		);
 
 	it("uses the Agent's default Model and thinking level when nothing is picked", async () => {
 		const turn = resolveTurn(await load(), "general");

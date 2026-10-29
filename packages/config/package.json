@@ -6,7 +6,8 @@
     ".": "./src/index.ts",
     "./shared": "./src/shared.ts",
     "./live": "./src/live.ts",
-    "./secret": "./src/secret.ts"
+    "./secret": "./src/secret.ts",
+    "./search": "./src/search.ts"
   },
   "scripts": {
     "test": "vitest run"
@@ -15,7 +16,6 @@
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@orqestra/db": "workspace:*",
-    "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

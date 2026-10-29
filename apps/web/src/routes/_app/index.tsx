@@ -17,7 +17,7 @@ export const Route = createFileRoute("/_app/")({ component: NewConversation });
 const app = getRouteApi("/_app");
 
 function NewConversation() {
-	const { agents } = app.useLoaderData();
+	const agents = app.useLoaderData().agents.filter((a) => a.pickable);
 	const { user } = app.useRouteContext();
 	const [agentId, setAgentId] = useState(
 		() => (agents.find((a) => a.default) ?? agents[0])?.id,
