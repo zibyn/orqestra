@@ -22,8 +22,8 @@ const form = z.object({
 	id: z.string().min(1),
 	// blank keeps the stored key
 	apiKey: z.string().trim().optional(),
-	// blank means the Catalog's baseUrl
-	baseUrl: z.union([z.url({ protocol: /^https?$/ }), z.literal("")]).optional(),
+	// the Catalog's baseUrl, or another endpoint for the same API
+	baseUrl: z.url({ protocol: /^https?$/ }),
 });
 
 export const getProviders = createServerFn().handler(async () => {
@@ -56,8 +56,12 @@ export const saveProvider = createServerFn({ method: "POST" })
 	.validator(form)
 	.handler(async ({ data }) => {
 		await requireAdmin();
-		await catalogProvider(data.id);
-		const baseUrl = data.baseUrl || null;
+		const catalog = await catalogProvider(data.id);
+		// null keeps following the Catalog's
+		const baseUrl =
+			data.baseUrl.replace(/\/+$/, "") === catalog.baseUrl.replace(/\/+$/, "")
+				? null
+				: data.baseUrl;
 		const apiKey = data.apiKey ? encryptSecret(data.apiKey) : undefined;
 		if (await storedProvider(data.id))
 			await db

@@ -178,7 +178,9 @@ function ProviderForm({
 	const [providerId, setProviderId] = useState(choices[0].id);
 	const catalog = choices.find((c) => c.id === providerId) ?? choices[0];
 	const [apiKey, setApiKey] = useState("");
-	const [baseUrl, setBaseUrl] = useState(existing?.baseUrl ?? "");
+	// shown in full, the Catalog's included, so the Admin confirms where requests go
+	const [editedUrl, setBaseUrl] = useState<string>();
+	const baseUrl = editedUrl ?? existing?.baseUrl ?? catalog.baseUrl;
 	const [modelId, setModelId] = useState<string | undefined>(
 		existing?.enabledModels[0] ?? catalog.models[0]?.id,
 	);
@@ -226,6 +228,7 @@ function ProviderForm({
 					value={providerId}
 					onChange={(id) => {
 						setProviderId(id);
+						setBaseUrl(undefined);
 						setModelId(choices.find((c) => c.id === id)?.models[0]?.id);
 						setResult(undefined);
 					}}
@@ -249,9 +252,9 @@ function ProviderForm({
 				<Input
 					id={fieldId("url")}
 					type="url"
+					required
 					value={baseUrl}
 					onChange={(e) => setBaseUrl(e.target.value)}
-					placeholder={catalog.baseUrl}
 				/>
 			</div>
 			<div className="flex flex-wrap items-end gap-2">

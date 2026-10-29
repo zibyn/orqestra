@@ -21,7 +21,7 @@ Env vars live in the root `.env.local`, shared by all packages. `ORQESTRA_ENCRYP
 
 ## 如何配置 Provider 与 Model
 
-Admin 在 `/console/providers` 里从目录（pi 内置的 Provider 列表）选择 Provider，填写 API Key 和可选的 `baseUrl`，再勾选要启用的 Model。保存后 web 和 worker 自动重新加载，无需重启；正在进行的 Run 不受影响。
+Admin 在 `/console/providers` 里从目录（pi 内置的 Provider 列表）选择 Provider，填写 API Key 和 `baseUrl`（默认填好目录中的地址，需要时改成自己的端点），再勾选要启用的 Model。保存后 web 和 worker 自动重新加载，无需重启；正在进行的 Run 不受影响。
 
 ## 如何配置 Search 与 Scrape
 
