@@ -15,23 +15,27 @@ pnpm dev
 - `apps/worker` — BullMQ worker on the Postgres backend (Bun, uses `DATABASE_URL`; tables in the `bullmq` schema). `pnpm worker`.
 - `packages/db` — Drizzle schema + client. `pnpm db:push` etc.
 
-- `packages/config` — loads Providers, Models and Agent Definitions from `config/`; used by both web and worker.
+- `packages/config` — the Catalog (pi's built-in Providers and Models), Agent Definitions from `config/`, and the Providers/Models Admins configure in the database; used by both web and worker.
 
-Env vars live in the root `.env.local`, shared by all packages.
+Env vars live in the root `.env.local`, shared by all packages. `ORQESTRA_ENCRYPTION_KEY` is required by web and worker: it encrypts Provider API keys in the database (`openssl rand -base64 32`). Changing it makes stored keys unreadable; re-enter them in `/console/providers`.
+
+## 如何配置 Provider 与 Model
+
+Admin 在 `/console/providers` 里从目录（pi 内置的 Provider 列表）选择 Provider，填写 API Key 和可选的 `baseUrl`，再勾选要启用的 Model。保存后 web 和 worker 自动重新加载，无需重启；正在进行的 Run 不受影响。
 
 ## 如何添加一个 Agent
 
-配置目录默认是仓库根目录的 `config/`，可用 `ORQESTRA_CONFIG_DIR` 指向别处。web 和 worker 在启动时加载同一份配置，修改后需要重启；配置有误时两边都会启动失败，并在报错中给出文件和字段。
+配置目录默认是仓库根目录的 `config/`，可用 `ORQESTRA_CONFIG_DIR` 指向别处。web 和 worker 在启动时加载 Agent Definition，修改后需要重启；文件有误时两边都会启动失败，并在报错中给出文件和字段。引用了未启用或已不存在的 Model 只会警告（`/console/agents` 中可见），一个 Model 都不剩的 Agent 不可用。
 
-1. 确认要用的模型在 `config/models.json` 中（pi 的 [models.json 格式](https://pi.dev/schemas/models.schema.json)）。`apiKey` 只能写环境变量引用，如 `"$DEEPSEEK_API_KEY"`，然后在 `.env.local` 里设置该变量。
+1. 确认要用的 Model 已在 `/console/providers` 中启用。
 2. 新建 `config/agents/<id>.md`，文件名就是 Agent 的 id。frontmatter 之后的正文是指令（system prompt）：
 
    ```markdown
    ---
    name: Translator
    description: Translates between Chinese and English.
-   models: [deepseek/deepseek-flash]   # 可选，不写则所有已配置的模型都可用
-   defaultModel: deepseek/deepseek-flash # 可选，默认 models[0]，再退到 ORQESTRA_DEFAULT_MODEL
+   models: [deepseek/deepseek-flash]   # 可选，不写则所有已启用的 Model 都可用
+   defaultModel: deepseek/deepseek-flash # 可选，默认 models[0]，再退到 ORQESTRA_DEFAULT_MODEL；不可用时退回剩下的第一个
    thinking: { default: low, allowed: [off, low, high] } # 可选，不写 allowed 则允许模型支持的所有档位
    compaction: { reserveTokens: 16384, keepRecentTokens: 20000 } # 可选，覆盖 pi 默认值
    ---

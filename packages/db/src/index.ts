@@ -17,6 +17,9 @@ export const conversationChannel = (conversationId: string) =>
 /** NOTIFY channel whose payload is the id of the Conversation whose run should stop (web -> worker). */
 export const STOP_CHANNEL = "conversation_stop";
 
+/** NOTIFY channel, no payload: Providers or enabled Models changed, reload the config (web -> web and worker). */
+export const CONFIG_CHANNEL = "config_changed";
+
 export type ConversationEvent =
 	| { type: "start" } // an Agent reply began streaming
 	| { type: "delta"; kind: "text" | "thinking"; index: number; delta: string }

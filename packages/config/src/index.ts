@@ -3,11 +3,14 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	type Api,
+	type AssistantMessageEventStream,
+	type Context,
 	getSupportedThinkingLevels,
 	InMemoryCredentialStore,
 	InMemoryModelsStore,
 	type Model,
 	type ModelThinkingLevel,
+	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { parse as parseYaml } from "yaml";
@@ -39,22 +42,6 @@ const frontmatterSchema = z.strictObject({
 	default: z.boolean().optional(),
 });
 
-// pi also accepts literal keys and "!command"; only env references keep secrets out of the repo
-const modelsJsonSchema = z.object({
-	providers: z.record(
-		z.string(),
-		z.looseObject({
-			apiKey: z
-				.string()
-				.regex(
-					/^\$(\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)$/,
-					'must be an environment variable reference such as "$DEEPSEEK_API_KEY"',
-				)
-				.optional(),
-		}),
-	),
-});
-
 export interface AgentDefinition {
 	/** File name without `.md`. */
 	id: string;
@@ -62,24 +49,46 @@ export interface AgentDefinition {
 	description: string;
 	/** System prompt: the Markdown body. */
 	instructions: string;
-	/** Allowed Models as `provider/id`; every configured Model when the file has no `models`. */
+	/** Allowed Models as `provider/id`, only those available; every enabled Model when the file has no `models`. Empty: the Agent is offline. */
 	models: string[];
+	/** One of `models`, or "" when the Agent is offline. */
 	defaultModel: string;
 	/** As written; resolve per Model with `resolveThinking`. */
 	thinking: { default?: ThinkingLevel; allowed?: ThinkingLevel[] };
 	compaction?: { reserveTokens?: number; keepRecentTokens?: number };
 	default: boolean;
+	/** Models the file names that are not available (disabled, deleted, or gone from the Catalog), as `provider/id`. */
+	unavailableModels: string[];
+}
+
+/** The Providers and enabled Models an Admin configured in /console, as stored in the database. */
+export interface ModelSettings {
+	/** `apiKey` is undefined when the stored key cannot be decrypted; `baseUrl` null means the Catalog's. */
+	providers: {
+		id: string;
+		apiKey: string | undefined;
+		baseUrl: string | null;
+	}[];
+	/** As `provider/id`. */
+	enabledModels: string[];
 }
 
 export interface OrqestraConfig {
-	/** pi registry for models.json; use it to find, authenticate and stream Models. */
+	/** pi's Catalog runtime; stream through `streamSimple` so the configured key is used. */
 	registry: ModelRegistry;
-	/** Models of the Providers listed in models.json. */
+	/** Enabled Models of configured Providers, with the Provider's baseUrl applied. */
 	models: Model<Api>[];
-	providers: { id: string; name: string; keyConfigured: boolean }[];
 	agents: AgentDefinition[];
 	defaultAgent: AgentDefinition;
+	/** pi's streamSimple with the Provider's configured API key. */
+	streamSimple: StreamSimple;
 }
+
+type StreamSimple = (
+	model: Model<Api>,
+	context: Context,
+	options?: SimpleStreamOptions,
+) => AssistantMessageEventStream;
 
 export class ConfigError extends Error {
 	override name = "ConfigError";
@@ -93,20 +102,64 @@ const defaultConfigDir = () =>
 	process.env.ORQESTRA_CONFIG_DIR ||
 	fileURLToPath(new URL("../../../config", import.meta.url));
 
+// in-memory stores keep pi from reading or writing ~/.pi; no models.json, so only pi's built-in Catalog.
+// Shared by every load, so a Provider registered on it (tests do) survives reloads
+let runtime: Promise<ModelRegistry> | undefined;
+const catalogRegistry = () =>
+	(runtime ??= ModelRuntime.create({
+		modelsPath: null,
+		credentials: new InMemoryCredentialStore(),
+		modelsStore: new InMemoryModelsStore(),
+		allowModelNetwork: false,
+	}).then((r) => new ModelRegistry(r)));
+
+// fixed baseUrl and an API key, but pi exchanges the key through OAuth first
+const unsupported = ["github-copilot"];
+
 /**
- * Loads Providers, Models and Agent Definitions from the config directory
- * (`ORQESTRA_CONFIG_DIR`, default `config/` at the repo root).
- * Throws a ConfigError naming each bad file and field.
+ * The Catalog: pi's built-in Providers that work with one API key and a fixed baseUrl, with their Models.
+ * Those needing cloud credentials, URL placeholders or OAuth are left out.
+ */
+export async function catalogProviders() {
+	const registry = await catalogRegistry();
+	const providers = [];
+	for (const id of new Set(registry.getAll().map((m) => m.provider))) {
+		const provider = registry.getProvider(id);
+		const models = registry.getAll().filter((m) => m.provider === id);
+		const baseUrl = provider?.baseUrl;
+		if (
+			!provider?.auth?.apiKey ||
+			!baseUrl ||
+			baseUrl.includes("{") ||
+			unsupported.includes(id) ||
+			// a custom baseUrl replaces every Model's, so they must share one
+			models.some((m) => m.baseUrl !== baseUrl)
+		)
+			continue;
+		providers.push({ id, name: provider.name ?? id, baseUrl, models });
+	}
+	return providers;
+}
+
+/**
+ * Loads Agent Definitions from the config directory (`ORQESTRA_CONFIG_DIR`, default `config/` at the repo root)
+ * against the Providers and Models configured in the database.
+ * Throws a ConfigError naming each bad file and field; a Model that is not available only warns.
  */
 export async function loadConfig(
+	settings: ModelSettings,
 	dir = defaultConfigDir(),
 ): Promise<OrqestraConfig> {
-	const modelsPath = join(dir, "models.json");
-	const { registry, providerIds } = await loadRegistry(modelsPath);
-	const models = registry
-		.getAll()
-		.filter((m) => providerIds.includes(m.provider));
-	const known = new Set(models.map(modelRef));
+	const registry = await catalogRegistry();
+	const enabled = new Set(settings.enabledModels);
+	const models = (await catalogProviders()).flatMap((p) => {
+		const configured = settings.providers.find((s) => s.id === p.id);
+		if (!configured) return [];
+		return p.models
+			.filter((m) => enabled.has(modelRef(m)))
+			.map((m) => ({ ...m, baseUrl: configured.baseUrl || m.baseUrl }));
+	});
+	const known = models.map(modelRef);
 
 	const errors: string[] = [];
 	const agentsDir = join(dir, "agents");
@@ -123,21 +176,24 @@ export async function loadConfig(
 		const agent = parseAgent(path, readFileSync(path, "utf8"), fail);
 		if (!agent) continue;
 
-		agent.models.forEach((ref, i) => {
-			if (!known.has(ref)) fail(`models.${i}`, `unknown Model "${ref}"`);
-		});
-		if (agent.models.length === 0) agent.models = [...known];
-		agent.defaultModel ||= process.env.ORQESTRA_DEFAULT_MODEL ?? "";
-		if (!agent.defaultModel)
-			fail(
-				"defaultModel",
-				"not set, and neither `models` nor ORQESTRA_DEFAULT_MODEL provides one",
-			);
-		else if (!agent.models.includes(agent.defaultModel))
+		if (
+			agent.models.length &&
+			agent.defaultModel &&
+			!agent.models.includes(agent.defaultModel)
+		)
 			fail(
 				"defaultModel",
 				`"${agent.defaultModel}" is not one of the Agent's allowed Models`,
 			);
+		agent.unavailableModels = agent.models.filter(
+			(ref) => !known.includes(ref),
+		);
+		agent.models = agent.models.length
+			? agent.models.filter((ref) => known.includes(ref))
+			: [...known];
+		agent.defaultModel ||= process.env.ORQESTRA_DEFAULT_MODEL ?? "";
+		if (!agent.models.includes(agent.defaultModel))
+			agent.defaultModel = agent.models[0] ?? "";
 		const { default: level, allowed } = agent.thinking;
 		if (level && allowed && !allowed.includes(level))
 			fail("thinking.default", `"${level}" is not in thinking.allowed`);
@@ -157,43 +213,43 @@ export async function loadConfig(
 	return {
 		registry,
 		models,
-		providers: providerIds.map((id) => ({
-			id,
-			name: registry.getProviderDisplayName(id),
-			keyConfigured: registry.getProviderAuthStatus(id).configured,
-		})),
 		agents,
 		defaultAgent: defaults[0],
+		streamSimple: (model, context, options) => {
+			const provider = settings.providers.find((p) => p.id === model.provider);
+			if (provider && provider.apiKey === undefined)
+				throw new ConfigError(
+					`The API key of Provider "${provider.id}" cannot be decrypted (was ORQESTRA_ENCRYPTION_KEY changed?); an Admin must enter it again in /console`,
+				);
+			return registry.streamSimple(model, context, {
+				...options,
+				apiKey: provider?.apiKey ?? options?.apiKey,
+			});
+		},
 	};
 }
 
-async function loadRegistry(modelsPath: string) {
-	// pi treats a missing models.json as empty
-	if (!existsSync(modelsPath))
-		throw new ConfigError(`${modelsPath}: file not found`);
-	let json: unknown;
+/** Sends a tiny completion to check a Provider's key and baseUrl before they are saved; resolves to an error message, or undefined when it worked. */
+export async function testConnection(
+	model: Model<Api>,
+	apiKey: string,
+	baseUrl?: string,
+) {
+	const registry = await catalogRegistry();
 	try {
-		json = JSON.parse(readFileSync(modelsPath, "utf8"));
-	} catch (e) {
-		throw new ConfigError(
-			`${modelsPath}: invalid JSON: ${(e as Error).message}`,
-		);
+		const result = await registry
+			.streamSimple(
+				{ ...model, baseUrl: baseUrl || model.baseUrl },
+				{ messages: [{ role: "user", content: "Hi", timestamp: Date.now() }] },
+				{ apiKey, maxTokens: 16, signal: AbortSignal.timeout(30_000) },
+			)
+			.result();
+		return result.stopReason === "error"
+			? (result.errorMessage ?? "Request failed")
+			: undefined;
+	} catch (error) {
+		return (error as Error).message;
 	}
-	const keys = modelsJsonSchema.safeParse(json);
-	if (!keys.success)
-		throw new ConfigError(issuesMessage(modelsPath, keys.error));
-
-	// in-memory stores keep pi from reading or writing ~/.pi and files next to models.json
-	const runtime = await ModelRuntime.create({
-		modelsPath,
-		credentials: new InMemoryCredentialStore(),
-		modelsStore: new InMemoryModelsStore(),
-		allowModelNetwork: false,
-	});
-	const registry = new ModelRegistry(runtime);
-	const error = registry.getError();
-	if (error) throw new ConfigError(error);
-	return { registry, providerIds: Object.keys(keys.data.providers) };
 }
 
 function parseAgent(
@@ -224,6 +280,7 @@ function parseAgent(
 		defaultModel: defaultModel ?? models?.[0] ?? "",
 		thinking: thinking ?? {},
 		default: rest.default ?? false,
+		unavailableModels: [],
 	};
 }
 
@@ -232,11 +289,6 @@ const issueField = (issue: z.core.$ZodIssue) =>
 		...issue.path,
 		...(issue.code === "unrecognized_keys" ? [issue.keys.join(", ")] : []),
 	].join(".");
-
-const issuesMessage = (path: string, error: z.ZodError) =>
-	error.issues
-		.map((issue) => `${path}: ${issueField(issue)}: ${issue.message}`)
-		.join("\n");
 
 /**
  * The thinking levels an Agent offers on a Model, and the one selected by default:
@@ -264,7 +316,7 @@ export function resolveThinking(
 /**
  * The Agent, Model and thinking level for the next message of a Conversation.
  * A pick the Agent no longer allows falls back to its default.
- * Returns undefined when the Agent was removed from config: the Conversation is then read-only.
+ * Returns undefined when the Agent was removed from config or has no Model left: the Conversation is then read-only.
  */
 export function resolveTurn(
 	config: Pick<OrqestraConfig, "agents" | "models">,
@@ -272,12 +324,12 @@ export function resolveTurn(
 	picked: { model?: string; thinking?: ThinkingLevel } = {},
 ) {
 	const agent = config.agents.find((a) => a.id === agentId);
-	if (!agent) return undefined;
+	if (!agent?.models.length) return undefined;
 	const ref =
 		picked.model && agent.models.includes(picked.model)
 			? picked.model
 			: agent.defaultModel;
-	// loadConfig only keeps Agents whose Models are configured
+	// loadConfig keeps only available Models in agent.models
 	const model = config.models.find((m) => modelRef(m) === ref) as Model<Api>;
 	const levels = resolveThinking(agent.thinking, model);
 	const thinking =

@@ -9,7 +9,7 @@ export const Route = createFileRoute("/console/agents")({
 });
 
 function Agents() {
-	const { agents, providers } = Route.useLoaderData();
+	const { agents } = Route.useLoaderData();
 
 	return (
 		<section className="flex flex-col gap-6">
@@ -32,21 +32,16 @@ function Agents() {
 							</span>
 						))}
 					</p>
+					{agent.unavailableModels.map((model) => (
+						<p key={model} className="mt-2 text-destructive">
+							{m.model_unavailable({ model })}
+						</p>
+					))}
+					{agent.models.length === 0 && (
+						<p className="mt-2 text-destructive">{m.agent_no_models()}</p>
+					)}
 				</div>
 			))}
-			<div className="rounded-lg border p-4 text-sm">
-				<h2 className="mb-1 font-medium">{m.providers()}</h2>
-				<ul>
-					{providers.map((p) => (
-						<li key={p.id}>
-							{p.name} <code className={inlineCode}>{p.id}</code>:{" "}
-							{p.keyConfigured
-								? m.provider_key_configured()
-								: m.provider_key_missing()}
-						</li>
-					))}
-				</ul>
-			</div>
 		</section>
 	);
 }

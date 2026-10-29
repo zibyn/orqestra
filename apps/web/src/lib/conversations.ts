@@ -53,24 +53,27 @@ const owned = (userId: string, id: string) =>
 
 /** The Agents a new Conversation can use, with the Models and thinking levels each offers. */
 export async function listAgentOptions() {
-	const cfg = await config;
-	return cfg.agents.map((a) => ({
-		id: a.id,
-		name: a.name,
-		description: a.description,
-		default: a.default,
-		defaultModel: a.defaultModel,
-		models: a.models.map((ref) => {
-			const model = cfg.models.find((m) => modelRef(m) === ref);
-			return {
-				ref,
-				name: model?.name ?? ref,
-				thinking: model
-					? resolveThinking(a.thinking, model)
-					: { allowed: [], default: "off" as ThinkingLevel },
-			};
-		}),
-	}));
+	const cfg = await config.get();
+	// an Agent without Models is offline
+	return cfg.agents
+		.filter((a) => a.models.length)
+		.map((a) => ({
+			id: a.id,
+			name: a.name,
+			description: a.description,
+			default: a.default,
+			defaultModel: a.defaultModel,
+			models: a.models.map((ref) => {
+				const model = cfg.models.find((m) => modelRef(m) === ref);
+				return {
+					ref,
+					name: model?.name ?? ref,
+					thinking: model
+						? resolveThinking(a.thinking, model)
+						: { allowed: [], default: "off" as ThinkingLevel },
+				};
+			}),
+		}));
 }
 
 export const listConversations = (userId: string) =>
@@ -108,8 +111,8 @@ export async function getConversation(userId: string, id: string) {
 		agentId: conv.agentId,
 		title: conv.title,
 		status: conv.status,
-		// the Agent was removed from config
-		readOnly: !resolveTurn(await config, conv.agentId),
+		// the Agent was removed from config or has no Model left
+		readOnly: !resolveTurn(await config.get(), conv.agentId),
 		messages: messages.map((m) => ({
 			...m,
 			message: m.message as Message,
@@ -133,7 +136,7 @@ export async function sendMessage(
 		thinking?: ThinkingLevel;
 	},
 ) {
-	const cfg = await config;
+	const cfg = await config.get();
 	const existing = input.conversationId
 		? await owned(userId, input.conversationId)
 		: undefined;
@@ -177,7 +180,7 @@ export async function sendMessage(
 export async function retryRun(userId: string, id: string) {
 	const conv = await owned(userId, id);
 	if (!conv) return;
-	if (!resolveTurn(await config, conv.agentId))
+	if (!resolveTurn(await config.get(), conv.agentId))
 		throw new ConversationError("This Agent is offline");
 	await db.transaction(async (tx) => {
 		const claimed = await tx

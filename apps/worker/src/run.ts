@@ -93,8 +93,7 @@ async function reply(
 		thinking: last.thinkingLevel as ThinkingLevel,
 	});
 	if (!turn) throw new Error(`Agent "${conv.agentId}" is no longer configured`);
-	const streamFn: StreamFn = (model, context, options) =>
-		config.registry.streamSimple(model, context, options);
+	const streamFn: StreamFn = config.streamSimple;
 
 	const agent = new Agent({
 		initialState: {
@@ -138,14 +137,14 @@ async function reply(
 	signal.addEventListener("abort", () => agent.abort());
 	await agent.continue();
 	const answer = agent.state.messages.at(-1) as AssistantMessage;
-	await setStatus(
-		conversationId,
-		answer.stopReason === "error" ? "failed" : "idle",
-	);
+	// fails the job so the reason (e.g. an unreadable API key) is logged; runTurn marks the Conversation failed
+	if (answer.stopReason === "error")
+		throw new Error(answer.errorMessage ?? "The reply failed");
+	await setStatus(conversationId, "idle");
 
 	// titled after the first turn that produced a reply, stopped ones included
 	const first = !rows.some((r) => r.message.role === "assistant");
-	if (first && !conv.titleEdited && answer.stopReason !== "error")
+	if (first && !conv.titleEdited)
 		await generateTitle(conversationId, config, conv.agentId, [
 			last.message,
 			answer,
@@ -261,17 +260,19 @@ async function generateTitle(
 	const turn = resolveTurn(config, agentId);
 	if (!turn) return;
 	// no reasoning option: thinking stays off
-	const result = await config.registry.complete(turn.model, {
-		systemPrompt:
-			"Write a title of at most 20 characters for this conversation, in the language the user writes in. Reply with the title only, without quotes or punctuation at the end.",
-		messages: [
-			{
-				role: "user",
-				content: `User: ${messageText(question)}\n\nAssistant: ${messageText(answer)}`,
-				timestamp: Date.now(),
-			},
-		],
-	});
+	const result = await config
+		.streamSimple(turn.model, {
+			systemPrompt:
+				"Write a title of at most 20 characters for this conversation, in the language the user writes in. Reply with the title only, without quotes or punctuation at the end.",
+			messages: [
+				{
+					role: "user",
+					content: `User: ${messageText(question)}\n\nAssistant: ${messageText(answer)}`,
+					timestamp: Date.now(),
+				},
+			],
+		})
+		.result();
 	const title = [
 		...messageText(result)
 			.trim()
@@ -295,7 +296,8 @@ async function generateTitle(
 
 /** Starts the BullMQ worker for agent runs plus the listener for stop requests; resolves to a close function. */
 export async function startAgentWorker(
-	config: OrqestraConfig,
+	// read per job: a Run keeps the config it started with, the next one picks up a reload
+	getConfig: () => Promise<OrqestraConfig>,
 	databaseUrl: string,
 	// tests shorten it to see a crashed run fail quickly
 	{ stalledInterval = 30_000 }: { stalledInterval?: number } = {},
@@ -307,7 +309,7 @@ export async function startAgentWorker(
 
 	const worker = new Worker(
 		AGENT_RUNS_QUEUE,
-		(job) => runTurn(job.data.conversationId, config),
+		async (job) => runTurn(job.data.conversationId, await getConfig()),
 		{
 			// bullmq tables live in their own "bullmq" schema; migrate is advisory-locked across processes
 			connection: { connectionString: databaseUrl, migrate: true },

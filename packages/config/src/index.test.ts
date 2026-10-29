@@ -2,19 +2,26 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadConfig, resolveThinking, resolveTurn } from "./index";
+import {
+	catalogProviders,
+	loadConfig,
+	type ModelSettings,
+	resolveThinking,
+	resolveTurn,
+} from "./index";
 
-const deepseekOnly = {
-	providers: { deepseek: { apiKey: "$DEEPSEEK_API_KEY" } },
-};
+const deepseek = (
+	enabled = ["deepseek-flash", "deepseek-v4-pro"],
+	provider: Partial<ModelSettings["providers"][number]> = {},
+): ModelSettings => ({
+	providers: [
+		{ id: "deepseek", apiKey: "sk-test", baseUrl: null, ...provider },
+	],
+	enabledModels: enabled.map((id) => `deepseek/${id}`),
+});
 
-function configDir(
-	agents: Record<string, string>,
-	models: unknown = deepseekOnly,
-) {
+function configDir(agents: Record<string, string>) {
 	const dir = mkdtempSync(join(tmpdir(), "orqestra-config-"));
-	if (models !== null)
-		writeFileSync(join(dir, "models.json"), JSON.stringify(models));
 	mkdirSync(join(dir, "agents"));
 	for (const [id, text] of Object.entries(agents))
 		writeFileSync(join(dir, "agents", `${id}.md`), text);
@@ -28,129 +35,126 @@ default: true
 ---
 You are a helpful assistant.
 `;
+const agentWith = (frontmatter: string) =>
+	`---\nname: G\ndescription: d\ndefault: true\n${frontmatter}\n---\nhi`;
 
 afterEach(() => vi.unstubAllEnvs());
+
+describe("catalogProviders", () => {
+	it("lists Providers that work with one API key and a fixed baseUrl", async () => {
+		const ids = (await catalogProviders()).map((p) => p.id);
+		expect(ids).toEqual(expect.arrayContaining(["deepseek", "anthropic"]));
+		for (const id of [
+			"amazon-bedrock",
+			"google-vertex",
+			"azure",
+			"cloudflare-ai-gateway",
+			"cloudflare-workers-ai",
+			"github-copilot",
+			"openai-codex",
+		])
+			expect(ids).not.toContain(id);
+	});
+});
 
 describe("loadConfig", () => {
 	it("loads an Agent Definition with its instructions", async () => {
 		vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-flash");
-		const config = await loadConfig(configDir({ general }));
+		const config = await loadConfig(deepseek(), configDir({ general }));
 		expect(config.defaultAgent).toMatchObject({
 			id: "general",
 			name: "General",
 			description: "Helps with anything",
 			instructions: "You are a helpful assistant.",
 			defaultModel: "deepseek/deepseek-flash",
+			unavailableModels: [],
 		});
 	});
 
-	it("allows every configured Model when `models` is omitted", async () => {
-		vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-flash");
-		const config = await loadConfig(configDir({ general }));
-		expect(config.defaultAgent.models).toContain("deepseek/deepseek-flash");
-		expect(config.defaultAgent.models).toContain("deepseek/deepseek-v4-pro");
-		// built-in providers that models.json does not configure stay out
-		expect(
-			config.defaultAgent.models.every((m) => m.startsWith("deepseek/")),
-		).toBe(true);
+	it("allows every enabled Model when `models` is omitted", async () => {
+		const config = await loadConfig(
+			deepseek(["deepseek-v4-pro"]),
+			configDir({ general }),
+		);
+		// disabled Models and Providers nobody configured stay out
+		expect(config.defaultAgent.models).toEqual(["deepseek/deepseek-v4-pro"]);
+		expect(config.defaultAgent.defaultModel).toBe("deepseek/deepseek-v4-pro");
 	});
 
-	it("reports each Provider's key status without its value", async () => {
-		vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-flash");
-		vi.stubEnv("DEEPSEEK_API_KEY", "sk-secret");
-		const config = await loadConfig(configDir({ general }));
-		expect(config.providers).toEqual([
-			{ id: "deepseek", name: expect.any(String), keyConfigured: true },
-		]);
-		expect(JSON.stringify(config.providers)).not.toContain("sk-secret");
+	it("sends a Provider's Models to its custom baseUrl, keeping the Catalog's compat", async () => {
+		const config = await loadConfig(
+			deepseek(["deepseek-flash"], { baseUrl: "http://10.0.0.1:8080" }),
+			configDir({ general }),
+		);
+		expect(config.models[0]).toMatchObject({
+			baseUrl: "http://10.0.0.1:8080",
+			compat: { thinkingFormat: "deepseek" },
+		});
 	});
 
-	describe("default Model fallback", () => {
-		it("prefers defaultModel", async () => {
+	describe("Models an Agent references but that are not available", () => {
+		it("drops them with a warning instead of failing", async () => {
 			const config = await loadConfig(
+				deepseek(["deepseek-flash"]),
 				configDir({
-					general: `---\nname: G\ndescription: d\ndefault: true\nmodels: [deepseek/deepseek-flash, deepseek/deepseek-v4-pro]\ndefaultModel: deepseek/deepseek-v4-pro\n---\nhi`,
+					general: agentWith(
+						"models: [deepseek/deepseek-flash, deepseek/deepseek-v4-pro, deepseek/gone]",
+					),
 				}),
 			);
-			expect(config.defaultAgent.defaultModel).toBe("deepseek/deepseek-v4-pro");
+			expect(config.defaultAgent.models).toEqual(["deepseek/deepseek-flash"]);
+			expect(config.defaultAgent.unavailableModels).toEqual([
+				"deepseek/deepseek-v4-pro",
+				"deepseek/gone",
+			]);
 		});
 
-		it("falls back to models[0]", async () => {
-			vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-flash");
+		it("falls back to the first remaining Model when the default is gone", async () => {
 			const config = await loadConfig(
+				deepseek(["deepseek-flash"]),
 				configDir({
-					general: `---\nname: G\ndescription: d\ndefault: true\nmodels: [deepseek/deepseek-v4-pro]\n---\nhi`,
+					general: agentWith(
+						"models: [deepseek/deepseek-v4-pro, deepseek/deepseek-flash]",
+					),
 				}),
 			);
-			expect(config.defaultAgent.defaultModel).toBe("deepseek/deepseek-v4-pro");
+			expect(config.defaultAgent.defaultModel).toBe("deepseek/deepseek-flash");
 		});
 
-		it("falls back to ORQESTRA_DEFAULT_MODEL", async () => {
-			vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-v4-pro");
-			const config = await loadConfig(configDir({ general }));
-			expect(config.defaultAgent.defaultModel).toBe("deepseek/deepseek-v4-pro");
-		});
-
-		it("fails when there is nothing to fall back to", async () => {
-			vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "");
-			await expect(loadConfig(configDir({ general }))).rejects.toThrow(
-				/general\.md: defaultModel/,
+		it("takes the Agent offline when none are left", async () => {
+			const config = await loadConfig(
+				{ providers: [], enabledModels: [] },
+				configDir({ general }),
 			);
+			expect(config.defaultAgent.models).toEqual([]);
+			expect(resolveTurn(config, "general")).toBeUndefined();
 		});
+	});
+
+	it("fails a request to a Provider whose API key cannot be decrypted", async () => {
+		const config = await loadConfig(
+			deepseek(["deepseek-flash"], { apiKey: undefined }),
+			configDir({ general }),
+		);
+		expect(() =>
+			config.streamSimple(config.models[0], { messages: [] }),
+		).toThrow(/API key of Provider "deepseek" cannot be decrypted/);
 	});
 
 	describe("rejects invalid configuration", () => {
-		const fails = async (
-			agents: Record<string, string>,
-			pattern: RegExp,
-			models?: unknown,
-		) => {
+		const fails = async (agents: Record<string, string>, pattern: RegExp) => {
 			vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-flash");
-			await expect(
-				loadConfig(configDir(agents, models ?? deepseekOnly)),
-			).rejects.toThrow(pattern);
-		};
-
-		it("a missing models.json", async () => {
-			vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-flash");
-			await expect(loadConfig(configDir({ general }, null))).rejects.toThrow(
-				/models\.json/,
+			await expect(loadConfig(deepseek(), configDir(agents))).rejects.toThrow(
+				pattern,
 			);
-		});
-
-		it("a literal API key", () =>
-			fails({ general }, /models\.json: providers\.deepseek\.apiKey/, {
-				providers: { deepseek: { apiKey: "sk-123" } },
-			}));
-
-		it("a shell-command API key", () =>
-			fails({ general }, /models\.json: providers\.deepseek\.apiKey/, {
-				providers: { deepseek: { apiKey: "!cat key" } },
-			}));
-
-		it("a models.json pi rejects", () =>
-			fails({ general }, /models\.json/, { providers: { deepseek: 3 } }));
-
-		it("a reference to an unknown Model", () =>
-			fails(
-				{
-					general: `---\nname: G\ndescription: d\ndefault: true\nmodels: [deepseek/nope]\n---\nhi`,
-				},
-				/general\.md: models\.0: unknown Model "deepseek\/nope"/,
-			));
-
-		it("a Model from a Provider not in models.json", () =>
-			fails(
-				{
-					general: `---\nname: G\ndescription: d\ndefault: true\nmodels: [anthropic/claude-sonnet-4-5]\n---\nhi`,
-				},
-				/general\.md: models\.0/,
-			));
+		};
 
 		it("a defaultModel outside `models`", () =>
 			fails(
 				{
-					general: `---\nname: G\ndescription: d\ndefault: true\nmodels: [deepseek/deepseek-flash]\ndefaultModel: deepseek/deepseek-v4-pro\n---\nhi`,
+					general: agentWith(
+						"models: [deepseek/deepseek-flash]\ndefaultModel: deepseek/deepseek-v4-pro",
+					),
 				},
 				/general\.md: defaultModel/,
 			));
@@ -276,7 +280,7 @@ describe("resolveThinking", () => {
 
 describe("resolveTurn", () => {
 	const twoModels = `---\nname: G\ndescription: d\ndefault: true\nmodels: [deepseek/deepseek-flash, deepseek/deepseek-v4-pro]\n---\nhi`;
-	const load = () => loadConfig(configDir({ general: twoModels }));
+	const load = () => loadConfig(deepseek(), configDir({ general: twoModels }));
 
 	it("uses the Agent's default Model and thinking level when nothing is picked", async () => {
 		const turn = resolveTurn(await load(), "general");

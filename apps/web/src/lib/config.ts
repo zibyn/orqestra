@@ -1,4 +1,4 @@
-import { loadConfig } from "@orqestra/config";
+import { liveConfig } from "@orqestra/config/live";
 
-// Loaded once per process; config changes need a restart
-export const config = loadConfig();
+// Reloaded whenever an Admin saves Providers or Models; Agent Definition file changes still need a restart
+export const config = liveConfig();

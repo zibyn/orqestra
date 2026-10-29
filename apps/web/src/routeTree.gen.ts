@@ -16,6 +16,7 @@ import { Route as SetupRouteImport } from './routes/setup'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
+import { Route as ConsoleProvidersRouteImport } from './routes/console/providers'
 import { Route as ConsoleSettingsRouteImport } from './routes/console/settings'
 import { Route as AppCConversationIdRouteImport } from './routes/_app/c.$conversationId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -55,6 +56,11 @@ const ConsoleAgentsRoute = ConsoleAgentsRouteImport.update({
   path: '/agents',
   getParentRoute: () => ConsoleRoute,
 } as any)
+const ConsoleProvidersRoute = ConsoleProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
+  getParentRoute: () => ConsoleRoute,
+} as any)
 const ConsoleSettingsRoute = ConsoleSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -83,6 +89,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/console/agents': typeof ConsoleAgentsRoute
+  '/console/providers': typeof ConsoleProvidersRoute
   '/console/settings': typeof ConsoleSettingsRoute
   '/console/': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
@@ -93,6 +100,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/console/agents': typeof ConsoleAgentsRoute
+  '/console/providers': typeof ConsoleProvidersRoute
   '/console/settings': typeof ConsoleSettingsRoute
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleIndexRoute
@@ -107,6 +115,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/console/agents': typeof ConsoleAgentsRoute
+  '/console/providers': typeof ConsoleProvidersRoute
   '/console/settings': typeof ConsoleSettingsRoute
   '/_app/': typeof AppIndexRoute
   '/console/': typeof ConsoleIndexRoute
@@ -122,6 +131,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/console/agents'
+    | '/console/providers'
     | '/console/settings'
     | '/console/'
     | '/c/$conversationId'
@@ -132,6 +142,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/console/agents'
+    | '/console/providers'
     | '/console/settings'
     | '/'
     | '/console'
@@ -145,6 +156,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/console/agents'
+    | '/console/providers'
     | '/console/settings'
     | '/_app/'
     | '/console/'
@@ -213,6 +225,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleAgentsRouteImport
       parentRoute: typeof ConsoleRoute
     }
+    '/console/providers': {
+      id: '/console/providers'
+      path: '/providers'
+      fullPath: '/console/providers'
+      preLoaderRoute: typeof ConsoleProvidersRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
     '/console/settings': {
       id: '/console/settings'
       path: '/settings'
@@ -258,12 +277,14 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface ConsoleRouteChildren {
   ConsoleAgentsRoute: typeof ConsoleAgentsRoute
+  ConsoleProvidersRoute: typeof ConsoleProvidersRoute
   ConsoleSettingsRoute: typeof ConsoleSettingsRoute
   ConsoleIndexRoute: typeof ConsoleIndexRoute
 }
 
 const ConsoleRouteChildren: ConsoleRouteChildren = {
   ConsoleAgentsRoute: ConsoleAgentsRoute,
+  ConsoleProvidersRoute: ConsoleProvidersRoute,
   ConsoleSettingsRoute: ConsoleSettingsRoute,
   ConsoleIndexRoute: ConsoleIndexRoute,
 }

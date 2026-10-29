@@ -4,7 +4,7 @@ import { requireAdmin } from "#/lib/session";
 
 export const listAgents = createServerFn().handler(async () => {
 	await requireAdmin();
-	const { agents, providers } = await config;
+	const { agents } = await config.get();
 	return {
 		// instructions stay server-side; this page only lists Agents
 		agents: agents.map((a) => ({
@@ -14,7 +14,7 @@ export const listAgents = createServerFn().handler(async () => {
 			models: a.models,
 			defaultModel: a.defaultModel,
 			default: a.default,
+			unavailableModels: a.unavailableModels,
 		})),
-		providers,
 	};
 });

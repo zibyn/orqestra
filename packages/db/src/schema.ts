@@ -4,6 +4,7 @@ import {
 	integer,
 	jsonb,
 	pgTable,
+	primaryKey,
 	serial,
 	text,
 	timestamp,
@@ -160,4 +161,27 @@ export const compaction = pgTable(
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 	},
 	(table) => [index("compaction_conversationId_idx").on(table.conversationId)],
+);
+
+// Providers an Admin configured from the Catalog; at most one row per Catalog Provider
+export const provider = pgTable("provider", {
+	// the Catalog (pi) Provider id
+	id: text("id").primaryKey(),
+	// encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
+	apiKey: text("api_key").notNull(),
+	// null: the Catalog's default
+	baseUrl: text("base_url"),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// Kept when the Catalog drops the Model, so it comes back if pi lists it again
+export const enabledModel = pgTable(
+	"enabled_model",
+	{
+		providerId: text("provider_id")
+			.notNull()
+			.references(() => provider.id, { onDelete: "cascade" }),
+		modelId: text("model_id").notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.providerId, table.modelId] })],
 );

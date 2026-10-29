@@ -40,6 +40,7 @@ const smallAgent: AgentDefinition = {
 	thinking: {},
 	compaction: { reserveTokens: 1000, keepRecentTokens: 50 },
 	default: false,
+	unavailableModels: [],
 };
 const fauxAgent: AgentDefinition = {
 	id: "faux",
@@ -50,6 +51,7 @@ const fauxAgent: AgentDefinition = {
 	defaultModel: "faux/faux-1",
 	thinking: {},
 	default: false,
+	unavailableModels: [],
 };
 const userId = "u1";
 
@@ -100,11 +102,11 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 	let stopWorker: () => Promise<void>;
 
 	beforeAll(async () => {
-		const loaded = await config;
+		const loaded = await config.get();
 		loaded.registry.registerProvider(faux.provider);
 		loaded.models.push(...faux.models);
 		loaded.agents.push(fauxAgent, smallAgent);
-		stopWorker = await startAgentWorker(loaded, url as string);
+		stopWorker = await startAgentWorker(config.get, url as string);
 	});
 	afterAll(() => stopWorker?.());
 
@@ -397,7 +399,7 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		await waitFor(async () => picked, Boolean);
 		await crashing.close(true);
 
-		stopWorker = await startAgentWorker(await config, url as string, {
+		stopWorker = await startAgentWorker(config.get, url as string, {
 			stalledInterval: 200,
 		});
 		await waitFor(
