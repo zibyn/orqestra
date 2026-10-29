@@ -62,13 +62,14 @@ const owned = (userId: string, id: string) =>
 /** The parent's Subagent with this Conversation id, when the parent is the user's. */
 const ownedSubagent = async (userId: string, id: string) => {
 	const [row] = await db
-		.select({ parentId: subagent.parentId, number: subagent.number })
+		.select({ parentId: conversation.parentId, number: subagent.number })
 		.from(subagent)
-		.innerJoin(conversation, eq(conversation.id, subagent.parentId))
+		// a Subagent's Conversation is its parent's user's
+		.innerJoin(conversation, eq(conversation.id, subagent.conversationId))
 		.where(
 			and(eq(subagent.conversationId, id), eq(conversation.userId, userId)),
 		);
-	return row;
+	return row as { parentId: string; number: number } | undefined;
 };
 
 export function createConversations({
@@ -91,7 +92,8 @@ export function createConversations({
 					title: conversation.title,
 					status: conversation.status,
 					// Subagents queued or at work, which the sidebar marks while the parent itself is idle
-					background: sql<boolean>`exists (select 1 from ${subagent} where ${subagent.parentId} = ${conversation.id} and ${subagent.outcome} in ('queued', 'running'))`,
+					// (spelled out: drizzle leaves the columns of a select's fields unqualified)
+					background: sql<boolean>`exists (select 1 from subagent s join conversation child on child.id = s.conversation_id where child.parent_id = conversation.id and s.outcome in ('queued', 'running'))`,
 				})
 				.from(conversation)
 				// a Subagent's Conversation shows only within its parent
@@ -139,12 +141,13 @@ export function createConversations({
 						id: subagent.conversationId,
 						toolCallId: subagent.toolCallId,
 						number: subagent.number,
-						template: subagent.template,
+						template: conversation.agentId,
 						brief: subagent.brief,
 						outcome: subagent.outcome,
 					})
 					.from(subagent)
-					.where(eq(subagent.parentId, id))
+					.innerJoin(conversation, eq(conversation.id, subagent.conversationId))
+					.where(eq(conversation.parentId, id))
 					.orderBy(asc(subagent.number)),
 			]);
 			return {

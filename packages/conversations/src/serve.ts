@@ -31,6 +31,7 @@ import {
 	STOP_CHANNEL,
 	SUBAGENT_RUNS_QUEUE,
 	stopSubagents,
+	subagentOf,
 } from "./runs.ts";
 
 /** Tasks one start of Subagents may hand out. */
@@ -369,7 +370,7 @@ function subagentsOf(
 	const parentId = conv.id;
 	const find = async (tx: Tx, number: number) => {
 		const row = await tx.query.subagent.findFirst({
-			where: and(eq(subagent.parentId, parentId), eq(subagent.number, number)),
+			where: and(subagentOf(parentId), eq(subagent.number, number)),
 		});
 		if (!row) throw new NoSuchSubagent(number);
 		return row;
@@ -399,7 +400,7 @@ function subagentsOf(
 						numbered: sql<number>`coalesce(max(${subagent.number}), 0)`,
 					})
 					.from(subagent)
-					.where(eq(subagent.parentId, parentId));
+					.where(subagentOf(parentId));
 				const first = Number(numbered) + 1;
 				const children = await tx
 					.insert(conversation)
@@ -414,10 +415,8 @@ function subagentsOf(
 				await tx.insert(subagent).values(
 					picked.map((t, i) => ({
 						conversationId: children[i].id,
-						parentId,
 						toolCallId,
 						number: first + i,
-						template: t.template?.id,
 						brief: t.brief,
 					})),
 				);

@@ -1,1 +1,0 @@
-ALTER TABLE "search_provider" ADD COLUMN "base_url" text;

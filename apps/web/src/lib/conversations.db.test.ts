@@ -1232,10 +1232,8 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 			.returning();
 		await db.insert(schema.subagent).values({
 			conversationId: child.id,
-			parentId: parent.id,
 			toolCallId: "call",
 			number: 1,
-			template: "small",
 			brief: "a".repeat(4000),
 		});
 		const old = fauxAssistantMessage("b".repeat(2000));
@@ -1344,7 +1342,6 @@ describe.skipIf(!url)("Conversation runs (Postgres + faux provider)", () => {
 		await db.insert(schema.subagent).values(
 			children.map((c, i) => ({
 				conversationId: c.id,
-				parentId: parent.id,
 				toolCallId: "call",
 				number: i + 1,
 				brief: "b",

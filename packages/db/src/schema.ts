@@ -9,7 +9,6 @@ import {
 	serial,
 	text,
 	timestamp,
-	unique,
 	uuid,
 } from "drizzle-orm/pg-core";
 
@@ -200,35 +199,26 @@ export const compaction = pgTable(
 	(table) => [index("compaction_conversationId_idx").on(table.conversationId)],
 );
 
-// Metadata of a Subagent; its transcript is the `message` rows of its own Conversation
-export const subagent = pgTable(
-	"subagent",
-	{
-		// the Subagent's Conversation
-		conversationId: uuid("conversation_id")
-			.primaryKey()
-			.references(() => conversation.id, { onDelete: "cascade" }),
-		parentId: uuid("parent_id")
-			.notNull()
-			.references(() => conversation.id, { onDelete: "cascade" }),
-		// the subagent Tool call that started it, so the UI shows it under that call
-		toolCallId: text("tool_call_id").notNull(),
-		// what the parent Agent calls it by: 1, 2, ... within the parent Conversation
-		number: integer("number").notNull(),
-		// Agent Definition id; null for the built-in general worker
-		template: text("template"),
-		brief: text("brief").notNull(),
-		outcome: text("outcome")
-			.$type<
-				"queued" | "running" | "completed" | "partial" | "failed" | "stopped"
-			>()
-			.default("queued")
-			.notNull(),
-		result: text("result"),
-		createdAt: timestamp("created_at").defaultNow().notNull(),
-	},
-	(table) => [unique().on(table.parentId, table.number)],
-);
+// Metadata of a Subagent; its transcript is the `message` rows of its own Conversation, whose parentId and agentId are its parent's and its template
+export const subagent = pgTable("subagent", {
+	// the Subagent's Conversation
+	conversationId: uuid("conversation_id")
+		.primaryKey()
+		.references(() => conversation.id, { onDelete: "cascade" }),
+	// the subagent Tool call that started it, so the UI shows it under that call
+	toolCallId: text("tool_call_id").notNull(),
+	// what the parent Agent calls it by: 1, 2, ... within the parent Conversation
+	number: integer("number").notNull(),
+	brief: text("brief").notNull(),
+	outcome: text("outcome")
+		.$type<
+			"queued" | "running" | "completed" | "partial" | "failed" | "stopped"
+		>()
+		.default("queued")
+		.notNull(),
+	result: text("result"),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+});
 
 // Providers an Admin configured from the Catalog; at most one row per Catalog Provider
 export const provider = pgTable("provider", {

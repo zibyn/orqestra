@@ -5,71 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1793242322308,
-      "tag": "0000_auth",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1793243443067,
-      "tag": "0001_setup_completed",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1793249961459,
-      "tag": "0002_conversations",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1793256305934,
-      "tag": "0003_providers",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1793263015193,
-      "tag": "0004_agents_and_search",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1793264211292,
-      "tag": "0005_search_provider_base_url",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1793268670168,
-      "tag": "0006_subagents",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1793272364867,
-      "tag": "0007_subagent_conversations",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1793275993142,
-      "tag": "0008_run_job_and_subagent_budget",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1793288120897,
-      "tag": "0009_mcp_servers",
+      "when": 1793315885067,
+      "tag": "0000_baseline",
       "breakpoints": true
     }
   ]

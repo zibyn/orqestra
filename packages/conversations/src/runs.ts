@@ -10,6 +10,16 @@ export const lockRoot = (tx: Tx, conversationId: string) =>
 		sql`select 1 from ${conversation} where ${conversation.id} = (select coalesce(${conversation.parentId}, ${conversation.id}) from ${conversation} where ${conversation.id} = ${conversationId}) for update`,
 	);
 
+/** Matches the `subagent` rows of a parent Conversation's Subagents. */
+export const subagentOf = (parentId: string) =>
+	inArray(
+		subagent.conversationId,
+		db
+			.select({ id: conversation.id })
+			.from(conversation)
+			.where(eq(conversation.parentId, parentId)),
+	);
+
 /** Subagents of one parent Conversation running at once; more wait their turn. */
 export const MAX_SUBAGENTS = 4;
 
@@ -90,8 +100,7 @@ export async function enqueue(conversationId: string) {
 			"run",
 			{ conversationId },
 			{
-				// Runs started before job ids were saved: their Conversation's id
-				jobId: conv.jobId ?? conversationId,
+				jobId: conv.jobId ?? undefined,
 				removeOnComplete: true,
 				removeOnFail: 1000,
 			},
@@ -214,9 +223,10 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 		.set({ wake: false })
 		.where(eq(inbox.conversationId, conversationId));
 	// the Notification is answered on the Model the parent last replied with
-	const last = await lastModel(tx, row.parentId);
+	const parentId = conv.parentId as string;
+	const last = await lastModel(tx, parentId);
 	await tx.insert(inbox).values({
-		conversationId: row.parentId,
+		conversationId: parentId,
 		message: {
 			role: "user",
 			content: notification(row.number, end),
@@ -227,7 +237,7 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 		subagentId: conversationId,
 		wake: end.outcome !== "stopped",
 	});
-	return row.parentId;
+	return parentId;
 }
 
 /** After a Subagent ended: the parent answers its Notification, and the Subagents waiting for a slot get one. */
@@ -238,7 +248,7 @@ async function wakeAfter(parentId: string) {
 		.from(subagent)
 		.where(
 			and(
-				eq(subagent.parentId, parentId),
+				subagentOf(parentId),
 				exists(
 					db
 						.select()
@@ -360,7 +370,7 @@ export async function stopSubagents(parentId: string, numbers?: number[]) {
 			.from(subagent)
 			.where(
 				and(
-					eq(subagent.parentId, parentId),
+					subagentOf(parentId),
 					inArray(subagent.outcome, ["queued", "running"]),
 					numbers && inArray(subagent.number, numbers),
 				),
