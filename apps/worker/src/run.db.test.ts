@@ -26,13 +26,12 @@ const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
 const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
-const { liveConfig } = await import("@orqestra/config/live");
+const { config } = await import("@orqestra/config/live");
 const { createConversations } = await import("@orqestra/conversations");
 const { providerLimiter, startAgentWorker } = await import("./run.ts");
 const { MAX_SUBAGENT_STEPS } = await import("./tools.ts");
 
-const config = liveConfig();
-const conversations = createConversations({ config: config.get });
+const conversations = createConversations({ config: config.current });
 const faux = fauxProvider({
 	provider: "faux",
 	models: [
@@ -154,7 +153,7 @@ describe.skipIf(!url)(
 		let stopWorker: () => Promise<void>;
 
 		beforeAll(async () => {
-			const loaded = await config.get();
+			const loaded = await config.current();
 			loaded.registry.registerProvider(faux.provider);
 			loaded.models.push(...faux.models);
 			loaded.agents.push(fauxAgent, smallAgent);
@@ -164,7 +163,7 @@ describe.skipIf(!url)(
 				baseUrl: "https://api.tavily.com",
 			};
 			// faux replies are one shared queue, so runs go one at a time
-			stopWorker = await startAgentWorker(config.get, { concurrency: 1 });
+			stopWorker = await startAgentWorker(config.current, { concurrency: 1 });
 		});
 		afterAll(async () => {
 			await stopWorker?.();

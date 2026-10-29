@@ -12,11 +12,9 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Switch } from "#/components/ui/switch";
-import type { McpTestResult } from "#/lib/mcp-connection";
 import {
 	deleteMcpServer,
 	getMcpServers,
-	type McpSaveError,
 	saveMcpServer,
 	setMcpServerEnabled,
 } from "#/lib/mcp-servers";
@@ -27,6 +25,7 @@ import {
 	setModelEnabled,
 	testProvider,
 } from "#/lib/providers";
+import { saveErrorTexts } from "#/lib/save-errors";
 import {
 	deleteSearchProvider,
 	getSearchProviders,
@@ -53,6 +52,14 @@ type SearchData = Awaited<ReturnType<typeof getSearchProviders>>;
 type SearchConfigured = SearchData["configured"][number];
 type CatalogProvider = Data["catalog"][number];
 type Configured = Data["configured"][number];
+
+type McpTestResult = NonNullable<
+	Awaited<ReturnType<typeof saveMcpServer>>["test"]
+>;
+
+/** The first field error of a save, translated; undefined when it was saved. */
+const firstError = (result: { errors: Parameters<typeof saveErrorTexts>[0] }) =>
+	Object.values(saveErrorTexts(result.errors))[0];
 
 const errorText = (error: unknown) =>
 	error instanceof Error ? error.message : m.request_failed();
@@ -213,10 +220,13 @@ function ProviderForm({
 						: { ok: true, text: m.test_connection_ok() },
 				);
 			} else {
-				await saveProvider({ data: values });
-				setApiKey("");
-				setResult(undefined);
-				await router.invalidate();
+				const error = firstError(await saveProvider({ data: values }));
+				if (error) setResult({ ok: false, text: error });
+				else {
+					setApiKey("");
+					setResult(undefined);
+					await router.invalidate();
+				}
 			}
 		} catch (e) {
 			setResult({ ok: false, text: errorText(e) });
@@ -354,15 +364,18 @@ function SearchProviders({ data }: { data: SearchData }) {
 				className="flex flex-col gap-4"
 				onSubmit={(e) => {
 					e.preventDefault();
-					void act(`save-${id}`, () =>
-						saveSearchProvider({
-							data: {
-								id,
-								apiKey: keys[id] ?? "",
-								baseUrl,
-							},
-						}),
-					);
+					void act(`save-${id}`, async () => {
+						const error = firstError(
+							await saveSearchProvider({
+								data: {
+									id,
+									apiKey: keys[id] ?? "",
+									baseUrl,
+								},
+							}),
+						);
+						if (error) throw new Error(error);
+					});
 				}}
 			>
 				<div className="flex flex-col gap-2">
@@ -595,12 +608,7 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 					headers,
 				},
 			});
-			setErrors({
-				...(result.errors.id && { id: saveErrorText(result.errors.id) }),
-				...(result.errors.headers && {
-					headers: saveErrorText(result.errors.headers),
-				}),
-			});
+			setErrors(saveErrorTexts(result.errors));
 			setTest(result.test);
 			if (!Object.keys(result.errors).length) {
 				if (!existing) {
@@ -734,15 +742,6 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 		</form>
 	);
 }
-
-const saveErrorText = (error: McpSaveError) =>
-	"header" in error
-		? {
-				header_invalid: m.mcp_header_invalid,
-				header_twice: m.mcp_header_twice,
-				header_value_missing: m.mcp_header_value_missing,
-			}[error.code]({ header: error.header })
-		: { id_invalid: m.mcp_id_invalid, id_taken: m.mcp_id_taken }[error.code]();
 
 /** The Tools a just-saved MCP Server offers, or why connecting to it failed. */
 function McpTestOutcome({ result }: { result: McpTestResult }) {

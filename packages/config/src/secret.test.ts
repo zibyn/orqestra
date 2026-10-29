@@ -18,7 +18,7 @@ describe("API key encryption", () => {
 	});
 
 	it("rejects a key that is not 32 bytes of base64", () => {
-		expect(() => encryptionKey(undefined)).toThrow(/ORQESTRA_ENCRYPTION_KEY/);
+		expect(() => encryptionKey("")).toThrow(/ORQESTRA_ENCRYPTION_KEY/);
 		expect(() => encryptionKey("c2hvcnQ=")).toThrow(/32 bytes/);
 	});
 });

@@ -158,9 +158,16 @@
   "mcp_test_unreachable": "Saved, but the MCP Server cannot be reached; check the URL: {detail}",
   "mcp_test_timeout": "Saved, but the MCP Server did not answer in time.",
   "mcp_test_failed": "Saved, but the connection test failed: {detail}",
-  "mcp_id_invalid": "Use lowercase letters, digits and dashes, starting with a letter or digit.",
-  "mcp_id_taken": "An MCP Server with this id already exists.",
   "mcp_header_invalid": "\"{header}\" is not a valid header name.",
   "mcp_header_twice": "Header {header} is listed twice.",
-  "mcp_header_value_missing": "Enter a value for header {header}."
+  "mcp_header_value_missing": "Enter a value for header {header}.",
+  "save_id_invalid": "Use lowercase letters, digits and dashes, starting with a letter or digit.",
+  "save_id_taken": "This id is already taken.",
+  "save_not_found": "It no longer exists; reload the page.",
+  "save_not_in_catalog": "This is not in the Catalog.",
+  "save_invalid": "{detail}",
+  "save_default_required": "Make another Agent the default instead.",
+  "save_default_not_pickable": "The default Agent must be pickable by Users.",
+  "save_default_model_not_allowed": "\"{model}\" is not one of the allowed Models.",
+  "save_thinking_default_not_allowed": "\"{level}\" is not one of the allowed thinking levels."
 }

@@ -63,9 +63,7 @@ CREATE TABLE "inbox" (
 CREATE TABLE "instance_settings" (
 	"id" integer PRIMARY KEY DEFAULT 1 NOT NULL,
 	"allow_member_password" boolean DEFAULT false NOT NULL,
-	"setup_completed" boolean DEFAULT false NOT NULL,
-	"search_served_by" text,
-	"scrape_served_by" text
+	"setup_completed" boolean DEFAULT false NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "mcp_server" (
@@ -125,6 +123,11 @@ CREATE TABLE "subagent" (
 	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "tool_service" (
+	"tool" text PRIMARY KEY NOT NULL,
+	"search_provider_id" text
+);
+--> statement-breakpoint
 CREATE TABLE "user" (
 	"id" text PRIMARY KEY NOT NULL,
 	"name" text NOT NULL,
@@ -160,10 +163,13 @@ ALTER TABLE "inbox" ADD CONSTRAINT "inbox_conversation_id_conversation_id_fk" FO
 ALTER TABLE "message" ADD CONSTRAINT "message_conversation_id_conversation_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversation"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "session" ADD CONSTRAINT "session_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "subagent" ADD CONSTRAINT "subagent_conversation_id_conversation_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversation"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "tool_service" ADD CONSTRAINT "tool_service_search_provider_id_search_provider_id_fk" FOREIGN KEY ("search_provider_id") REFERENCES "public"."search_provider"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "account_userId_idx" ON "account" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "compaction_conversationId_idx" ON "compaction" USING btree ("conversation_id");--> statement-breakpoint
 CREATE INDEX "conversation_userId_idx" ON "conversation" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "inbox_conversationId_idx" ON "inbox" USING btree ("conversation_id");--> statement-breakpoint
 CREATE INDEX "message_conversationId_idx" ON "message" USING btree ("conversation_id");--> statement-breakpoint
 CREATE INDEX "session_userId_idx" ON "session" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "verification_identifier_idx" ON "verification" USING btree ("identifier");
+CREATE INDEX "verification_identifier_idx" ON "verification" USING btree ("identifier");--> statement-breakpoint
+-- the default Agent, which cannot be deleted, so there is always at least one
+INSERT INTO "agent" ("id", "definition") VALUES ('general', '{"name":"General","description":"A general-purpose assistant for everyday questions and tasks.","instructions":"You are a helpful, honest assistant. Answer clearly and concisely, ask a short\nclarifying question when a request is ambiguous, and say so when you are not sure.","models":["deepseek/deepseek-flash"],"thinking":{"default":"low"},"pickable":true,"default":true}'::jsonb);

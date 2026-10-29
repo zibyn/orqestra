@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { testMcpServer } from "#/lib/mcp-connection";
+import { testMcpServer } from "./mcp.ts";
 
 const server = {
 	name: "Docs",

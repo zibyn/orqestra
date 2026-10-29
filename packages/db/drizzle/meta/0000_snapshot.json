@@ -1,5 +1,5 @@
 {
-  "id": "88891ae1-f1d0-4aef-a290-d6d0fe84a2a4",
+  "id": "35c20ec4-5afd-4e93-872e-832e9d99e3cf",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -542,18 +542,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
-        },
-        "search_served_by": {
-          "name": "search_served_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "scrape_served_by": {
-          "name": "scrape_served_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -953,6 +941,45 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.tool_service": {
+      "name": "tool_service",
+      "schema": "",
+      "columns": {
+        "tool": {
+          "name": "tool",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "search_provider_id": {
+          "name": "search_provider_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "tool_service_search_provider_id_search_provider_id_fk": {
+          "name": "tool_service_search_provider_id_search_provider_id_fk",
+          "tableFrom": "tool_service",
+          "tableTo": "search_provider",
+          "columnsFrom": [
+            "search_provider_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

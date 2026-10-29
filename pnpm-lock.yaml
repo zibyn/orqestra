@@ -217,6 +217,9 @@ importers:
       '@orqestra/db':
         specifier: workspace:*
         version: link:../db
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       zod:
         specifier: ^4.6.7
         version: 4.6.7
