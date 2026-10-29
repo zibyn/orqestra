@@ -36,7 +36,7 @@ export { MAX_SUBAGENTS };
 /** Tasks one subagent call may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
 /** Subagents an Agent may start or continue in all since the User's last message, so Notifications cannot keep it delegating forever. */
-export const MAX_SUBAGENTS_PER_TURN = 16;
+export const MAX_SUBAGENTS_PER_USER_MESSAGE = 16;
 /** Model requests a Subagent may make; the last one, without Tools, is for its final answer. */
 export const MAX_SUBAGENT_STEPS = 20;
 // shortcut: a hard cut keeps one page from flooding the context; summarize instead if pages get cut too often
@@ -175,26 +175,21 @@ export const STEP_LIMIT =
 const NOTIFIED =
 	"Each subagent's final answer comes to you by itself as a <task-notification>, once it finishes: do not poll. Until the results you need are in, you may tell the user what you are doing and end your reply.";
 
-/** Locks the parent and checks the budget: Subagents started or continued since the last User message, `more` included. */
-async function budget(tx: Tx, conversationId: string, more: number) {
-	await lockRoot(tx, conversationId);
-	// shortcut: every message to a Subagent counts, not just those that continue a finished one; add a column if steering runs out the budget
+/**
+ * Under the parent's lock: spends `more` of the budget of Subagents started, or continued once finished, since the User's last message.
+ * Throws, spending nothing, when it would run out.
+ */
+async function spend(tx: Tx, conversationId: string, more: number) {
 	const [{ used }] = await tx
-		.execute<{ used: number }>(sql`
-		with since as (
-			select coalesce(max(${messageRow.createdAt}), 'epoch') as at from ${messageRow}
-			where ${messageRow.conversationId} = ${conversationId}
-				and ${messageRow.message}->>'role' = 'user' and ${messageRow.subagentId} is null
-		), inputs as (
-			select created_at from ${messageRow} where conversation_id in (select id from ${conversation} where parent_id = ${conversationId}) and message->>'role' = 'user'
-			union all
-			select created_at from ${inbox} where conversation_id in (select id from ${conversation} where parent_id = ${conversationId})
-		)
-		select count(*)::int as used from inputs, since where created_at > since.at`)
-		.then((r) => r.rows);
-	if (used + more > MAX_SUBAGENTS_PER_TURN)
+		.update(conversation)
+		.set({
+			subagentsSinceUser: sql`${conversation.subagentsSinceUser} + ${more}`,
+		})
+		.where(eq(conversation.id, conversationId))
+		.returning({ used: conversation.subagentsSinceUser });
+	if (used > MAX_SUBAGENTS_PER_USER_MESSAGE)
 		throw new Error(
-			`Since the user's last message at most ${MAX_SUBAGENTS_PER_TURN} subagents may be started or continued, and ${used} have been: do the rest of the work yourself.`,
+			`Since the user's last message at most ${MAX_SUBAGENTS_PER_USER_MESSAGE} subagents may be started or continued, and ${used - more} have been: do the rest of the work yourself.`,
 		);
 }
 
@@ -262,7 +257,8 @@ export function subagentTools(
 				};
 			});
 			const { first, children } = await db.transaction(async (tx) => {
-				await budget(tx, run.conversationId, picked.length);
+				await lockRoot(tx, run.conversationId);
+				await spend(tx, run.conversationId, picked.length);
 				const [{ numbered }] = await tx
 					.select({
 						numbered: sql<number>`coalesce(max(${subagent.number}), 0)`,
@@ -324,9 +320,17 @@ export function subagentTools(
 		}),
 		execute: async (_id, { number, message }) => {
 			const row = await db.transaction(async (tx) => {
+				await lockRoot(tx, run.conversationId);
 				const row = await find(tx, number);
 				const continued = !["queued", "running"].includes(row.outcome);
-				if (continued) await budget(tx, run.conversationId, 1);
+				if (continued) {
+					await spend(tx, run.conversationId, 1);
+					// it waits for a slot like a new one, and a stop catches it while it waits
+					await tx
+						.update(subagent)
+						.set({ outcome: "queued" })
+						.where(eq(subagent.conversationId, row.conversationId));
+				}
 				// it continues on the Model it last used
 				const [last] = await tx
 					.select({

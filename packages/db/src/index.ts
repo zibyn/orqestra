@@ -29,6 +29,20 @@ export const conversationChannel = (conversationId: string) =>
 /** NOTIFY channel whose payload is the id of the Conversation whose run should stop (web -> worker). */
 export const STOP_CHANNEL = "conversation_stop";
 
+/** Sends a ConversationEvent to the pages showing this Conversation; a Subagent's events go to its parent's id. */
+export const notify = (conversationId: string, event: ConversationEvent) =>
+	db.execute(
+		sql`select pg_notify(${conversationChannel(conversationId)}, ${JSON.stringify(event)})`,
+	);
+
+/** Asks whichever worker runs these Conversations' Runs to abort them. */
+export const requestStop = (conversationIds: string[]) =>
+	Promise.all(
+		conversationIds.map((id) =>
+			db.execute(sql`select pg_notify(${STOP_CHANNEL}, ${id})`),
+		),
+	);
+
 /** NOTIFY channel, no payload: Providers or enabled Models changed, reload the config (web -> web and worker). */
 export const CONFIG_CHANNEL = "config_changed";
 

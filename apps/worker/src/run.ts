@@ -24,15 +24,20 @@ import {
 	and,
 	asc,
 	type ConversationEvent,
-	conversationChannel,
 	db,
 	desc,
 	eq,
+	notify,
 	STOP_CHANNEL,
 	SUBAGENT_RUNS_QUEUE,
-	sql,
 } from "@orqestra/db";
-import { drain, endSubagent, enqueue, runQueue } from "@orqestra/db/runs";
+import {
+	drain,
+	endRun,
+	endSubagent,
+	enqueue,
+	stopSubagents,
+} from "@orqestra/db/runs";
 import {
 	compaction,
 	conversation,
@@ -56,22 +61,14 @@ type Conv = typeof conversation.$inferSelect;
 /** Runs in this process, by Conversation id, so a stop request can abort them from the start (compaction included). */
 const active = new Map<string, AbortController>();
 
-// a Subagent's events go to its parent's channel, where the UI shows it
-const notify = (conversationId: string, event: ConversationEvent) =>
-	db.execute(
-		sql`select pg_notify(${conversationChannel(conversationId)}, ${JSON.stringify(event)})`,
-	);
-
-async function setStatus(conv: Conv, status: Conv["status"]) {
-	await db
-		.update(conversation)
-		.set({ status })
-		.where(eq(conversation.id, conv.id));
-	await notify(conv.parentId ?? conv.id, { type: "saved" });
-}
-
-/** Delivers the inbox and replies, until the inbox stays empty. */
-export async function runTurn(conversationId: string, config: OrqestraConfig) {
+/**
+ * One Run of a Conversation: delivers its inbox and replies, step by step, until no wake input is left.
+ * A stopped Run ends here; a failed one is ended by the worker's 'failed' handler, which also sees crashes.
+ */
+export async function executeRun(
+	conversationId: string,
+	config: OrqestraConfig,
+) {
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
@@ -88,17 +85,23 @@ export async function runTurn(conversationId: string, config: OrqestraConfig) {
 		await reply(conv, config, stop.signal);
 	} catch (error) {
 		// stopped while compacting: nothing to save
-		if (stop.signal.aborted) {
-			if (conv.parentId)
-				return endSubagent(conversationId, { outcome: "stopped", result: "" });
-			return setStatus(conv, "idle");
-		}
-		// a Subagent's is settled by the worker's 'failed' handler, which also sees crashes
-		if (!conv.parentId) await setStatus(conv, "failed");
+		if (stop.signal.aborted) return stopped(conv, "");
 		throw error;
 	} finally {
-		active.delete(conversationId);
+		// the next Run of this Conversation may have begun meanwhile, while this one titled it
+		if (active.get(conversationId) === stop) active.delete(conversationId);
 	}
+}
+
+/**
+ * Ends a stopped Run. Only the User stops a top-level one, which stops its Subagents too:
+ * again after the Run ended, to catch any it started while the stop was on its way.
+ */
+async function stopped(conv: Conv, result: string) {
+	if (conv.parentId)
+		return endSubagent(conv.id, { outcome: "stopped", result });
+	await stopSubagents(conv.id);
+	await endRun(conv.id, "idle");
 }
 
 async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
@@ -143,7 +146,14 @@ async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
 							{ conversationId, userId: conv.userId, notify: send },
 						),
 					],
-			messages: await context(conversationId, rows, turn, streamFn, signal),
+			messages: await context(
+				conversationId,
+				rows,
+				turn,
+				streamFn,
+				signal,
+				send,
+			),
 		},
 		streamFn,
 		sessionId: conversationId,
@@ -205,13 +215,11 @@ async function reply(conv: Conv, config: OrqestraConfig, signal: AbortSignal) {
 	for (;;) {
 		await (next.length ? agent.prompt(next) : agent.continue());
 		const answer = agent.state.messages.at(-1) as AssistantMessage;
-		// fails the job so the reason (e.g. an unreadable API key) is logged; runTurn marks the Conversation failed
+		// fails the job so the reason (e.g. an unreadable API key) is logged; the 'failed' handler marks the Conversation failed
 		if (answer.stopReason === "error")
 			throw new Error(answer.errorMessage ?? "The reply failed");
-		// stopped: inputs that arrived meanwhile wait for the next Run
 		if (signal.aborted) {
-			if (sub) await endSubagent(conversationId, ended());
-			else await setStatus(conv, "idle");
+			await stopped(conv, ended().result);
 			break;
 		}
 		next = (await drain(conversationId, sub ? ended : true)) as Message[];
@@ -237,6 +245,8 @@ async function context(
 	turn: Turn,
 	streamFn: StreamFn,
 	signal: AbortSignal,
+	/** Sends the page showing this Conversation (a Subagent's parent's) what to reload. */
+	send: (event: ConversationEvent) => Promise<unknown>,
 ): Promise<AgentMessage[]> {
 	const previous = await db.query.compaction.findFirst({
 		where: eq(compaction.conversationId, conversationId),
@@ -286,7 +296,7 @@ async function context(
 				firstKeptMessageId: kept[cut].id,
 				tokensBefore: tokens,
 			});
-			await notify(conversationId, { type: "saved" });
+			await send({ type: "saved" });
 			summary = result.summary;
 			kept = kept.slice(cut);
 		}
@@ -430,7 +440,7 @@ export async function startAgentWorker(
 			queue as string,
 			async (job) => {
 				const config = await getConfig();
-				return runTurn(job.data.conversationId, {
+				return executeRun(job.data.conversationId, {
 					...config,
 					streamSimple: limitProviders(config.streamSimple),
 				});
@@ -450,7 +460,7 @@ export async function startAgentWorker(
 			console.error(`job ${job?.id} failed`, err);
 			if (job)
 				void failed(job.data.conversationId, err).catch((error) =>
-					console.error("marking the run failed failed", error),
+					console.error(`could not mark job ${job.id}'s Run failed`, error),
 				);
 		});
 		worker.on("error", (err) => console.error("worker error", err));
@@ -472,32 +482,21 @@ async function failed(conversationId: string, error: Error) {
 		where: eq(conversation.id, conversationId),
 	});
 	if (!conv) return;
-	if (!conv.parentId) return setStatus(conv, "failed");
+	if (!conv.parentId) return endRun(conversationId, "failed");
 	await endSubagent(conversationId, {
 		outcome: "failed",
 		result: `[The subagent failed, or the worker running it crashed: ${error.message}]`,
 	});
 }
 
-/** Queues again the Runs left running without a job, lost to a crash between saving a Run's start and queueing it. */
+/**
+ * Queues again the Runs left running without a job, lost to a crash between saving a Run's start and queueing it.
+ * Each is queued as the job its start saved, so a Run that has its job, or that its start is queueing right now, gets no second one.
+ */
 async function requeue() {
-	const jobs = (
-		await Promise.all(
-			[false, true].map((subagents) =>
-				runQueue(subagents).getJobs([
-					"waiting",
-					"active",
-					"delayed",
-					"prioritized",
-				]),
-			),
-		)
-	).flat();
-	const queued = new Set(jobs.map((j) => j?.data?.conversationId));
 	const running = await db
-		.select({ id: conversation.id, parentId: conversation.parentId })
+		.select({ id: conversation.id })
 		.from(conversation)
 		.where(eq(conversation.status, "running"));
-	for (const c of running)
-		if (!queued.has(c.id)) await enqueue(c.id, !!c.parentId);
+	for (const c of running) await enqueue(c.id);
 }

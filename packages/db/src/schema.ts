@@ -127,6 +127,10 @@ export const conversation = pgTable(
 			.$type<"idle" | "running" | "failed">()
 			.default("idle")
 			.notNull(),
+		// the BullMQ job id of the latest Run, so queueing that Run twice adds one job
+		jobId: text("job_id"),
+		// Subagents this Conversation's Agent started or continued since the User's last message
+		subagentsSinceUser: integer("subagents_since_user").default(0).notNull(),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()

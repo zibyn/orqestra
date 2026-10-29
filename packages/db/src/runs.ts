@@ -1,12 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { createPostgresBackend, Queue } from "bullmq";
-import { and, asc, count, desc, eq, exists, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, exists, inArray } from "drizzle-orm";
 import {
 	AGENT_RUNS_QUEUE,
-	conversationChannel,
 	db,
 	lockRoot,
 	MAX_SUBAGENTS,
-	STOP_CHANNEL,
+	notify,
+	requestStop,
 	SUBAGENT_RUNS_QUEUE,
 	type Tx,
 } from "./index.ts";
@@ -29,13 +30,29 @@ export function runQueue(subagents = false) {
 	return queue;
 }
 
-/** Queues a Run; marks the Conversation failed when that fails. */
-export async function enqueue(conversationId: string, subagents = false) {
+/** A new job id for a Run that is starting, saved with its `running` status so `enqueue` can queue it more than once. */
+export const newJobId = () => randomUUID();
+
+/**
+ * Queues the Run a Conversation's `running` status started, as the job its `jobId` names:
+ * queueing it again (the worker's startup requeue racing the start) adds no second job.
+ * Marks the Conversation failed when queueing fails.
+ */
+export async function enqueue(conversationId: string) {
+	const conv = await db.query.conversation.findFirst({
+		where: eq(conversation.id, conversationId),
+	});
+	if (!conv) return;
 	try {
-		await runQueue(subagents).add(
+		await runQueue(!!conv.parentId).add(
 			"run",
 			{ conversationId },
-			{ removeOnComplete: true, removeOnFail: 1000 },
+			{
+				// Runs started before job ids were saved: their Conversation's id
+				jobId: conv.jobId ?? conversationId,
+				removeOnComplete: true,
+				removeOnFail: 1000,
+			},
 		);
 	} catch (error) {
 		await db
@@ -49,6 +66,7 @@ export async function enqueue(conversationId: string, subagents = false) {
 /**
  * Starts a Run for a Conversation that has none, a wake input in its inbox and room to run (a Subagent waits for a free slot);
  * decided under its root's lock, so inputs arriving together start one Run. True when it started one.
+ * A Subagent whose Run cannot be queued fails, and its Notification tells the parent; a top-level Conversation's throws.
  */
 export async function ensureRun(conversationId: string) {
 	const started = await db.transaction(async (tx) => {
@@ -66,13 +84,14 @@ export async function ensureRun(conversationId: string) {
 			.limit(1);
 		if (!wake) return undefined;
 		if (conv.parentId) {
+			// counted by Run, not outcome: a stopped Subagent holds its slot until its Run has ended
 			const [{ running }] = await tx
 				.select({ running: count() })
-				.from(subagent)
+				.from(conversation)
 				.where(
 					and(
-						eq(subagent.parentId, conv.parentId),
-						eq(subagent.outcome, "running"),
+						eq(conversation.parentId, conv.parentId),
+						eq(conversation.status, "running"),
 					),
 				);
 			if (running >= MAX_SUBAGENTS) return undefined;
@@ -83,12 +102,21 @@ export async function ensureRun(conversationId: string) {
 		}
 		await tx
 			.update(conversation)
-			.set({ status: "running" })
+			.set({ status: "running", jobId: newJobId() })
 			.where(eq(conversation.id, conversationId));
 		return conv;
 	});
-	if (started) await enqueue(conversationId, !!started.parentId);
-	return !!started;
+	if (!started) return false;
+	try {
+		await enqueue(conversationId);
+	} catch (error) {
+		if (!started.parentId) throw error;
+		await endSubagent(conversationId, {
+			outcome: "failed",
+			result: `[The subagent could not be started: ${(error as Error).message}]`,
+		});
+	}
+	return true;
 }
 
 type Ended = {
@@ -102,14 +130,20 @@ const notification = (number: number, { outcome, result }: Ended) =>
 
 /**
  * Under the parent's lock (which `tx` holds): saves how a Subagent ended, sets it idle and hands its result to the parent as a Notification.
- * A stop stands even if the Run ended otherwise meanwhile, and a stopped Subagent neither wakes the parent nor starts again by itself.
- * Returns the parent's id, or undefined when the Subagent is gone.
+ * A stop stands even if the Run ended otherwise meanwhile, and a stopped Subagent does not wake the parent.
+ * Inputs it left unread wait for the parent to continue it. Settles each Run once: a second call (a crash report after the end) does nothing.
+ * Returns the parent's id, or undefined when the Subagent is gone or already settled.
  */
 async function settle(tx: Tx, conversationId: string, ended: Ended) {
 	const row = await tx.query.subagent.findFirst({
 		where: eq(subagent.conversationId, conversationId),
 	});
-	if (!row) return undefined;
+	const conv = await tx.query.conversation.findFirst({
+		where: eq(conversation.id, conversationId),
+	});
+	// idle with no Run waiting for a slot: settled already
+	if (!row || !conv || (conv.status === "idle" && row.outcome !== "queued"))
+		return undefined;
 	const end =
 		row.outcome === "stopped"
 			? { ...ended, outcome: "stopped" as const }
@@ -122,11 +156,10 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 		.update(conversation)
 		.set({ status: "idle" })
 		.where(eq(conversation.id, conversationId));
-	if (end.outcome === "stopped")
-		await tx
-			.update(inbox)
-			.set({ wake: false })
-			.where(eq(inbox.conversationId, conversationId));
+	await tx
+		.update(inbox)
+		.set({ wake: false })
+		.where(eq(inbox.conversationId, conversationId));
 	// the Notification is answered on the Model the parent last replied with
 	const [last] = await tx
 		.select({ model: message.model, thinkingLevel: message.thinkingLevel })
@@ -151,8 +184,7 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 
 /** After a Subagent ended: the parent answers its Notification, and the Subagents waiting for a slot get one. */
 async function wakeAfter(parentId: string) {
-	await notifySaved(parentId);
-	await ensureRun(parentId);
+	await notify(parentId, { type: "saved" });
 	const waiting = await db
 		.select({ id: subagent.conversationId })
 		.from(subagent)
@@ -173,15 +205,34 @@ async function wakeAfter(parentId: string) {
 			),
 		)
 		.orderBy(asc(subagent.number));
-	for (const w of waiting) await ensureRun(w.id);
+	// one that cannot start is marked failed by ensureRun; the Subagent that ended stays settled either way
+	for (const id of [parentId, ...waiting.map((w) => w.id)])
+		await ensureRun(id).catch((error) =>
+			console.error(`could not start a Run of ${id}`, error),
+		);
 }
 
-const notifySaved = (conversationId: string) =>
-	db.execute(
-		sql`select pg_notify(${conversationChannel(conversationId)}, ${JSON.stringify({ type: "saved" })})`,
-	);
+/**
+ * Ends a top-level Run that did not drain to the end (stopped, failed or crashed) with `status`, under the root's lock.
+ * After a stop, a wake input that arrived meanwhile, such as a User message sent right after Stop, starts the next Run;
+ * after a failure the inbox waits for Retry, which delivers it, so the failure still shows.
+ */
+export async function endRun(
+	conversationId: string,
+	status: "idle" | "failed",
+) {
+	await db.transaction(async (tx) => {
+		await lockRoot(tx, conversationId);
+		await tx
+			.update(conversation)
+			.set({ status })
+			.where(eq(conversation.id, conversationId));
+	});
+	await notify(conversationId, { type: "saved" });
+	if (status === "idle") await ensureRun(conversationId);
+}
 
-/** Ends a Subagent's Run that did not drain to the end (stopped, failed or crashed); see `settle`. */
+/** Ends a Subagent's Run that did not drain to the end (stopped, failed, crashed or never queued); see `settle`. */
 export async function endSubagent(conversationId: string, ended: Ended) {
 	const parentId = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
@@ -246,8 +297,8 @@ export async function drain(
 
 /**
  * Stops a parent's Subagents (those `numbers`, else all) that are queued or running.
- * Queued ones end at once; running ones are marked stopped, which their Run sees when it starts or the stop request reaches it.
- * Returns the numbers it stopped.
+ * Queued ones end at once; running ones are marked stopped, which their Run sees when it starts or the stop request reaches it,
+ * and keep their slot until it ends. Returns the numbers it stopped.
  */
 export async function stopSubagents(parentId: string, numbers?: number[]) {
 	const rows = await db.transaction(async (tx) => {
@@ -282,9 +333,9 @@ export async function stopSubagents(parentId: string, numbers?: number[]) {
 				);
 		return rows;
 	});
-	for (const r of rows)
-		if (r.outcome === "running")
-			await db.execute(sql`select pg_notify(${STOP_CHANNEL}, ${r.id})`);
-	if (rows.length) await notifySaved(parentId);
+	await requestStop(
+		rows.filter((r) => r.outcome === "running").map((r) => r.id),
+	);
+	if (rows.length) await notify(parentId, { type: "saved" });
 	return rows.map((r) => r.number);
 }

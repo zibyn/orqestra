@@ -6,16 +6,17 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/config";
 import {
-	type ConversationEvent,
 	conversationChannel,
 	db,
 	lockRoot,
-	STOP_CHANNEL,
+	notify,
+	requestStop,
 } from "@orqestra/db";
 import {
 	drain,
 	enqueue,
 	ensureRun,
+	newJobId,
 	runQueue,
 	stopSubagents,
 } from "@orqestra/db/runs";
@@ -70,7 +71,7 @@ export const listConversations = (userId: string) =>
 			id: conversation.id,
 			title: conversation.title,
 			status: conversation.status,
-			// Subagents still at work after the parent went idle
+			// Subagents queued or at work, which the sidebar marks while the parent itself is idle
 			background: sql<boolean>`exists (select 1 from ${subagent} where ${subagent.parentId} = ${conversation.id} and ${subagent.outcome} in ('queued', 'running'))`,
 		})
 		.from(conversation)
@@ -89,6 +90,7 @@ export async function getConversation(userId: string, id: string) {
 				model: message.model,
 				thinkingLevel: message.thinkingLevel,
 				subagentId: message.subagentId,
+				queued: sql<boolean>`false`,
 			})
 			.from(message)
 			.where(eq(message.conversationId, id))
@@ -96,11 +98,13 @@ export async function getConversation(userId: string, id: string) {
 		// inputs the Run has yet to deliver show after what it has
 		db
 			.select({
-				id: sql<number>`-${inbox.id}`,
+				id: inbox.id,
 				message: inbox.message,
 				model: inbox.model,
 				thinkingLevel: inbox.thinkingLevel,
 				subagentId: inbox.subagentId,
+				// its id is the inbox's, not a message's
+				queued: sql<boolean>`true`,
 			})
 			.from(inbox)
 			.where(eq(inbox.conversationId, id))
@@ -116,7 +120,7 @@ export async function getConversation(userId: string, id: string) {
 				number: subagent.number,
 				template: subagent.template,
 				brief: subagent.brief,
-				status: subagent.outcome,
+				outcome: subagent.outcome,
 			})
 			.from(subagent)
 			.where(eq(subagent.parentId, id))
@@ -202,8 +206,14 @@ export async function sendMessage(
 	const conversationId = await db.transaction(async (tx) => {
 		let id = existing?.id;
 		// while a Run goes, it delivers this at its next step boundary; the lock keeps it from going idle past it
-		if (id) await lockRoot(tx, id);
-		else {
+		if (id) {
+			await lockRoot(tx, id);
+			// a User message renews the Agent's Subagent budget
+			await tx
+				.update(conversation)
+				.set({ subagentsSinceUser: 0 })
+				.where(eq(conversation.id, id));
+		} else {
 			[{ id }] = await tx
 				.insert(conversation)
 				.values({ userId, agentId })
@@ -231,7 +241,7 @@ export async function retryRun(userId: string, id: string) {
 	const dropped = await db.transaction(async (tx) => {
 		const claimed = await tx
 			.update(conversation)
-			.set({ status: "running" })
+			.set({ status: "running", jobId: newJobId() })
 			.where(and(eq(conversation.id, id), eq(conversation.status, "failed")))
 			.returning({ id: conversation.id });
 		if (!claimed.length) throw new ConversationError("Nothing to retry");
@@ -246,41 +256,36 @@ export async function retryRun(userId: string, id: string) {
 		).rows;
 	});
 	// their Runs stop; with their Conversation gone they save nothing more
-	await stopAll(dropped.map((d) => d.id));
+	await requestStop(dropped.map((d) => d.id));
 	await enqueue(id);
 }
 
-const stopAll = (ids: string[]) =>
-	Promise.all(
-		ids.map((id) => db.execute(sql`select pg_notify(${STOP_CHANNEL}, ${id})`)),
-	);
-
 /**
- * Drops this Conversation's run while it is still queued, or else asks whichever worker runs it to abort it.
- * Its Subagents stop too, without waking it.
+ * Drops this Conversation's Run while it is still queued, or else asks whichever worker runs it to abort it.
+ * Then its Subagents stop too, without waking it: after the Run, so it starts none past this.
  */
 export async function stopRun(userId: string, id: string) {
-	if (!(await owned(userId, id))) return;
-	await stopSubagents(id);
-	// shortcut: scans every waiting job, fine while the queue stays short; key jobs by Conversation if it grows
-	for (const job of await runQueue().getWaiting()) {
-		if (job.data.conversationId !== id) continue;
-		// fails when a worker took the job meanwhile; the NOTIFY below then reaches it
-		const removed = await job.remove().then(
+	const conv = await owned(userId, id);
+	if (!conv) return;
+	const job =
+		conv.status === "running" && conv.jobId
+			? await runQueue().getJob(conv.jobId)
+			: undefined;
+	// removing fails when a worker took the job meanwhile; the stop request then reaches it
+	const removed =
+		!!job &&
+		(await job.isWaiting()) &&
+		(await job.remove().then(
 			() => true,
 			() => false,
-		);
-		if (!removed) break;
+		));
+	if (removed) {
 		// the inputs stay in the Conversation, unanswered
 		await drain(id);
 		await drain(id, true);
-		const saved: ConversationEvent = { type: "saved" };
-		await db.execute(
-			sql`select pg_notify(${conversationChannel(id)}, ${JSON.stringify(saved)})`,
-		);
-		return;
-	}
-	await db.execute(sql`select pg_notify(${STOP_CHANNEL}, ${id})`);
+		await notify(id, { type: "saved" });
+	} else await requestStop([id]);
+	await stopSubagents(id);
 }
 
 export async function renameConversation(
@@ -300,9 +305,9 @@ export async function deleteConversation(userId: string, id: string) {
 		.select({ id: conversation.id })
 		.from(conversation)
 		.where(eq(conversation.parentId, id));
+	// its Run and its Subagents' stop first, then they go (cascade); a Run that outlives its Conversation saves nothing more
+	await requestStop([id, ...children.map((c) => c.id)]);
 	await db.delete(conversation).where(eq(conversation.id, id));
-	// its Subagents went with it (cascade); their Runs stop
-	await stopAll(children.map((c) => c.id));
 }
 
 /**
@@ -327,6 +332,8 @@ export async function conversationEvents(
 		start(controller) {
 			const close = () => {
 				clearInterval(ping);
+				// NOTIFYs still arrive until the connection has ended
+				client.removeAllListeners("notification");
 				void client.end();
 				try {
 					controller.close();
@@ -345,6 +352,7 @@ export async function conversationEvents(
 		},
 		cancel() {
 			clearInterval(ping);
+			client.removeAllListeners("notification");
 			void client.end();
 		},
 	});
