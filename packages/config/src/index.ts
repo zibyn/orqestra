@@ -12,12 +12,12 @@ import {
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { z } from "zod";
 import {
-	type AgentTool,
 	agentDefinition,
 	definitionIssues,
 	type SearchProviderId,
 	searchProviders,
 	type ToolName,
+	type ToolRef,
 	toolName,
 } from "./shared.ts";
 
@@ -41,7 +41,7 @@ export interface AgentDefinition {
 	thinking: { default?: ThinkingLevel; allowed?: ThinkingLevel[] };
 	compaction?: { reserveTokens?: number; keepRecentTokens?: number };
 	/** As written; only built-in Tools with a Search Provider and available MCP Servers are offered in a Run. */
-	tools: AgentTool[];
+	tools: ToolRef[];
 	/** Users can start Conversations with it; any Agent can be a Subagent template. */
 	pickable: boolean;
 	default: boolean;

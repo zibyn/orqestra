@@ -118,6 +118,7 @@
   "delete_agent_confirm": "Delete this Agent? Its conversations become read-only.",
   "tool_unavailable": "Warning: Tool {tool} has no usable Search Provider, so Agents run without it.",
   "mcp_server_unavailable": "Warning: MCP Server {server} is disabled or not configured, so Agents run without it.",
+  "mcp_server_tool": "{name} (MCP Server)",
   "search_providers": "Search Providers",
   "search_providers_hint": "External services that serve the Search and Scrape Tools.",
   "search_provider": "Search Provider",
@@ -156,5 +157,10 @@
   "mcp_test_auth": "Saved, but authentication failed; check the headers: {detail}",
   "mcp_test_unreachable": "Saved, but the MCP Server cannot be reached; check the URL: {detail}",
   "mcp_test_timeout": "Saved, but the MCP Server did not answer in time.",
-  "mcp_test_failed": "Saved, but the connection test failed: {detail}"
+  "mcp_test_failed": "Saved, but the connection test failed: {detail}",
+  "mcp_id_invalid": "Use lowercase letters, digits and dashes, starting with a letter or digit.",
+  "mcp_id_taken": "An MCP Server with this id already exists.",
+  "mcp_header_invalid": "\"{header}\" is not a valid header name.",
+  "mcp_header_twice": "Header {header} is listed twice.",
+  "mcp_header_value_missing": "Enter a value for header {header}."
 }

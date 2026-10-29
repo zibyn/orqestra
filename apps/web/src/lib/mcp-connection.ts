@@ -1,11 +1,11 @@
 import {
-	McpClient,
+	type McpClient,
 	type McpFetch,
 	McpHttpError,
 	McpTimeoutError,
-	StreamableHttpTransport,
 } from "@earendil-works/pi-mcp";
 import type { McpServer } from "@orqestra/config";
+import { connectMcpServer } from "@orqestra/config/mcp";
 
 export type McpTestResult =
 	| { ok: true; tools: { name: string; description?: string }[] }
@@ -15,25 +15,16 @@ export type McpTestResult =
 			detail: string;
 	  };
 
-/** Connects to an MCP Server the way a Run does and lists its Tools; never throws. */
+/** Connects to an MCP Server the way a Run does and lists its Tools within `timeoutMs` in all; never throws. */
 export async function testMcpServer(
 	server: Pick<McpServer, "url" | "headers">,
-	{ fetch, timeoutMs = 10_000 }: { fetch?: McpFetch; timeoutMs?: number } = {},
+	{ fetch, timeoutMs = 15_000 }: { fetch?: McpFetch; timeoutMs?: number } = {},
 ): Promise<McpTestResult> {
-	const client = new McpClient({
-		name: "orqestra",
-		version: "1.0.0",
-		requestTimeoutMs: timeoutMs,
-	});
-	const transport = new StreamableHttpTransport({
-		url: server.url,
-		headers: server.headers,
-		fetch,
-		openGetStream: false,
-	});
+	const signal = AbortSignal.timeout(timeoutMs);
+	let client: McpClient | undefined;
 	try {
-		await client.connect(transport);
-		const tools = await client.listTools();
+		client = await connectMcpServer(server, { signal, timeoutMs, fetch });
+		const tools = await client.listTools({ signal });
 		return {
 			ok: true,
 			tools: tools.map((t) => ({ name: t.name, description: t.description })),
@@ -41,7 +32,7 @@ export async function testMcpServer(
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);
 		const reason =
-			error instanceof McpTimeoutError
+			error instanceof McpTimeoutError || signal.aborted
 				? "timeout"
 				: error instanceof McpHttpError
 					? [401, 403].includes(error.status)
@@ -52,7 +43,7 @@ export async function testMcpServer(
 						: "failed";
 		return { ok: false, reason, detail: describe(error, detail) };
 	} finally {
-		await client.close().catch(() => {});
+		await client?.close().catch(() => {});
 	}
 }
 

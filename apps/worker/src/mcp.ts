@@ -1,17 +1,18 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import {
-	McpClient,
+	type McpClient,
 	type McpTransport,
-	StreamableHttpTransport,
 	toLlmContent,
 } from "@earendil-works/pi-mcp";
-import type {
-	AgentDefinition,
-	McpServer,
-	OrqestraConfig,
+import {
+	type AgentDefinition,
+	type McpServer,
+	mcpServerOf,
+	type OrqestraConfig,
 } from "@orqestra/config";
-import { MAX_PAGE_CHARS } from "./tools.ts";
+import { connectMcpServer } from "@orqestra/config/mcp";
+import { MAX_TOOL_RESULT_CHARS } from "./tools.ts";
 
 /** How long one MCP request (connecting, listing, a Tool call) may take. */
 const TIMEOUT_MS = 60_000;
@@ -29,25 +30,22 @@ export async function mcpTools(
 		timeoutMs?: number;
 	} = {},
 ) {
-	const {
-		transport = (_id, { url, headers }) =>
-			new StreamableHttpTransport({ url, headers }),
-		timeoutMs = TIMEOUT_MS,
-	} = options;
-	const ids = allowed.flatMap((t) =>
-		t.startsWith("mcp:") && config.mcpServers[t.slice(4)] ? [t.slice(4)] : [],
-	);
+	const { transport, timeoutMs = TIMEOUT_MS } = options;
+	const ids = allowed.flatMap((t) => {
+		const id = mcpServerOf(t);
+		return id && config.mcpServers[id] ? [id] : [];
+	});
 	const clients: McpClient[] = [];
 	const connected = await Promise.all(
 		ids.map(async (id) => {
-			const client = new McpClient({
-				name: "orqestra",
-				version: "1.0.0",
-				requestTimeoutMs: timeoutMs,
-			});
-			clients.push(client);
 			try {
-				await client.connect(transport(id, config.mcpServers[id]));
+				const server = config.mcpServers[id];
+				const client = await connectMcpServer(server, {
+					signal,
+					timeoutMs,
+					transport: transport?.(id, server),
+				});
+				clients.push(client);
 				const listed = await client.listTools({ signal });
 				return listed.map(
 					(t): AgentTool => ({
@@ -71,10 +69,10 @@ export async function mcpTools(
 							);
 							return {
 								content: toLlmContent(result).map((c) =>
-									c.type === "text" && c.text.length > MAX_PAGE_CHARS
+									c.type === "text" && c.text.length > MAX_TOOL_RESULT_CHARS
 										? {
 												...c,
-												text: `${c.text.slice(0, MAX_PAGE_CHARS)}\n\n[The result was cut off here.]`,
+												text: `${c.text.slice(0, MAX_TOOL_RESULT_CHARS)}\n\n[The result was cut off here.]`,
 											}
 										: c,
 								),

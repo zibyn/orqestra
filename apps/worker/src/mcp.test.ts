@@ -194,6 +194,19 @@ describe("mcpTools", () => {
 		await close();
 	});
 
+	it("stops connecting when the Run stops", async () => {
+		const { client, server } = createInMemoryTransportPair();
+		void server.start(); // listening, but never answers
+		const stop = new AbortController();
+		const connecting = mcpTools(config("s"), ["mcp:s"], stop.signal, {
+			transport: () => client,
+		});
+		setTimeout(() => stop.abort(new Error("stopped")), 10);
+		const { tools, close } = await connecting;
+		expect(tools).toEqual([]);
+		await close();
+	}, 1000);
+
 	it("ends a call when the Run stops", async () => {
 		const fake = fakeServer([
 			{

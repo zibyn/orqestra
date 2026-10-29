@@ -1,4 +1,4 @@
-import { mcpServerId } from "@orqestra/config";
+import { mcpServerId, mcpToolRef } from "@orqestra/config";
 import { decryptSecret, encryptSecret } from "@orqestra/config/secret";
 import { db, eq, sql } from "@orqestra/db";
 import { agent, mcpServer } from "@orqestra/db/schema";
@@ -28,7 +28,7 @@ export const getMcpServers = createServerFn().handler(async () => {
 	}));
 });
 
-/** Field errors by name (`id`, `headers`); empty when it was saved, then with the connection test's result. */
+/** Field errors by name (`id`, `headers`), as codes to translate; empty when it was saved, then with the connection test's result. */
 export const saveMcpServer = createServerFn({ method: "POST" })
 	.validator(
 		z.object({
@@ -49,35 +49,33 @@ export const saveMcpServer = createServerFn({ method: "POST" })
 	)
 	.handler(async ({ data }): Promise<SaveResult> => {
 		await requireAdmin();
-		const id = mcpServerId.safeParse(data.id);
-		if (!id.success) return { errors: { id: id.error.issues[0].message } };
+		if (!mcpServerId.safeParse(data.id).success)
+			return { errors: { id: { code: "id_invalid" } } };
 		const stored = await db.query.mcpServer.findFirst({
 			where: eq(mcpServer.id, data.id),
 		});
-		if (data.create && stored)
-			return { errors: { id: "An MCP Server with this id already exists" } };
+		if (data.create && stored) return { errors: { id: { code: "id_taken" } } };
 		if (!data.create && !stored) throw new Error("MCP Server not found");
 		const headers = [];
 		const plain: Record<string, string> = {};
 		const seen = new Set<string>();
 		for (const h of data.headers) {
-			if (!headerName.test(h.name))
-				return {
-					errors: { headers: `"${h.name}" is not a valid header name` },
-				};
-			if (seen.has(h.name.toLowerCase()))
-				return { errors: { headers: `Header ${h.name} is listed twice` } };
-			seen.add(h.name.toLowerCase());
-			const kept = stored?.headers.find((s) => s.name === h.name)?.value;
-			const value = h.value
-				? encryptSecret(h.value)
-				: kept && decryptSecret(kept) !== undefined
-					? kept
-					: undefined;
+			const header = h.name;
+			if (!headerName.test(header))
+				return { errors: { headers: { code: "header_invalid", header } } };
+			if (seen.has(header.toLowerCase()))
+				return { errors: { headers: { code: "header_twice", header } } };
+			seen.add(header.toLowerCase());
+			const kept = h.value
+				? undefined
+				: stored?.headers.find((s) => s.name === header)?.value;
+			const value = h.value || (kept && decryptSecret(kept));
 			if (!value)
-				return { errors: { headers: `Enter a value for header ${h.name}` } };
-			headers.push({ name: h.name, value });
-			plain[h.name] = h.value || (decryptSecret(value) as string);
+				return {
+					errors: { headers: { code: "header_value_missing", header } },
+				};
+			headers.push({ name: header, value: kept ?? encryptSecret(value) });
+			plain[header] = value;
 		}
 		const values = {
 			name: data.name,
@@ -96,7 +94,16 @@ export const saveMcpServer = createServerFn({ method: "POST" })
 		};
 	});
 
-type SaveResult = { errors: Record<string, string>; test?: McpTestResult };
+export type McpSaveError =
+	| { code: "id_invalid" | "id_taken" }
+	| {
+			code: "header_invalid" | "header_twice" | "header_value_missing";
+			header: string;
+	  };
+type SaveResult = {
+	errors: { id?: McpSaveError; headers?: McpSaveError };
+	test?: McpTestResult;
+};
 
 export const setMcpServerEnabled = createServerFn({ method: "POST" })
 	.validator(z.object({ id: mcpServerId, enabled: z.boolean() }))
@@ -115,7 +122,7 @@ export const deleteMcpServer = createServerFn({ method: "POST" })
 	.validator(mcpServerId)
 	.handler(async ({ data }) => {
 		await requireAdmin();
-		const ref = `mcp:${data}`;
+		const ref = mcpToolRef(data);
 		await db.transaction(async (tx) => {
 			await tx.delete(mcpServer).where(eq(mcpServer.id, data));
 			// no Agent Definition may keep pointing at it

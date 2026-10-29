@@ -13,7 +13,9 @@ const tools = [
 ];
 
 /** A Streamable HTTP MCP Server answering in JSON; records what it was sent. */
-function fakeServer(opts: { status?: number; listTools?: () => unknown } = {}) {
+function fakeServer(
+	opts: { status?: number; listTools?: () => unknown; delayMs?: number } = {},
+) {
 	const requests: { url: string; headers: Headers; method?: string }[] = [];
 	const fetch = async (input: string | URL, init?: RequestInit) => {
 		const message = init?.body ? JSON.parse(String(init.body)) : {};
@@ -22,6 +24,7 @@ function fakeServer(opts: { status?: number; listTools?: () => unknown } = {}) {
 			headers: new Headers(init?.headers),
 			method: message.method,
 		});
+		if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs));
 		if (opts.status) return new Response("nope", { status: opts.status });
 		if (!("id" in message)) return new Response(null, { status: 202 });
 		const result =
@@ -89,6 +92,14 @@ describe("MCP Server connection test", () => {
 		const result = await testMcpServer(server, {
 			fetch: fakeServer({ listTools: () => new Promise(() => {}) }).fetch,
 			timeoutMs: 50,
+		});
+		expect(result).toMatchObject({ ok: false, reason: "timeout" });
+	});
+
+	it("gives connecting and listing one deadline together", async () => {
+		const result = await testMcpServer(server, {
+			fetch: fakeServer({ delayMs: 40 }).fetch,
+			timeoutMs: 60,
 		});
 		expect(result).toMatchObject({ ok: false, reason: "timeout" });
 	});

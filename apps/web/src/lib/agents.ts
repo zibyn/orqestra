@@ -2,6 +2,7 @@ import {
 	agentDefinition,
 	agentId,
 	definitionIssues,
+	mcpToolRef,
 	modelRef,
 	toolName,
 } from "@orqestra/config";
@@ -44,7 +45,7 @@ export const listAgents = createServerFn().handler(async () => {
 		/** Tools with a usable Search Provider, and `mcp:<id>` of available MCP Servers. */
 		availableTools: [
 			...toolName.options.filter((t) => loaded.tools[t]),
-			...Object.keys(loaded.mcpServers).map((id) => `mcp:${id}` as const),
+			...Object.keys(loaded.mcpServers).map(mcpToolRef),
 		],
 	};
 });

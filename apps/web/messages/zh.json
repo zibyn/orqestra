@@ -156,5 +156,11 @@
   "mcp_test_auth": "已保存，但认证失败，请检查请求头：{detail}",
   "mcp_test_unreachable": "已保存，但无法连接到该 MCP Server，请检查 URL：{detail}",
   "mcp_test_timeout": "已保存，但该 MCP Server 未在规定时间内响应。",
-  "mcp_test_failed": "已保存，但连接测试失败：{detail}"
+  "mcp_test_failed": "已保存，但连接测试失败：{detail}",
+  "mcp_server_tool": "{name}（MCP Server）",
+  "mcp_id_invalid": "只能使用小写字母、数字和连字符，且以字母或数字开头。",
+  "mcp_id_taken": "已存在使用此 ID 的 MCP Server。",
+  "mcp_header_invalid": "“{header}”不是有效的请求头名称。",
+  "mcp_header_twice": "请求头 {header} 重复填写了。",
+  "mcp_header_value_missing": "请填写请求头 {header} 的值。"
 }

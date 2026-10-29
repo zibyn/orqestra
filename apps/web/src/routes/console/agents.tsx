@@ -1,5 +1,7 @@
 import {
 	type AgentDefinitionInput,
+	mcpServerOf,
+	mcpToolRef,
 	slugify,
 	thinkingLevel,
 	toolName,
@@ -135,13 +137,16 @@ function AgentCard({
 			{agent.models.length === 0 && (
 				<p className="text-destructive">{m.agent_no_models()}</p>
 			)}
-			{missingTools.map((tool) => (
-				<p key={tool} className="text-destructive">
-					{tool.startsWith("mcp:")
-						? m.mcp_server_unavailable({ server: tool.slice(4) })
-						: m.tool_unavailable({ tool })}
-				</p>
-			))}
+			{missingTools.map((tool) => {
+				const server = mcpServerOf(tool);
+				return (
+					<p key={tool} className="text-destructive">
+						{server
+							? m.mcp_server_unavailable({ server })
+							: m.tool_unavailable({ tool })}
+					</p>
+				);
+			})}
 			{error && <p className="text-destructive">{error}</p>}
 		</div>
 	);
@@ -374,8 +379,8 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 				items={[
 					...toolName.options.map((t) => ({ value: t, label: t })),
 					...mcpServers.map((s) => ({
-						value: `mcp:${s.id}` as const,
-						label: `${s.name} (MCP)`,
+						value: mcpToolRef(s.id),
+						label: m.mcp_server_tool({ name: s.name }),
 					})),
 				]}
 				checked={def.tools ?? toolName.options}
@@ -387,7 +392,7 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 					update({
 						tools:
 							toolName.options.every((t) => tools.includes(t)) &&
-							!tools.some((t) => t.startsWith("mcp:"))
+							!tools.some(mcpServerOf)
 								? undefined
 								: tools,
 					});

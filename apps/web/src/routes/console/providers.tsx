@@ -16,6 +16,7 @@ import type { McpTestResult } from "#/lib/mcp-connection";
 import {
 	deleteMcpServer,
 	getMcpServers,
+	type McpSaveError,
 	saveMcpServer,
 	setMcpServerEnabled,
 } from "#/lib/mcp-servers";
@@ -594,7 +595,12 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 					headers,
 				},
 			});
-			setErrors(result.errors);
+			setErrors({
+				...(result.errors.id && { id: saveErrorText(result.errors.id) }),
+				...(result.errors.headers && {
+					headers: saveErrorText(result.errors.headers),
+				}),
+			});
 			setTest(result.test);
 			if (!Object.keys(result.errors).length) {
 				if (!existing) {
@@ -728,6 +734,15 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 		</form>
 	);
 }
+
+const saveErrorText = (error: McpSaveError) =>
+	"header" in error
+		? {
+				header_invalid: m.mcp_header_invalid,
+				header_twice: m.mcp_header_twice,
+				header_value_missing: m.mcp_header_value_missing,
+			}[error.code]({ header: error.header })
+		: { id_invalid: m.mcp_id_invalid, id_taken: m.mcp_id_taken }[error.code]();
 
 /** The Tools a just-saved MCP Server offers, or why connecting to it failed. */
 function McpTestOutcome({ result }: { result: McpTestResult }) {
