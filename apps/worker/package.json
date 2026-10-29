@@ -9,7 +9,7 @@
   "dependencies": {
     "@orqestra/db": "workspace:*",
     "bullmq": "^6.5.0",
-    "ioredis": "^6.0.0"
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "@types/bun": "latest",

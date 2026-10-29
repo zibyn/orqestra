@@ -12,7 +12,7 @@ pnpm dev
 ## Workspace layout
 
 - `apps/web` — TanStack Start app (Node). Run shadcn/paraglide commands from here.
-- `apps/worker` — BullMQ worker (Bun, needs `REDIS_URL`). `pnpm worker`.
+- `apps/worker` — BullMQ worker on the Postgres backend (Bun, uses `DATABASE_URL`; tables in the `bullmq` schema). `pnpm worker`.
 - `packages/db` — Drizzle schema + client. `pnpm db:push` etc.
 
 Env vars live in the root `.env.local`, shared by all packages.
