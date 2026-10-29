@@ -9,6 +9,9 @@ import { requireAdmin } from "#/lib/session";
 
 // MCP Servers, edited by Admins in /console/providers. Header values only go in.
 
+// RFC 7230 token
+const headerName = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
 export const getMcpServers = createServerFn().handler(async () => {
 	await requireAdmin();
 	const rows = await db.select().from(mcpServer).orderBy(mcpServer.createdAt);
@@ -28,7 +31,8 @@ export const getMcpServers = createServerFn().handler(async () => {
 export const saveMcpServer = createServerFn({ method: "POST" })
 	.validator(
 		z.object({
-			id: mcpServerId,
+			// checked in the handler, so a bad id lands on the id field
+			id: z.string(),
 			create: z.boolean(),
 			name: z.string().trim().min(1),
 			url: z.url({ protocol: /^https?$/ }),
@@ -37,13 +41,15 @@ export const saveMcpServer = createServerFn({ method: "POST" })
 				z.object({
 					name: z.string().trim().min(1),
 					// blank keeps the stored value of the header with this name
-					value: z.string().optional(),
+					value: z.string().trim().optional(),
 				}),
 			),
 		}),
 	)
 	.handler(async ({ data }): Promise<{ errors: Record<string, string> }> => {
 		await requireAdmin();
+		const id = mcpServerId.safeParse(data.id);
+		if (!id.success) return { errors: { id: id.error.issues[0].message } };
 		const stored = await db.query.mcpServer.findFirst({
 			where: eq(mcpServer.id, data.id),
 		});
@@ -51,7 +57,15 @@ export const saveMcpServer = createServerFn({ method: "POST" })
 			return { errors: { id: "An MCP Server with this id already exists" } };
 		if (!data.create && !stored) throw new Error("MCP Server not found");
 		const headers = [];
+		const seen = new Set<string>();
 		for (const h of data.headers) {
+			if (!headerName.test(h.name))
+				return {
+					errors: { headers: `"${h.name}" is not a valid header name` },
+				};
+			if (seen.has(h.name.toLowerCase()))
+				return { errors: { headers: `Header ${h.name} is listed twice` } };
+			seen.add(h.name.toLowerCase());
 			const kept = stored?.headers.find((s) => s.name === h.name)?.value;
 			const value = h.value
 				? encryptSecret(h.value)
@@ -79,10 +93,12 @@ export const setMcpServerEnabled = createServerFn({ method: "POST" })
 	.validator(z.object({ id: mcpServerId, enabled: z.boolean() }))
 	.handler(async ({ data }) => {
 		await requireAdmin();
-		await db
+		const updated = await db
 			.update(mcpServer)
 			.set({ enabled: data.enabled })
-			.where(eq(mcpServer.id, data.id));
+			.where(eq(mcpServer.id, data.id))
+			.returning({ id: mcpServer.id });
+		if (!updated.length) throw new Error("MCP Server not found");
 		await reloadConfig();
 	});
 

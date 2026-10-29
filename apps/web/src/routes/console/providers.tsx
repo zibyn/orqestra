@@ -618,7 +618,7 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 			}}
 		>
 			<div className="flex flex-col gap-2">
-				<Label htmlFor={fieldId("name")}>{m.agent_name()}</Label>
+				<Label htmlFor={fieldId("name")}>{m.mcp_server_name()}</Label>
 				<Input
 					id={fieldId("name")}
 					required
@@ -630,7 +630,7 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 				/>
 			</div>
 			<div className="flex flex-col gap-2">
-				<Label htmlFor={fieldId("id")}>{m.agent_id()}</Label>
+				<Label htmlFor={fieldId("id")}>{m.mcp_server_id()}</Label>
 				{!existing && (
 					<p className="text-muted-foreground">{m.mcp_server_id_hint()}</p>
 				)}
@@ -660,6 +660,9 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 			</div>
 			<fieldset className="flex flex-col gap-2">
 				<legend className="mb-2 font-medium">{m.mcp_headers()}</legend>
+				{existing && (
+					<p className="text-muted-foreground">{m.mcp_headers_hint()}</p>
+				)}
 				{headers.map((h, i) => {
 					const stored = existing?.headers.find((s) => s.name === h.name);
 					return (
@@ -680,7 +683,7 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 								className="flex-1"
 								required={!stored?.readable}
 								placeholder={
-									stored?.readable ? m.api_key_set() : m.header_value()
+									stored?.readable ? m.header_value_set() : m.header_value()
 								}
 								value={h.value}
 								onChange={(e) => setHeader(i, { value: e.target.value })}
