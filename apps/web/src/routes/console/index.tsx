@@ -4,8 +4,17 @@ import { useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "#/components/ui/table";
 import { authClient } from "#/lib/auth-client";
 import { displayName, isAdmin } from "#/lib/identity";
+import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/console/")({ component: Users });
 
@@ -26,7 +35,7 @@ function Users() {
 		action: Promise<{ error: { message?: string } | null }>,
 	) {
 		const { error } = await action;
-		setError(error ? (error.message ?? "Request failed") : "");
+		setError(error ? (error.message ?? m.request_failed()) : "");
 		await users.refetch();
 	}
 
@@ -48,14 +57,14 @@ function Users() {
 
 	return (
 		<section className="flex flex-col gap-6">
-			<h1 className="text-2xl font-semibold">Users</h1>
+			<h1 className="text-xl font-semibold">{m.console_users()}</h1>
 			<form onSubmit={onCreate} className="flex flex-wrap items-end gap-2">
-				<div className="flex flex-col gap-1">
-					<Label htmlFor="email">Email</Label>
+				<div className="flex flex-col gap-2">
+					<Label htmlFor="email">{m.email()}</Label>
 					<Input id="email" name="email" type="email" required />
 				</div>
-				<div className="flex flex-col gap-1">
-					<Label htmlFor="password">Password</Label>
+				<div className="flex flex-col gap-2">
+					<Label htmlFor="password">{m.password()}</Label>
 					<Input
 						id="password"
 						name="password"
@@ -64,57 +73,65 @@ function Users() {
 						required
 					/>
 				</div>
-				<Button type="submit">Add Member</Button>
+				<Button type="submit">{m.add_member()}</Button>
 			</form>
 			{error && <p className="text-sm text-destructive">{error}</p>}
-			<table className="w-full text-left text-sm">
-				<thead>
-					<tr>
-						<th className="py-2">User</th>
-						<th>Role</th>
-						<th>Status</th>
-						<th />
-					</tr>
-				</thead>
-				<tbody>
-					{users.data?.map((u) => (
-						<tr key={u.id} className="border-t">
-							<td className="py-2">{displayName(u)}</td>
-							<td>{isAdmin(u) ? "Admin" : "Member"}</td>
-							<td>{u.banned ? "Banned" : "Active"}</td>
-							<td className="flex justify-end gap-2 py-2">
-								<Button
-									size="sm"
-									variant="outline"
-									onClick={() =>
-										applyAndRefetch(
-											authClient.admin.setRole({
-												userId: u.id,
-												role: isAdmin(u) ? "user" : "admin",
-											}),
-										)
-									}
-								>
-									{isAdmin(u) ? "Make Member" : "Make Admin"}
-								</Button>
-								<Button
-									size="sm"
-									variant={u.banned ? "outline" : "destructive"}
-									onClick={() =>
-										applyAndRefetch(
-											u.banned
-												? authClient.admin.unbanUser({ userId: u.id })
-												: authClient.admin.banUser({ userId: u.id }),
-										)
-									}
-								>
-									{u.banned ? "Unban" : "Ban"}
-								</Button>
-							</td>
-						</tr>
-					))}
-				</tbody>
-			</table>
+			<div className="rounded-lg border">
+				<Table>
+					<TableHeader>
+						<TableRow>
+							<TableHead className="px-3">{m.user()}</TableHead>
+							<TableHead>{m.role()}</TableHead>
+							<TableHead>{m.status()}</TableHead>
+							<TableHead />
+						</TableRow>
+					</TableHeader>
+					<TableBody>
+						{users.data?.map((u) => (
+							<TableRow key={u.id}>
+								<TableCell className="px-3">{displayName(u)}</TableCell>
+								<TableCell>
+									{isAdmin(u) ? m.role_admin() : m.role_member()}
+								</TableCell>
+								<TableCell className={u.banned ? "text-destructive" : ""}>
+									{u.banned ? m.status_banned() : m.status_active()}
+								</TableCell>
+								<TableCell>
+									<div className="flex justify-end gap-2 pr-1">
+										<Button
+											size="sm"
+											variant="outline"
+											onClick={() =>
+												applyAndRefetch(
+													authClient.admin.setRole({
+														userId: u.id,
+														role: isAdmin(u) ? "user" : "admin",
+													}),
+												)
+											}
+										>
+											{isAdmin(u) ? m.make_member() : m.make_admin()}
+										</Button>
+										<Button
+											size="sm"
+											variant={u.banned ? "outline" : "destructive"}
+											onClick={() =>
+												applyAndRefetch(
+													u.banned
+														? authClient.admin.unbanUser({ userId: u.id })
+														: authClient.admin.banUser({ userId: u.id }),
+												)
+											}
+										>
+											{u.banned ? m.unban() : m.ban()}
+										</Button>
+									</div>
+								</TableCell>
+							</TableRow>
+						))}
+					</TableBody>
+				</Table>
+			</div>
 		</section>
 	);
 }
