@@ -14,6 +14,7 @@ pnpm dev
 - `apps/web` — TanStack Start app (Node). Run shadcn/paraglide commands from here.
 - `apps/worker` — BullMQ worker on the Postgres backend (Bun, uses `DATABASE_URL`; tables in the `bullmq` schema). `pnpm worker`.
 - `packages/db` — Drizzle schema + client. `pnpm db:push` etc.
+- `packages/conversations` — the Conversation lifecycle (Runs, Inbox, Subagents, Notifications); the only code that reads or writes those tables. The web app calls its User side; the worker serves Runs through it (`serveRuns`).
 
 - `packages/config` — the Catalog (pi's built-in Providers and Models), and everything Admins configure in the database (Providers, Models, Search Providers, Agent Definitions); used by both web and worker.
 

@@ -16,7 +16,9 @@
     "@orqestra/conversations": "workspace:*"
   },
   "devDependencies": {
+    "@orqestra/db": "workspace:*",
     "@types/bun": "latest",
+    "drizzle-orm": "^0.45.4",
     "typescript": "^6.0.2"
   }
 }

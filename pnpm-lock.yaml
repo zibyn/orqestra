@@ -86,9 +86,6 @@ importers:
       better-auth:
         specifier: ^1.5.3
         version: 1.7.14(@tanstack/react-start@1.169.4(esbuild@0.28.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rolldown@1.2.15)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@1.9.17)(vitest@5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
-      bullmq:
-        specifier: ^6.5.0
-        version: 6.5.0(ioredis@6.0.0)(pg@8.23.1)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -104,9 +101,6 @@ importers:
       nitro:
         specifier: 3.0.260610-beta
         version: 3.0.260610-beta(chokidar@5.0.0)(dotenv@17.4.2)(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))(jiti@2.7.0)(lru-cache@11.5.3)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
       react:
         specifier: ^19.2.0
         version: 19.3.1
@@ -147,9 +141,6 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.5
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
       '@types/react':
         specifier: ^19.2.0
         version: 19.3.0
@@ -199,9 +190,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/conversations
     devDependencies:
+      '@orqestra/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@types/bun':
         specifier: latest
         version: 1.4.4
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       typescript:
         specifier: ^6.0.2
         version: 6.0.3

@@ -4,7 +4,10 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./runs": "./src/runs.ts"
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.4.0",
