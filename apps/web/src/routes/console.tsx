@@ -4,7 +4,10 @@ import {
 	Outlet,
 	redirect,
 } from "@tanstack/react-router";
+import { ArrowLeftIcon } from "lucide-react";
+import { Button } from "#/components/ui/button";
 import { isAdmin } from "#/lib/identity";
+import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/console")({
 	beforeLoad: ({ context }) => {
@@ -14,27 +17,34 @@ export const Route = createFileRoute("/console")({
 	component: Console,
 });
 
+const tab =
+	"-mb-px border-b-2 border-transparent px-1 pb-2 text-muted-foreground transition-colors hover:text-foreground data-[status=active]:border-foreground data-[status=active]:text-foreground";
+
 function Console() {
 	return (
-		<main className="flex flex-col gap-6 p-8">
-			<nav className="flex gap-4 text-sm">
-				<Link to="/" className="text-muted-foreground">
-					Home
-				</Link>
-				<Link
-					to="/console"
-					activeOptions={{ exact: true }}
-					activeProps={{ className: "font-semibold" }}
-				>
-					Users
-				</Link>
-				<Link
-					to="/console/settings"
-					activeProps={{ className: "font-semibold" }}
-				>
-					Settings
-				</Link>
-			</nav>
+		<main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6">
+			<header className="flex flex-col gap-4 border-b">
+				<div className="flex items-center gap-2">
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						aria-label={m.back_to_app()}
+						nativeButton={false}
+						render={<Link to="/" />}
+					>
+						<ArrowLeftIcon />
+					</Button>
+					<span className="text-lg font-semibold">{m.console()}</span>
+				</div>
+				<nav className="flex gap-4 text-sm">
+					<Link to="/console" className={tab} activeOptions={{ exact: true }}>
+						{m.console_users()}
+					</Link>
+					<Link to="/console/settings" className={tab}>
+						{m.console_settings()}
+					</Link>
+				</nav>
+			</header>
 			<Outlet />
 		</main>
 	);

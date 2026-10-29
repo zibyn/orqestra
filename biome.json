@@ -13,6 +13,8 @@
 			"**/index.html",
 			"**/vite.config.ts",
 			"!**/src/routeTree.gen.ts",
+			"!**/src/components/ui",
+			"!**/src/paraglide",
 			"!**/src/styles.css"
 		]
 	},
@@ -33,4 +35,3 @@
 		}
 	}
 }
-

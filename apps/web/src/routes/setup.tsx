@@ -1,9 +1,17 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Button } from "#/components/ui/button";
+import {
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { runSetup } from "#/lib/instance";
+import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/setup")({ component: Setup });
 
@@ -28,25 +36,35 @@ function Setup() {
 	}
 
 	return (
-		<main className="mx-auto max-w-sm p-8">
-			<h1 className="mb-2 text-2xl font-semibold">Set up Orqestra</h1>
-			<p className="mb-6 text-sm text-muted-foreground">
-				Create the Default Admin.
-			</p>
-			<form onSubmit={onSubmit} className="flex flex-col gap-4">
-				<Label htmlFor="email">Email</Label>
-				<Input id="email" name="email" type="email" required />
-				<Label htmlFor="password">Password</Label>
-				<Input
-					id="password"
-					name="password"
-					type="password"
-					minLength={8}
-					required
-				/>
-				{error && <p className="text-sm text-destructive">{error}</p>}
-				<Button type="submit">Create Default Admin</Button>
-			</form>
+		<main className="flex min-h-svh items-center justify-center p-4">
+			<Card className="w-full max-w-sm">
+				<CardHeader>
+					<CardTitle className="text-xl">{m.setup_title()}</CardTitle>
+					<CardDescription>{m.setup_subtitle()}</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<form onSubmit={onSubmit} className="flex flex-col gap-4">
+						<div className="flex flex-col gap-2">
+							<Label htmlFor="email">{m.email()}</Label>
+							<Input id="email" name="email" type="email" required />
+						</div>
+						<div className="flex flex-col gap-2">
+							<Label htmlFor="password">{m.password()}</Label>
+							<Input
+								id="password"
+								name="password"
+								type="password"
+								minLength={8}
+								required
+							/>
+						</div>
+						{error && <p className="text-sm text-destructive">{error}</p>}
+						<Button type="submit" className="w-full">
+							{m.setup_submit()}
+						</Button>
+					</form>
+				</CardContent>
+			</Card>
 		</main>
 	);
 }
