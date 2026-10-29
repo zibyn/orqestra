@@ -9,6 +9,14 @@ pnpm install
 pnpm dev
 ```
 
+## Workspace layout
+
+- `apps/web` — TanStack Start app (Node). Run shadcn/paraglide commands from here.
+- `apps/worker` — BullMQ worker (Bun, needs `REDIS_URL`). `pnpm worker`.
+- `packages/db` — Drizzle schema + client. `pnpm db:push` etc.
+
+Env vars live in the root `.env.local`, shared by all packages.
+
 # Building For Production
 
 To build this application for production:

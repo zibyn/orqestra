@@ -8,8 +8,13 @@ import viteReact, { reactCompilerPreset } from '@vitejs/plugin-react'
 import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
 import { nitro } from 'nitro/vite'
+import { config as loadEnv } from 'dotenv'
+
+// .env lives at the repo root; Start only loads env from the Vite root
+loadEnv({ path: ['../../.env.local', '../../.env'], quiet: true })
 
 const config = defineConfig({
+  envDir: '../..',
   resolve: { tsconfigPaths: true },
   plugins: [
     devtools(),
