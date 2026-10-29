@@ -264,6 +264,26 @@ export const searchProvider = pgTable("search_provider", {
 	createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// MCP Servers an Admin configured; Agents reach them over Streamable HTTP
+export const mcpServer = pgTable("mcp_server", {
+	// slug of the name, or typed by the Admin; never changes (Agent Definitions refer to it)
+	id: text("id").primaryKey(),
+	name: text("name").notNull(),
+	// http or https; internal addresses allowed
+	url: text("url").notNull(),
+	// each value encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
+	headers: jsonb("headers")
+		.$type<{ name: string; value: string }[]>()
+		.default([])
+		.notNull(),
+	enabled: boolean("enabled").default(true).notNull(),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+	updatedAt: timestamp("updated_at")
+		.defaultNow()
+		.$onUpdate(() => new Date())
+		.notNull(),
+});
+
 // Agent Definitions edited by Admins in /console/agents; `conversation.agent_id` refers to the id, so it never changes
 export const agent = pgTable("agent", {
 	id: text("id").primaryKey(),

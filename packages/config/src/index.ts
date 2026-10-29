@@ -68,6 +68,21 @@ export interface Settings {
 	}[];
 	/** The Search Provider picked for each Tool. */
 	servedBy: Record<ToolName, SearchProviderId | null>;
+	/** A header `value` is undefined when it cannot be decrypted. */
+	mcpServers: {
+		id: string;
+		name: string;
+		url: string;
+		enabled: boolean;
+		headers: { name: string; value: string | undefined }[];
+	}[];
+}
+
+/** An MCP Server ready to connect to, with plaintext headers. */
+export interface McpServer {
+	name: string;
+	url: string;
+	headers: Record<string, string>;
 }
 
 /** A Tool's Search Provider and its decrypted key. */
@@ -87,6 +102,8 @@ export interface OrqestraConfig {
 	defaultAgent: AgentDefinition;
 	/** Tools with a usable Search Provider; the others are unavailable. */
 	tools: Partial<Record<ToolName, ToolService>>;
+	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
+	mcpServers: Record<string, McpServer>;
 	/** pi's streamSimple with the Provider's configured API key. */
 	streamSimple: StreamSimple;
 }
@@ -218,12 +235,23 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 			};
 	}
 
+	const mcpServers: OrqestraConfig["mcpServers"] = {};
+	for (const { id, name, url, enabled, headers } of settings.mcpServers) {
+		const plain = headers.flatMap((h) =>
+			h.value === undefined ? [] : [[h.name, h.value]],
+		);
+		// one unreadable header: the server would reject us, so it is unavailable
+		if (enabled && plain.length === headers.length)
+			mcpServers[id] = { name, url, headers: Object.fromEntries(plain) };
+	}
+
 	return {
 		registry,
 		models,
 		agents,
 		defaultAgent: defaults[0],
 		tools,
+		mcpServers,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);
 			if (provider && provider.apiKey === undefined)

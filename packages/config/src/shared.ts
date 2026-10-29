@@ -37,7 +37,10 @@ export const agentId = z
 	.string()
 	.regex(/^[a-z0-9][a-z0-9-]*$/, "lowercase letters, digits and dashes");
 
-/** A name turned into an Agent id; "" when nothing usable is left (e.g. a Chinese name). */
+/** An MCP Server's id, like an Agent's; never changes, since Agent Definitions and Tool names refer to it. */
+export const mcpServerId = agentId;
+
+/** A name turned into an Agent or MCP Server id; "" when nothing usable is left (e.g. a Chinese name). */
 export const slugify = (name: string) =>
 	name
 		.toLowerCase()
