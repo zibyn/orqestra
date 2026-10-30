@@ -15,47 +15,27 @@ import {
 	fauxText,
 	fauxThinking,
 	fauxToolCall,
-	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/config";
 import type { ConversationEvent } from "@orqestra/conversations";
 
-// The runtime replying through the real @orqestra/conversations (lifecycle scenarios are tested there):
-// needs TEST_DATABASE_URL, which src/test-env.ts sets up
+// Smoke tests of the assembled worker: the runtime replying through the real @orqestra/conversations
+// (lifecycle scenarios are tested there, runtime ones in src/runtime): needs TEST_DATABASE_URL, which src/test-env.ts sets up
 const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
 const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
 const { config } = await import("@orqestra/config/live");
 const { createConversations } = await import("@orqestra/conversations");
-const { providerLimiter, startAgentWorker } = await import("./run.ts");
-const { MAX_SUBAGENT_STEPS } = await import("./tools.ts");
+const { startAgentWorker } = await import("./worker.ts");
+const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
 const conversations = createConversations({ config: config.current });
 const faux = fauxProvider({
 	provider: "faux",
-	models: [
-		{ id: "faux-1", reasoning: true },
-		{ id: "faux-small", contextWindow: 2000 },
-	],
+	models: [{ id: "faux-1", reasoning: true }],
 	tokensPerSecond: 400,
 });
-// a tiny context window so a short history already needs compaction
-const smallAgent: AgentDefinition = {
-	id: "small",
-	name: "Small",
-	description: "test Agent",
-	instructions: "",
-	models: ["faux/faux-small"],
-	defaultModel: "faux/faux-small",
-	thinking: {},
-	compaction: { reserveTokens: 1000, keepRecentTokens: 50 },
-	default: false,
-	pickable: true,
-	allModels: false,
-	tools: ["search", "scrape"],
-	unavailableModels: [],
-};
 const fauxAgent: AgentDefinition = {
 	id: "faux",
 	name: "Faux",
@@ -156,7 +136,7 @@ describe.skipIf(!url)(
 			const loaded = await config.current();
 			loaded.registry.registerProvider(faux.provider);
 			loaded.models.push(...faux.models);
-			loaded.agents.push(fauxAgent, smallAgent);
+			loaded.agents.push(fauxAgent);
 			loaded.tools.search = {
 				provider: "tavily",
 				apiKey: "k",
@@ -238,114 +218,6 @@ describe.skipIf(!url)(
 			]);
 		});
 
-		it("stops generating when asked and keeps what was generated", async () => {
-			const long = "word ".repeat(2000);
-			faux.setResponses([
-				fauxAssistantMessage(long),
-				fauxAssistantMessage("T"),
-			]);
-
-			const id = await conversations.send(userId, {
-				agentId: "faux",
-				text: "write a lot",
-			});
-			const stream = await conversations.subscribe(
-				userId,
-				id,
-				new AbortController().signal,
-			);
-			let stopped = false;
-			await collect(
-				stream as ReadableStream,
-				(es) => es.at(-1)?.type === "saved",
-				(e) => {
-					if (e.type === "delta" && !stopped) {
-						stopped = true;
-						void conversations.stop(userId, id);
-					}
-				},
-			);
-
-			const view = await waitFor(
-				() => conversations.get(userId, id),
-				(v) => v?.messages.length === 2 && v.status !== "running",
-			);
-			const reply = view?.messages[1].message as AssistantMessage;
-			expect(reply.stopReason).toBe("aborted");
-			expect(JSON.stringify(reply.content).length).toBeLessThan(long.length);
-			// a stopped first reply still names the Conversation
-			await waitFor(
-				() => conversations.get(userId, id),
-				(v) => v?.title === "T",
-			);
-		});
-
-		it("compacts a long history before the turn but keeps it all visible", async () => {
-			const [conv] = await db
-				.insert(schema.conversation)
-				.values({ userId, agentId: "small", title: "t" })
-				.returning();
-			const old = fauxAssistantMessage("b".repeat(2000));
-			old.usage.totalTokens = 1500; // what the provider reported for that turn
-			await db.insert(schema.message).values(
-				[{ role: "user", content: "a".repeat(4000), timestamp: 1 }, old].map(
-					(m) => ({
-						conversationId: conv.id,
-						message: m,
-						model: "faux/faux-small",
-						thinkingLevel: "off",
-					}),
-				),
-			);
-			let seen = "";
-			faux.setResponses([
-				fauxAssistantMessage("SUMMARY OF EARLIER"),
-				(ctx) => {
-					seen = JSON.stringify(ctx.messages);
-					return fauxAssistantMessage("ok");
-				},
-			]);
-
-			await conversations.send(userId, {
-				conversationId: conv.id,
-				text: "next?",
-			});
-			const view = await waitFor(
-				() => conversations.get(userId, conv.id),
-				(v) => v?.status === "idle",
-			);
-			expect(seen).toContain("SUMMARY OF EARLIER");
-			expect(seen).not.toContain("aaaa");
-			expect(view?.messages).toHaveLength(4);
-			expect(view?.compactedBefore).toEqual([view?.messages[2].id as number]);
-		});
-
-		it("saves a Tool call and its result as part of the Turn", async () => {
-			stubSearch([{ title: "Pi", url: "https://pi.dev", content: "An agent" }]);
-			faux.setResponses([
-				fauxAssistantMessage(fauxToolCall("search", { query: "pi", count: 1 })),
-				fauxAssistantMessage("Pi is an agent"),
-				fauxAssistantMessage("T"),
-			]);
-			const id = await conversations.send(userId, {
-				agentId: "faux",
-				text: "what is pi?",
-			});
-			const view = await waitFor(
-				() => conversations.get(userId, id),
-				(v) => v?.title === "T",
-			);
-			expect(view?.messages.map((m) => m.message.role)).toEqual([
-				"user",
-				"assistant",
-				"toolResult",
-				"assistant",
-			]);
-			const result = view?.messages[2].message as ToolResultMessage;
-			expect(result.toolName).toBe("search");
-			expect(JSON.stringify(result.content)).toContain("https://pi.dev");
-		});
-
 		it("gives a Subagent at its step limit one last request without Tools for its answer", async () => {
 			stubSearch();
 			let first: { messages: { toolsAdded?: unknown }[] } | undefined;
@@ -396,106 +268,5 @@ describe.skipIf(!url)(
 			expect(notified).toContain("what I found");
 			expect(view?.subagents[0].outcome).toBe("partial");
 		});
-
-		it("delivers a message sent while running at the next step boundary, into the model's context", async () => {
-			stubSearch();
-			let release!: () => void;
-			const gate = new Promise<void>((r) => {
-				release = r;
-			});
-			let replying = false;
-			let seen: string[] = [];
-			faux.setResponses([
-				async () => {
-					replying = true;
-					await gate;
-					return fauxAssistantMessage(fauxToolCall("search", { query: "x" }));
-				},
-				(context) => {
-					seen = context.messages.flatMap((m) =>
-						m.role === "user" && typeof m.content === "string"
-							? [m.content]
-							: [],
-					);
-					return fauxAssistantMessage("Got both");
-				},
-				fauxAssistantMessage("T"),
-			]);
-			const id = await conversations.send(userId, {
-				agentId: "faux",
-				text: "first",
-			});
-			await waitFor(async () => replying, Boolean);
-			await conversations.send(userId, {
-				conversationId: id,
-				text: "also this",
-			});
-			// queued, not yet delivered
-			const queued = await conversations.get(userId, id);
-			expect(queued?.messages.at(-1)).toMatchObject({
-				message: { role: "user", content: "also this" },
-			});
-			expect(queued?.messages.at(-1)?.queued).toBe(true);
-			release();
-
-			const view = await waitFor(
-				() => conversations.get(userId, id),
-				(v) => v?.status === "idle" && v.title === "T",
-			);
-			expect(seen).toEqual(["first", "also this"]);
-			expect(view?.messages.map((m) => m.message.role)).toEqual([
-				"user",
-				"assistant",
-				"toolResult",
-				"user",
-				"assistant",
-			]);
-		});
 	},
 );
-
-describe("providerLimiter", () => {
-	// a stream that ends when its test says so
-	function streams() {
-		const started: string[] = [];
-		const end: Record<string, () => void> = {};
-		const streamSimple = ((model: { provider: string; id: string }) => {
-			started.push(model.id);
-			const result = new Promise((resolve) => {
-				end[model.id] = () => resolve({});
-			});
-			return { result: () => result };
-		}) as unknown as Parameters<ReturnType<typeof providerLimiter>>[0];
-		return { started, end, streamSimple };
-	}
-	const model = (provider: string, id: string) => ({ provider, id }) as never;
-	const tick = () => new Promise((r) => setTimeout(r, 0));
-
-	it("holds a Provider's slot until the stream ends, without blocking other Providers", async () => {
-		const { started, end, streamSimple } = streams();
-		const limited = providerLimiter(1)(streamSimple);
-		void limited(model("a", "a1"), { messages: [] });
-		void limited(model("a", "a2"), { messages: [] });
-		void limited(model("b", "b1"), { messages: [] });
-		await tick();
-		expect(started).toEqual(["a1", "b1"]);
-		end.a1();
-		await tick();
-		expect(started).toEqual(["a1", "b1", "a2"]);
-	});
-
-	it("drops a queued request when its signal aborts", async () => {
-		const { started, streamSimple } = streams();
-		const limited = providerLimiter(1)(streamSimple);
-		void limited(model("a", "a1"), { messages: [] });
-		const stop = new AbortController();
-		const queued = limited(
-			model("a", "a2"),
-			{ messages: [] },
-			{ signal: stop.signal },
-		);
-		stop.abort(new Error("stopped"));
-		await expect(queued).rejects.toThrow("stopped");
-		expect(started).toEqual(["a1"]);
-	});
-});

@@ -19,37 +19,6 @@ const text = (t: string) => [{ type: "text" as const, text: t }];
 // infers `execute`'s params from `parameters`, then fits the Agent's untyped Tool list
 const tool = <T extends TSchema>(t: AgentTool<T>) => t as unknown as AgentTool;
 
-/** Runs at most `max` functions at once, the rest in call order; one aborted while waiting leaves the queue and rejects. */
-export function limiter(max: number) {
-	let active = 0;
-	const waiting: (() => void)[] = [];
-	return async <T>(fn: () => Promise<T>, signal?: AbortSignal) => {
-		signal?.throwIfAborted();
-		if (active < max) active++;
-		else
-			await new Promise<void>((resolve, reject) => {
-				const start = () => {
-					signal?.removeEventListener("abort", stop);
-					resolve();
-				};
-				const stop = () => {
-					waiting.splice(waiting.indexOf(start), 1);
-					reject(signal?.reason);
-				};
-				waiting.push(start);
-				signal?.addEventListener("abort", stop, { once: true });
-			});
-		try {
-			return await fn();
-		} finally {
-			// hand the slot straight to the next one, so no newcomer can slip in between
-			const next = waiting.shift();
-			if (next) next();
-			else active--;
-		}
-	};
-}
-
 /** Relays an Agent's reply as it streams. */
 export async function relay(
 	event: AgentEvent,
@@ -95,7 +64,7 @@ function refusal(error: unknown) {
  * Each Subagent works in the background, past the parent's Run; it hands back its result as a Notification that wakes the parent.
  */
 export function subagentTools(
-	config: OrqestraConfig,
+	config: Pick<OrqestraConfig, "agents">,
 	subagents: RunHandle["subagents"],
 ) {
 	const templates = config.agents
