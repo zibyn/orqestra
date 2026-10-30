@@ -1,14 +1,14 @@
 import { thinkingLevel } from "@orqestra/config/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { conversations, listAgentOptions } from "#/lib/conversations";
+import { conversations } from "#/lib/conversations";
 import { requireUserId } from "#/lib/session";
 
 const id = z.uuid();
 
 export const getAgentOptions = createServerFn().handler(async () => {
 	await requireUserId();
-	return listAgentOptions();
+	return conversations.agentOptions();
 });
 
 export const listConversations = createServerFn().handler(async () =>

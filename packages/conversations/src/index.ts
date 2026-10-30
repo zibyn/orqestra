@@ -2,6 +2,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import {
 	modelRef,
 	type OrqestraConfig,
+	resolveThinking,
 	resolveTurn,
 	type ThinkingLevel,
 } from "@orqestra/config";
@@ -83,6 +84,32 @@ export function createConversations({
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
 			serveRuns(config, handler, options),
+
+		/** The online Agents, with the Models and thinking levels each offers; new Conversations only use `pickable` ones. */
+		async agentOptions() {
+			const cfg = await config();
+			// an Agent without Models is offline
+			return cfg.agents
+				.filter((a) => a.models.length)
+				.map((a) => ({
+					id: a.id,
+					name: a.name,
+					description: a.description,
+					default: a.default,
+					pickable: a.pickable,
+					defaultModel: a.defaultModel,
+					models: a.models.map((ref) => {
+						const model = cfg.models.find((m) => modelRef(m) === ref);
+						return {
+							ref,
+							name: model?.name ?? ref,
+							thinking: model
+								? resolveThinking(a.thinking, model)
+								: { allowed: [], default: "off" as ThinkingLevel },
+						};
+					}),
+				}));
+		},
 
 		list: (userId: string) =>
 			db
