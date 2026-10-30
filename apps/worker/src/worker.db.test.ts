@@ -1,6 +1,5 @@
 import {
 	afterAll,
-	afterEach,
 	beforeAll,
 	beforeEach,
 	describe,
@@ -18,6 +17,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/config";
 import type { ConversationEvent } from "@orqestra/conversations";
+import { openToolbox } from "@orqestra/tools";
 
 // Smoke tests of the assembled worker: the runtime replying through the real @orqestra/conversations
 // (lifecycle scenarios are tested there, runtime ones in src/runtime): needs TEST_DATABASE_URL, which src/test-env.ts sets up
@@ -120,13 +120,6 @@ async function waitFor<T>(read: () => Promise<T>, ok: (v: T) => boolean) {
 	throw new Error("timed out");
 }
 
-const realFetch = globalThis.fetch;
-// Search answers with no results
-const stubSearch = (results: unknown[] = []) => {
-	globalThis.fetch = (async () =>
-		new Response(JSON.stringify({ results }))) as unknown as typeof fetch;
-};
-
 describe.skipIf(!url)(
 	"Runs replied by the runtime (Postgres + faux provider)",
 	() => {
@@ -143,14 +136,22 @@ describe.skipIf(!url)(
 				baseUrl: "https://api.tavily.com",
 			};
 			// faux replies are one shared queue, so runs go one at a time
-			stopWorker = await startAgentWorker(config.current, { concurrency: 1 });
+			stopWorker = await startAgentWorker(config.current, {
+				concurrency: 1,
+				// Search answers with no results
+				toolbox: (services, allowed, options) =>
+					openToolbox(services, allowed, {
+						...options,
+						fetch: (async () =>
+							new Response(
+								JSON.stringify({ results: [] }),
+							)) as unknown as typeof fetch,
+					}),
+			});
 		});
 		afterAll(async () => {
 			await stopWorker?.();
 			await config.close();
-		});
-		afterEach(() => {
-			globalThis.fetch = realFetch;
 		});
 
 		beforeEach(async () => {
@@ -219,7 +220,6 @@ describe.skipIf(!url)(
 		});
 
 		it("gives a Subagent at its step limit one last request without Tools for its answer", async () => {
-			stubSearch();
 			let first: { messages: { toolsAdded?: unknown }[] } | undefined;
 			let last: unknown;
 			script({

@@ -63,10 +63,13 @@ export function startAgentWorker(
 	getConfig: () => Promise<OrqestraConfig>,
 	{
 		providerConcurrency = 8,
+		toolbox = openToolbox,
 		...options
 	}: Parameters<ReturnType<typeof createConversations>["serveRuns"]>[1] & {
 		/** Model requests to one Provider at once, across this worker's Runs. */
 		providerConcurrency?: number;
+		/** Opens each Run's Tools; tests stand in for the services behind them. */
+		toolbox?: typeof openToolbox;
 	} = {},
 ) {
 	const limitProviders = providerLimiter(providerConcurrency);
@@ -75,7 +78,7 @@ export function startAgentWorker(
 			runAgent(run, {
 				config,
 				streamSimple: limitProviders(config.streamSimple),
-				openToolbox,
+				openToolbox: toolbox,
 			}),
 		options,
 	);
