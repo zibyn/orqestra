@@ -1,4 +1,4 @@
-import { CONFIG_CHANNEL, db } from "@orqestra/db";
+import { db } from "@orqestra/db";
 import {
 	agent,
 	enabledModel,
@@ -19,6 +19,9 @@ import {
 	toolName,
 } from "./index.ts";
 import { decryptSecret, encryptionKey } from "./secret.ts";
+
+/** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
+const CONFIG_CHANNEL = "config_changed";
 
 export type { McpTestResult } from "@orqestra/tools";
 export {
