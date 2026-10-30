@@ -12,6 +12,8 @@ import {
 	type Message,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
+import type { JsonRpcMessage } from "@earendil-works/pi-mcp";
+import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import {
 	type AgentDefinition,
 	type OrqestraConfig,
@@ -310,6 +312,83 @@ describe("runAgent", () => {
 
 		expect(seen).toEqual(["first", "also this"]);
 		expect(roles(m.saved)).toEqual(["assistant", "toolResult", "assistant"]);
+		expect(m.over).toBe(true);
+	});
+
+	it("does not fail the Run when two MCP Tools end up with the same name", async () => {
+		// an MCP Server whose Tools "a.b" and "a_b" both become "s__a_b"; each echoes which one ran
+		const { client, server } = createInMemoryTransportPair();
+		server.onMessage(async (message) => {
+			const m = message as {
+				id?: number;
+				method?: string;
+				params?: { name?: string; protocolVersion?: string };
+			};
+			const result =
+				m.method === "initialize"
+					? {
+							protocolVersion: m.params?.protocolVersion,
+							capabilities: { tools: {} },
+							serverInfo: { name: "s", version: "1" },
+						}
+					: m.method === "tools/list"
+						? {
+								tools: ["a.b", "a_b"].map((name) => ({
+									name,
+									inputSchema: { type: "object" },
+								})),
+							}
+						: m.method === "tools/call"
+							? { content: [{ type: "text", text: `ran ${m.params?.name}` }] }
+							: undefined;
+			if (m.id !== undefined && result)
+				await server.send({
+					jsonrpc: "2.0",
+					id: m.id,
+					result,
+				} as JsonRpcMessage);
+		});
+		void server.start();
+		const mcpConfig = {
+			...config,
+			agents: [agent({ id: "mcp", tools: ["mcp:s"] })],
+			mcpServers: {
+				s: { name: "S", url: "https://s.example.com/mcp", headers: {} },
+			},
+		};
+		let offered: string[] = [];
+		script([
+			(context) => {
+				offered = context.messages.flatMap(
+					(msg) =>
+						(msg as { toolsAdded?: { name: string }[] }).toolsAdded?.map(
+							(t) => t.name,
+						) ?? [],
+				);
+				// a Provider refuses a request that names a Tool twice
+				if (new Set(offered).size < offered.length)
+					throw new Error("duplicate Tool name");
+				return fauxAssistantMessage(fauxToolCall("s__a_b", {}));
+			},
+			fauxAssistantMessage("Done"),
+		]);
+		const m = memoryRun({
+			transcript: transcript(user("use it")),
+			turn: resolveTurn(mcpConfig, "mcp") as Turn,
+		});
+		await runAgent(m.run, {
+			config: mcpConfig,
+			streamSimple,
+			openToolbox: ((services, allowed, options) =>
+				openToolbox(services, allowed, {
+					...options,
+					mcpTransport: () => client,
+				})) as typeof openToolbox,
+		});
+
+		expect(offered.filter((n) => n.startsWith("s__"))).toEqual(["s__a_b"]);
+		expect(roles(m.saved)).toEqual(["assistant", "toolResult", "assistant"]);
+		expect(JSON.stringify(m.saved[1])).toContain("ran a.b");
 		expect(m.over).toBe(true);
 	});
 });

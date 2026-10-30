@@ -187,6 +187,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tools
     devDependencies:
+      '@earendil-works/pi-mcp':
+        specifier: 1.4.0
+        version: 1.4.0
       '@orqestra/db':
         specifier: workspace:*
         version: link:../../packages/db
