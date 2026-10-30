@@ -11,9 +11,9 @@
     "@earendil-works/pi-agent-core": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
-    "@earendil-works/pi-mcp": "1.4.0",
     "@orqestra/config": "workspace:*",
-    "@orqestra/conversations": "workspace:*"
+    "@orqestra/conversations": "workspace:*",
+    "@orqestra/tools": "workspace:*"
   },
   "devDependencies": {
     "@orqestra/db": "workspace:*",

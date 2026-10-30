@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { testMcpServer } from "./mcp.ts";
+import { testMcpServer } from "./index.ts";
 
 const server = {
 	name: "Docs",

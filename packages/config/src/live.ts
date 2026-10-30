@@ -7,6 +7,7 @@ import {
 	searchProvider,
 	toolService,
 } from "@orqestra/db/schema";
+import { availableTools } from "@orqestra/tools";
 import { sql } from "drizzle-orm";
 import { admin } from "./admin.ts";
 import {
@@ -19,6 +20,7 @@ import {
 } from "./index.ts";
 import { decryptSecret, encryptionKey } from "./secret.ts";
 
+export type { McpTestResult } from "@orqestra/tools";
 export {
 	agentInput,
 	mcpServerEnabledInput,
@@ -29,7 +31,6 @@ export {
 	searchProviderInput,
 	toolServiceInput,
 } from "./admin.ts";
-export type { McpTestResult } from "./mcp.ts";
 
 /** Everything saved in /console, with API keys decrypted. */
 async function loadSettings(): Promise<Settings> {
@@ -82,8 +83,9 @@ const logWarnings = (config: OrqestraConfig) => {
 		if (!a.models.length)
 			console.warn(`Agent "${a.id}": no Model is available, so it is offline`);
 	}
+	const available = availableTools(config);
 	for (const tool of toolName.options)
-		if (!config.tools[tool])
+		if (!available.includes(tool))
 			console.warn(
 				`Tool "${tool}" has no usable Search Provider, so Agents run without it`,
 			);

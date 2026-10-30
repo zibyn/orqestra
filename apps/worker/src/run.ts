@@ -21,13 +21,12 @@ import {
 	type RunHandle,
 	type Transcript,
 } from "@orqestra/conversations";
-import { mcpTools } from "./mcp.ts";
+import { openToolbox } from "@orqestra/tools";
 import {
 	limiter,
 	MAX_SUBAGENT_STEPS,
 	relay,
 	STEP_LIMIT,
-	searchTools,
 	subagentTools,
 } from "./tools.ts";
 
@@ -41,9 +40,8 @@ export async function reply(run: RunHandle, config: OrqestraConfig) {
 	const rows = run.transcript.messages;
 	const last = rows.at(-1) as Transcript["messages"][number];
 	const streamFn: StreamFn = config.streamSimple;
-	const tools = searchTools(config, turn.agent.tools);
-	// connected for this Run only, so changes on the server side show up in the next one
-	const mcp = await mcpTools(config, turn.agent.tools, signal);
+	// MCP Servers are connected for this Run only, so changes on the server side show up in the next one
+	const toolbox = await openToolbox(config, turn.agent.tools, { signal });
 	try {
 		// a Subagent gets no Subagent Tools, and a step limit whose last request goes without Tools,
 		// so it answers with what it has rather than stopping mid-search
@@ -54,8 +52,8 @@ export async function reply(run: RunHandle, config: OrqestraConfig) {
 				model: turn.model,
 				thinkingLevel: turn.thinking,
 				tools: sub
-					? [...tools, ...mcp.tools]
-					: [...tools, ...mcp.tools, ...subagentTools(config, run.subagents)],
+					? toolbox.tools
+					: [...toolbox.tools, ...subagentTools(config, run.subagents)],
 				messages: await context(run, streamFn),
 			},
 			streamFn,
@@ -126,7 +124,7 @@ export async function reply(run: RunHandle, config: OrqestraConfig) {
 				answer,
 			]).catch((error) => console.error("title generation failed", error));
 	} finally {
-		await mcp.close();
+		await toolbox.close();
 	}
 }
 

@@ -1,12 +1,11 @@
-import { describe, expect, it } from "bun:test";
 import type {
 	CallToolResult,
 	JsonRpcMessage,
 	Tool,
 } from "@earendil-works/pi-mcp";
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
-import type { OrqestraConfig } from "@orqestra/config";
-import { mcpTools } from "./mcp.ts";
+import { describe, expect, it } from "vitest";
+import { openToolbox, type ToolServices } from "./index.ts";
 
 type Call = (
 	args: Record<string, unknown>,
@@ -59,8 +58,9 @@ const server = (id: string) => ({
 });
 const config = (...ids: string[]) =>
 	({
+		tools: {},
 		mcpServers: Object.fromEntries(ids.map((id) => [id, server(id)])),
-	}) as unknown as OrqestraConfig;
+	}) as ToolServices;
 
 const echo: Tool & { call: Call } = {
 	name: "echo",
@@ -69,7 +69,7 @@ const echo: Tool & { call: Call } = {
 };
 const never = new AbortController().signal;
 
-describe("mcpTools", () => {
+describe("openToolbox with MCP Servers", () => {
 	it("offers the Tools of allowed, available MCP Servers, prefixed with the server id and cleaned up", async () => {
 		const fakes = {
 			github: fakeServer([
@@ -87,11 +87,13 @@ describe("mcpTools", () => {
 			wiki: fakeServer([echo]),
 			other: fakeServer([echo]),
 		};
-		const { tools, close } = await mcpTools(
+		const { tools, close } = await openToolbox(
 			config("github", "wiki", "other"),
 			["search", "mcp:github", "mcp:wiki", "mcp:gone"],
-			never,
-			{ transport: (id) => fakes[id as keyof typeof fakes].transport },
+			{
+				signal: never,
+				mcpTransport: (id) => fakes[id as keyof typeof fakes].transport,
+			},
 		);
 		expect(
 			tools.map(({ name, label, description, parameters }) => ({
@@ -126,6 +128,19 @@ describe("mcpTools", () => {
 		await close();
 	});
 
+	it("offers only the first of Tools whose names end up the same, so the Run still works", async () => {
+		const fake = fakeServer([
+			{ ...echo, name: "a.b" },
+			{ ...echo, name: "a_b", call: () => ({ content: [] }) },
+		]);
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			mcpTransport: () => fake.transport,
+		});
+		expect(tools.map((t) => [t.name, t.label])).toEqual([["s__a_b", "a.b"]]);
+		await close();
+	});
+
 	it("returns text and images, cutting long text with a notice", async () => {
 		const fake = fakeServer([
 			{
@@ -139,8 +154,9 @@ describe("mcpTools", () => {
 				}),
 			},
 		]);
-		const { tools, close } = await mcpTools(config("s"), ["mcp:s"], never, {
-			transport: () => fake.transport,
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			mcpTransport: () => fake.transport,
 		});
 		const result = await tools[0].execute("1", {}, never);
 		expect(result.isError).toBe(false);
@@ -165,8 +181,9 @@ describe("mcpTools", () => {
 				}),
 			},
 		]);
-		const { tools, close } = await mcpTools(config("s"), ["mcp:s"], never, {
-			transport: () => fake.transport,
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			mcpTransport: () => fake.transport,
 		});
 		const result = await tools[0].execute("1", {}, never);
 		expect(result).toMatchObject({
@@ -179,12 +196,12 @@ describe("mcpTools", () => {
 	it("skips an MCP Server it cannot reach, and the others still work", async () => {
 		const up = fakeServer([echo]);
 		const down = createInMemoryTransportPair().client; // nobody answers on the other end
-		const { tools, close } = await mcpTools(
+		const { tools, close } = await openToolbox(
 			config("down", "up"),
 			["mcp:down", "mcp:up"],
-			never,
 			{
-				transport: (id) => (id === "up" ? up.transport : down),
+				signal: never,
+				mcpTransport: (id) => (id === "up" ? up.transport : down),
 				timeoutMs: 50,
 			},
 		);
@@ -198,8 +215,9 @@ describe("mcpTools", () => {
 		const { client, server } = createInMemoryTransportPair();
 		void server.start(); // listening, but never answers
 		const stop = new AbortController();
-		const connecting = mcpTools(config("s"), ["mcp:s"], stop.signal, {
-			transport: () => client,
+		const connecting = openToolbox(config("s"), ["mcp:s"], {
+			signal: stop.signal,
+			mcpTransport: () => client,
 		});
 		setTimeout(() => stop.abort(new Error("stopped")), 10);
 		const { tools, close } = await connecting;
@@ -215,8 +233,9 @@ describe("mcpTools", () => {
 				call: () => new Promise(() => {}),
 			},
 		]);
-		const { tools, close } = await mcpTools(config("s"), ["mcp:s"], never, {
-			transport: () => fake.transport,
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			mcpTransport: () => fake.transport,
 		});
 		const stop = new AbortController();
 		const call = tools[0].execute("1", {}, stop.signal);
@@ -233,8 +252,9 @@ describe("mcpTools", () => {
 				call: () => new Promise(() => {}),
 			},
 		]);
-		const { tools, close } = await mcpTools(config("s"), ["mcp:s"], never, {
-			transport: () => fake.transport,
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			mcpTransport: () => fake.transport,
 			timeoutMs: 50,
 		});
 		await expect(tools[0].execute("1", {}, never)).rejects.toThrow(/time/i);
@@ -244,14 +264,10 @@ describe("mcpTools", () => {
 	it("closes every connection when done", async () => {
 		const a = fakeServer([echo]);
 		const b = fakeServer([echo]);
-		const { close } = await mcpTools(
-			config("a", "b"),
-			["mcp:a", "mcp:b"],
-			never,
-			{
-				transport: (id) => (id === "a" ? a : b).transport,
-			},
-		);
+		const { close } = await openToolbox(config("a", "b"), ["mcp:a", "mcp:b"], {
+			signal: never,
+			mcpTransport: (id) => (id === "a" ? a : b).transport,
+		});
 		expect(a.state.closed || b.state.closed).toBe(false);
 		await close();
 		expect([a.state.closed, b.state.closed]).toEqual([true, true]);

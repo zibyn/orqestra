@@ -7,6 +7,11 @@ import {
 	searchProvider,
 	toolService,
 } from "@orqestra/db/schema";
+import {
+	availableTools,
+	type McpTestResult,
+	testMcpServer,
+} from "@orqestra/tools";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
@@ -22,11 +27,9 @@ import {
 	searchProviderId,
 	searchProviders,
 	type ToolName,
-	type ToolRef,
 	testConnection,
 	toolName,
 } from "./index.ts";
-import { type McpTestResult, testMcpServer } from "./mcp.ts";
 import { decryptSecret, sealSecret, secretReadable } from "./secret.ts";
 
 // What Admins edit in /console, by GLOSSARY entity: inputs, rules across fields and entities, and the management views.
@@ -95,12 +98,6 @@ const customBaseUrl = (url: string, fallback: string) =>
 
 // RFC 7230 token
 const headerName = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
-
-/** Built-in Tools with a usable Search Provider, then `mcp:<id>` of available MCP Servers. */
-const availableTools = (config: OrqestraConfig): ToolRef[] => [
-	...toolName.options.filter((t) => config.tools[t]),
-	...Object.keys(config.mcpServers).map(mcpToolRef),
-];
 
 async function catalogProvider(id: string) {
 	const found = (await catalogProviders()).find((p) => p.id === id);

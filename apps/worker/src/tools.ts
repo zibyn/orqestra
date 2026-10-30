@@ -1,7 +1,6 @@
 import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
-import type { AgentDefinition, OrqestraConfig } from "@orqestra/config";
-import { scrape, search } from "@orqestra/config/search";
+import type { OrqestraConfig } from "@orqestra/config";
 import {
 	BudgetExceeded,
 	MAX_SUBAGENT_TASKS,
@@ -14,81 +13,11 @@ import {
 
 /** Model requests a Subagent may make; the last one, without Tools, is for its final answer. */
 export const MAX_SUBAGENT_STEPS = 20;
-// shortcut: a hard cut keeps one page or MCP Tool result from flooding the context; summarize instead if results get cut too often
-export const MAX_TOOL_RESULT_CHARS = 50_000;
 
 const text = (t: string) => [{ type: "text" as const, text: t }];
 
 // infers `execute`'s params from `parameters`, then fits the Agent's untyped Tool list
 const tool = <T extends TSchema>(t: AgentTool<T>) => t as unknown as AgentTool;
-
-/** Search and Scrape, for those of `allowed` that have a Search Provider. */
-export function searchTools(
-	config: OrqestraConfig,
-	allowed: AgentDefinition["tools"],
-): AgentTool[] {
-	const tools: AgentTool[] = [];
-	const searchProvider = config.tools.search;
-	if (searchProvider && allowed.includes("search"))
-		tools.push(
-			tool({
-				name: "search",
-				label: "Search",
-				description:
-					"Search the web. Returns matching pages with their title, URL and a snippet.",
-				parameters: Type.Object({
-					query: Type.String({ description: "What to search for" }),
-					count: Type.Optional(
-						Type.Integer({
-							minimum: 1,
-							maximum: 20,
-							description: "How many results, 5 by default",
-						}),
-					),
-				}),
-				execute: async (_id, { query, count }, signal) => {
-					const results = await search(
-						searchProvider,
-						query,
-						count ?? 5,
-						signal,
-					);
-					return {
-						content: text(
-							results
-								.map((r) => `## ${r.title}\n${r.url}\n\n${r.snippet}`)
-								.join("\n\n") || "No results.",
-						),
-						details: undefined,
-					};
-				},
-			}),
-		);
-	const scrapeProvider = config.tools.scrape;
-	if (scrapeProvider && allowed.includes("scrape"))
-		tools.push(
-			tool({
-				name: "scrape",
-				label: "Scrape",
-				description: "Read one web page and return its content as Markdown.",
-				parameters: Type.Object({
-					url: Type.String({ description: "The page's http(s) URL" }),
-				}),
-				execute: async (_id, { url }, signal) => {
-					const page = await scrape(scrapeProvider, url, signal);
-					return {
-						content: text(
-							page.length > MAX_TOOL_RESULT_CHARS
-								? `${page.slice(0, MAX_TOOL_RESULT_CHARS)}\n\n[The page was cut off here.]`
-								: page,
-						),
-						details: undefined,
-					};
-				},
-			}),
-		);
-	return tools;
-}
 
 /** Runs at most `max` functions at once, the rest in call order; one aborted while waiting leaves the queue and rejects. */
 export function limiter(max: number) {
