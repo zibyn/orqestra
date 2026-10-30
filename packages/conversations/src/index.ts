@@ -16,6 +16,7 @@ import {
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import pg from "pg";
 import {
+	AGENT_RUNS_QUEUE,
 	conversationChannel,
 	drain,
 	enqueue,
@@ -258,7 +259,7 @@ export function createConversations({
 			if (!conv) return;
 			const job =
 				conv.status === "running" && conv.jobId
-					? await runQueue().getJob(conv.jobId)
+					? await runQueue(AGENT_RUNS_QUEUE).getJob(conv.jobId)
 					: undefined;
 			// removing fails when a worker took the job meanwhile; the stop request then reaches it
 			const removed =

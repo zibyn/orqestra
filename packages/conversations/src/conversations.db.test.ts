@@ -896,7 +896,7 @@ describe.skipIf(!url)(
 		});
 
 		it("fails a Subagent whose Run cannot be queued, with exactly one Notification", async () => {
-			const queue = runs.runQueue(true);
+			const queue = runs.runQueue(runs.SUBAGENT_RUNS_QUEUE);
 			const add = queue.add.bind(queue);
 			let calls = 0;
 			let broken: unknown;

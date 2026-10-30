@@ -74,9 +74,10 @@ const newQueue = (name: string) =>
 		createPostgresBackend,
 	);
 const queues = new Map<string, ReturnType<typeof newQueue>>();
-/** The queue of top-level Runs, or with `subagents` of Subagent Runs. */
-export function runQueue(subagents = false) {
-	const name = subagents ? SUBAGENT_RUNS_QUEUE : AGENT_RUNS_QUEUE;
+/** The queue of top-level Runs or of Subagent Runs. */
+export function runQueue(
+	name: typeof AGENT_RUNS_QUEUE | typeof SUBAGENT_RUNS_QUEUE,
+) {
 	const queue = queues.get(name) ?? newQueue(name);
 	queues.set(name, queue);
 	return queue;
@@ -96,7 +97,7 @@ export async function enqueue(conversationId: string) {
 	});
 	if (!conv) return;
 	try {
-		await runQueue(!!conv.parentId).add(
+		await runQueue(conv.parentId ? SUBAGENT_RUNS_QUEUE : AGENT_RUNS_QUEUE).add(
 			"run",
 			{ conversationId },
 			{
