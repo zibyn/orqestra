@@ -28,7 +28,7 @@ import {
 	stopSubagents,
 } from "./runs.ts";
 
-import { type RunHandle, type ServeOptions, serveRuns } from "./serve.ts";
+import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 
 export type { ConversationEvent } from "./runs.ts";
 export { MAX_SUBAGENTS } from "./runs.ts";
@@ -40,6 +40,7 @@ export {
 	NoSuchTemplate,
 	type Outcome,
 	type RunHandle,
+	type RunHandler,
 	type StreamEvent,
 	TemplateOffline,
 	type Transcript,
@@ -80,10 +81,8 @@ export function createConversations({
 }) {
 	return {
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
-		serveRuns: (
-			handler: (run: RunHandle) => Promise<void>,
-			options?: ServeOptions,
-		) => serveRuns(config, handler, options),
+		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
+			serveRuns(config, handler, options),
 
 		list: (userId: string) =>
 			db

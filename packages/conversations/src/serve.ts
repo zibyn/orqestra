@@ -130,6 +130,12 @@ export type RunHandle = {
 	};
 };
 
+/** Replies to one Run; gets the config the Run's Turn was resolved from. */
+export type RunHandler = (
+	run: RunHandle,
+	config: OrqestraConfig,
+) => Promise<void>;
+
 export type ServeOptions = {
 	/** Top-level Runs this worker works on at once. */
 	concurrency?: number;
@@ -192,7 +198,7 @@ async function failed(conversationId: string, error: Error) {
 async function execute(
 	config: () => Promise<OrqestraConfig>,
 	conversationId: string,
-	handler: (run: RunHandle) => Promise<void>,
+	handler: RunHandler,
 ) {
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
@@ -216,7 +222,7 @@ async function execute(
 		const run = await open(cfg, conv, stop.signal, emit, () => {
 			over = true;
 		});
-		await handler(run);
+		await handler(run, cfg);
 		if (!over && !stop.signal.aborted)
 			throw new Error("The Run ended without finishing");
 		if (!over) await stopped(conv, "");
@@ -481,7 +487,7 @@ function subagentsOf(
  */
 export async function serveRuns(
 	config: () => Promise<OrqestraConfig>,
-	handler: (run: RunHandle) => Promise<void>,
+	handler: RunHandler,
 	{
 		concurrency = 8,
 		subagentConcurrency = 8,
