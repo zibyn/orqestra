@@ -9,7 +9,6 @@ import {
 	serial,
 	text,
 	timestamp,
-	unique,
 	uuid,
 } from "drizzle-orm/pg-core";
 
@@ -100,9 +99,6 @@ export const instanceSettings = pgTable("instance_settings", {
 		.notNull(),
 	// Set once by Instance Setup and never cleared, so /setup stays closed for good
 	setupCompleted: boolean("setup_completed").default(false).notNull(),
-	// the Search Provider serving each Tool; null, or one no longer configured: the Tool is unavailable
-	searchServedBy: text("search_served_by"),
-	scrapeServedBy: text("scrape_served_by"),
 });
 
 // Visible only to its owner: every query filters on userId, Admins included
@@ -200,35 +196,26 @@ export const compaction = pgTable(
 	(table) => [index("compaction_conversationId_idx").on(table.conversationId)],
 );
 
-// Metadata of a Subagent; its transcript is the `message` rows of its own Conversation
-export const subagent = pgTable(
-	"subagent",
-	{
-		// the Subagent's Conversation
-		conversationId: uuid("conversation_id")
-			.primaryKey()
-			.references(() => conversation.id, { onDelete: "cascade" }),
-		parentId: uuid("parent_id")
-			.notNull()
-			.references(() => conversation.id, { onDelete: "cascade" }),
-		// the subagent Tool call that started it, so the UI shows it under that call
-		toolCallId: text("tool_call_id").notNull(),
-		// what the parent Agent calls it by: 1, 2, ... within the parent Conversation
-		number: integer("number").notNull(),
-		// Agent Definition id; null for the built-in general worker
-		template: text("template"),
-		brief: text("brief").notNull(),
-		outcome: text("outcome")
-			.$type<
-				"queued" | "running" | "completed" | "partial" | "failed" | "stopped"
-			>()
-			.default("queued")
-			.notNull(),
-		result: text("result"),
-		createdAt: timestamp("created_at").defaultNow().notNull(),
-	},
-	(table) => [unique().on(table.parentId, table.number)],
-);
+// Metadata of a Subagent; its transcript is the `message` rows of its own Conversation, whose parentId and agentId are its parent's and its template
+export const subagent = pgTable("subagent", {
+	// the Subagent's Conversation
+	conversationId: uuid("conversation_id")
+		.primaryKey()
+		.references(() => conversation.id, { onDelete: "cascade" }),
+	// the subagent Tool call that started it, so the UI shows it under that call
+	toolCallId: text("tool_call_id").notNull(),
+	// what the parent Agent calls it by: 1, 2, ... within the parent Conversation
+	number: integer("number").notNull(),
+	brief: text("brief").notNull(),
+	outcome: text("outcome")
+		.$type<
+			"queued" | "running" | "completed" | "partial" | "failed" | "stopped"
+		>()
+		.default("queued")
+		.notNull(),
+	result: text("result"),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+});
 
 // Providers an Admin configured from the Catalog; at most one row per Catalog Provider
 export const provider = pgTable("provider", {
@@ -262,6 +249,16 @@ export const searchProvider = pgTable("search_provider", {
 	// null: the official endpoint; set for a self-hosted service or a reverse proxy
 	baseUrl: text("base_url"),
 	createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// The Search Provider picked for each built-in Tool; no row, or null: the Tool is unavailable
+export const toolService = pgTable("tool_service", {
+	// search or scrape
+	tool: text("tool").primaryKey(),
+	searchProviderId: text("search_provider_id").references(
+		() => searchProvider.id,
+		{ onDelete: "set null" },
+	),
 });
 
 // MCP Servers an Admin configured; Agents reach them over Streamable HTTP

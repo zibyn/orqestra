@@ -5,7 +5,7 @@ import type {
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { messageText } from "@orqestra/config/shared";
-import type { ConversationEvent } from "@orqestra/db";
+import type { ConversationEvent } from "@orqestra/conversations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	createFileRoute,

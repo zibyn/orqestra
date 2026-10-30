@@ -1,14 +1,15 @@
-import { CONFIG_CHANNEL, db } from "@orqestra/db";
+import { db } from "@orqestra/db";
 import {
 	agent,
 	enabledModel,
-	instanceSettings,
 	mcpServer,
 	provider,
 	searchProvider,
 } from "@orqestra/db/schema";
+import { availableTools } from "@orqestra/tools";
+import { sql } from "drizzle-orm";
+import { admin, servedBy } from "./admin.ts";
 import {
-	generalAgent,
 	loadConfig,
 	modelRef,
 	type OrqestraConfig,
@@ -18,26 +19,33 @@ import {
 } from "./index.ts";
 import { decryptSecret, encryptionKey } from "./secret.ts";
 
-/** Everything saved in /console, with API keys decrypted; writes the General Agent into a database without Agents. */
-export async function loadSettings(): Promise<Settings> {
+/** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
+const CONFIG_CHANNEL = "config_changed";
+
+export type { McpTestResult } from "@orqestra/tools";
+export {
+	agentInput,
+	mcpServerEnabledInput,
+	mcpServerInput,
+	modelEnabledInput,
+	providerInput,
+	providerTestInput,
+	searchProviderInput,
+	toolServiceInput,
+} from "./admin.ts";
+
+/** Everything saved in /console, with API keys decrypted. */
+async function loadSettings(): Promise<Settings> {
 	const key = encryptionKey();
-	const [providers, enabled, searchProviders, [instance], mcpServers] =
+	const [providers, enabled, searchProviders, served, mcpServers, agents] =
 		await Promise.all([
 			db.select().from(provider),
 			db.select().from(enabledModel),
 			db.select().from(searchProvider),
-			db.select().from(instanceSettings),
+			servedBy(),
 			db.select().from(mcpServer).orderBy(mcpServer.createdAt),
+			db.select().from(agent).orderBy(agent.createdAt),
 		]);
-	let agents = await db.select().from(agent).orderBy(agent.createdAt);
-	if (!agents.length) {
-		// web and worker may both get here first
-		await db
-			.insert(agent)
-			.values({ id: "general", definition: generalAgent })
-			.onConflictDoNothing();
-		agents = await db.select().from(agent).orderBy(agent.createdAt);
-	}
 	return {
 		providers: providers.map((p) => ({
 			id: p.id,
@@ -53,10 +61,7 @@ export async function loadSettings(): Promise<Settings> {
 			apiKey: decryptSecret(p.apiKey, key),
 			baseUrl: p.baseUrl,
 		})),
-		servedBy: {
-			search: (instance?.searchServedBy ?? null) as SearchProviderId | null,
-			scrape: (instance?.scrapeServedBy ?? null) as SearchProviderId | null,
-		},
+		servedBy: served,
 		mcpServers: mcpServers.map((s) => ({
 			id: s.id,
 			name: s.name,
@@ -77,8 +82,9 @@ const logWarnings = (config: OrqestraConfig) => {
 		if (!a.models.length)
 			console.warn(`Agent "${a.id}": no Model is available, so it is offline`);
 	}
+	const available = availableTools(config);
 	for (const tool of toolName.options)
-		if (!config.tools[tool])
+		if (!available.includes(tool))
 			console.warn(
 				`Tool "${tool}" has no usable Search Provider, so Agents run without it`,
 			);
@@ -87,31 +93,36 @@ const logWarnings = (config: OrqestraConfig) => {
 
 /**
  * Loads the config on the first `get()`, then reloads it on every CONFIG_CHANNEL notification.
- * `get()` rejects when the first load fails; a failed reload keeps the previous config.
+ * `get()` rejects when the first load fails (also on a missing ORQESTRA_ENCRYPTION_KEY); a failed reload keeps the previous config.
  * A Run holds the config it started with, so a reload never changes a Run in progress.
  */
 export function liveConfig() {
-	encryptionKey(); // fail at startup, not on first use
 	let current: Promise<OrqestraConfig> | undefined;
 	let listener: Promise<{ release(destroy: boolean): void }> | undefined;
+	let latest = 0;
+	let newest: Promise<void> = Promise.resolve();
 	const load = () => loadSettings().then(loadConfig).then(logWarnings);
+	/** Resolves once the config is at least as fresh as this reload. */
+	const refresh = () => {
+		const next = load();
+		const seq = ++latest;
+		newest = next.then(
+			() => {
+				// an older reload finishing late must not replace a newer one
+				if (seq === latest) current = next;
+				else return newest;
+			},
+			(error) => console.error("config reload failed", error),
+		);
+		return newest;
+	};
 	const start = () => {
+		encryptionKey();
 		// LISTEN before the first load so no change slips in between
 		// shortcut: a dropped connection silently stops reloads; reconnect if that shows up in practice
 		const connected = db.$client.connect().then(async (client) => {
 			await client.query(`LISTEN ${CONFIG_CHANNEL}`);
-			let latest = 0;
-			client.on("notification", () => {
-				const next = load();
-				const seq = ++latest;
-				next.then(
-					() => {
-						// an older reload finishing late must not replace a newer one
-						if (seq === latest) current = next;
-					},
-					(error) => console.error("config reload failed", error),
-				);
-			});
+			client.on("notification", () => void refresh());
 			return client;
 		});
 		listener = connected;
@@ -119,6 +130,33 @@ export function liveConfig() {
 	};
 	return {
 		get: () => (current ??= start()),
+		/** Tells every process to reload, and reloads this one before resolving. */
+		reload: async () => {
+			await db.execute(sql`select pg_notify(${CONFIG_CHANNEL}, '')`);
+			if (current) await refresh();
+		},
 		close: async () => (await listener)?.release(true),
 	};
 }
+
+/**
+ * The instance config: `current()` for Runs and the Agent picker, and per entity what Admins edit in /console.
+ * Every write reloads it here and in every other process once committed. Callers check that the User is an Admin.
+ */
+function createConfig() {
+	const live = liveConfig();
+	return {
+		current: live.get,
+		close: live.close,
+		...admin({
+			current: live.get,
+			write: async (fn) => {
+				const result = await db.transaction(fn);
+				await live.reload();
+				return result;
+			},
+		}),
+	};
+}
+
+export const config = createConfig();

@@ -1,0 +1,26 @@
+{
+  "name": "@orqestra/conversations",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.4.0",
+    "@orqestra/config": "workspace:*",
+    "@orqestra/db": "workspace:*",
+    "bullmq": "^6.5.0",
+    "drizzle-orm": "^0.45.4",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.23.1",
+    "typescript": "^6.0.2",
+    "vitest": "^5.0.5"
+  }
+}

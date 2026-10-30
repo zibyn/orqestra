@@ -1,12 +1,10 @@
-import { liveConfig } from "@orqestra/config/live";
-import { startAgentWorker } from "./run.ts";
+import { config } from "@orqestra/config/live";
+import { startAgentWorker } from "./worker.ts";
 
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) throw new Error("DATABASE_URL is not set");
+if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set");
 
 // throws on a missing ORQESTRA_ENCRYPTION_KEY or invalid stored config so the worker never starts with it
-const config = liveConfig();
-const loaded = await config.get();
+const loaded = await config.current();
 console.log(
 	`loaded ${loaded.agents.length} agent(s), default "${loaded.defaultAgent.id}"`,
 );
@@ -19,7 +17,7 @@ const count = (name: string) => {
 		throw new Error(`${name} must be a positive integer`);
 	return n;
 };
-const close = await startAgentWorker(config.get, databaseUrl, {
+const close = await startAgentWorker(config.current, {
 	concurrency: count("WORKER_CONCURRENCY"),
 	subagentConcurrency: count("SUBAGENT_CONCURRENCY"),
 	providerConcurrency: count("PROVIDER_CONCURRENCY"),

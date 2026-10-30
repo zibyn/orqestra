@@ -10,6 +10,7 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { McpServer, ToolService } from "@orqestra/tools";
 import type { z } from "zod";
 import {
 	agentDefinition,
@@ -77,21 +78,6 @@ export interface Settings {
 		enabled: boolean;
 		headers: { name: string; value: string | undefined }[];
 	}[];
-}
-
-/** An MCP Server ready to connect to, with plaintext headers. */
-export interface McpServer {
-	name: string;
-	url: string;
-	headers: Record<string, string>;
-}
-
-/** A Tool's Search Provider and its decrypted key. */
-export interface ToolService {
-	provider: SearchProviderId;
-	apiKey: string;
-	/** The configured one, else the official one. */
-	baseUrl: string;
 }
 
 export interface OrqestraConfig {
@@ -360,11 +346,15 @@ export function resolveTurn(
 			? picked.model
 			: agent.defaultModel;
 	// loadConfig keeps only available Models in agent.models
-	const model = config.models.find((m) => modelRef(m) === ref) as Model<Api>;
+	const find = (ref: string) =>
+		config.models.find((m) => modelRef(m) === ref) as Model<Api>;
+	const model = find(ref);
+	/** The Agent's default Model, whatever was picked: it titles the Conversation. */
+	const defaultModel = find(agent.defaultModel);
 	const levels = resolveThinking(agent.thinking, model);
 	const thinking =
 		picked.thinking && levels.allowed.includes(picked.thinking)
 			? picked.thinking
 			: levels.default;
-	return { agent, model, thinking };
+	return { agent, model, defaultModel, thinking };
 }

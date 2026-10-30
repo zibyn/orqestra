@@ -23,9 +23,6 @@ importers:
       '@earendil-works/pi-ai':
         specifier: 1.4.0
         version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.6.7)
-      '@earendil-works/pi-mcp':
-        specifier: 1.4.0
-        version: 1.4.0
       '@faker-js/faker':
         specifier: ^10.3.0
         version: 10.6.0
@@ -38,6 +35,9 @@ importers:
       '@orqestra/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@orqestra/conversations':
+        specifier: workspace:*
+        version: link:../../packages/conversations
       '@orqestra/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -83,9 +83,6 @@ importers:
       better-auth:
         specifier: ^1.5.3
         version: 1.7.14(@tanstack/react-start@1.169.4(esbuild@0.28.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(rolldown@1.2.15)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@1.9.17)(vitest@5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
-      bullmq:
-        specifier: ^6.5.0
-        version: 6.5.0(ioredis@6.0.0)(pg@8.23.1)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -101,9 +98,6 @@ importers:
       nitro:
         specifier: 3.0.260610-beta
         version: 3.0.260610-beta(chokidar@5.0.0)(dotenv@17.4.2)(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))(jiti@2.7.0)(lru-cache@11.5.3)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
       react:
         specifier: ^19.2.0
         version: 19.3.1
@@ -144,9 +138,6 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.5
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
       '@types/react':
         specifier: ^19.2.0
         version: 19.3.0
@@ -186,25 +177,28 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 1.4.0
         version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7)
-      '@earendil-works/pi-mcp':
-        specifier: 1.4.0
-        version: 1.4.0
       '@orqestra/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@orqestra/conversations':
+        specifier: workspace:*
+        version: link:../../packages/conversations
+      '@orqestra/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
+    devDependencies:
+      '@earendil-works/pi-mcp':
+        specifier: 1.4.0
+        version: 1.4.0
       '@orqestra/db':
         specifier: workspace:*
         version: link:../../packages/db
-      bullmq:
-        specifier: ^6.5.0
-        version: 6.5.0(ioredis@6.0.0)(pg@8.23.1)
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
-    devDependencies:
       '@types/bun':
         specifier: latest
         version: 1.4.4
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       typescript:
         specifier: ^6.0.2
         version: 6.0.3
@@ -217,12 +211,15 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 1.4.0
         version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7)
-      '@earendil-works/pi-mcp':
-        specifier: 1.4.0
-        version: 1.4.0
       '@orqestra/db':
         specifier: workspace:*
         version: link:../db
+      '@orqestra/tools':
+        specifier: workspace:*
+        version: link:../tools
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -237,11 +234,42 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
-  packages/db:
+  packages/conversations:
     dependencies:
+      '@earendil-works/pi-ai':
+        specifier: 1.4.0
+        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.6.7)
+      '@orqestra/config':
+        specifier: workspace:*
+        version: link:../config
+      '@orqestra/db':
+        specifier: workspace:*
+        version: link:../db
       bullmq:
         specifier: ^6.5.0
         version: 6.5.0(ioredis@6.0.0)(pg@8.23.1)
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+      pg:
+        specifier: ^8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.3
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/db:
+    dependencies:
       drizzle-orm:
         specifier: ^0.45.1
         version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
@@ -264,6 +292,28 @@ importers:
       typescript:
         specifier: ^6.0.2
         version: 6.0.3
+
+  packages/tools:
+    dependencies:
+      '@earendil-works/pi-agent-core':
+        specifier: 1.4.0
+        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.6.7)
+      '@earendil-works/pi-ai':
+        specifier: 1.4.0
+        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.6.7)
+      '@earendil-works/pi-mcp':
+        specifier: 1.4.0
+        version: 1.4.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.3
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
 packages:
 

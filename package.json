@@ -6,7 +6,7 @@
     "dev": "pnpm --parallel --filter @orqestra/web --filter @orqestra/worker dev",
     "web": "pnpm --filter @orqestra/web dev",
     "build": "pnpm --filter @orqestra/web build",
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm -r --workspace-concurrency=1 --if-present test",
     "worker": "pnpm --filter @orqestra/worker dev",
     "db:generate": "pnpm --filter @orqestra/db db:generate",
     "db:migrate": "pnpm --filter @orqestra/db db:migrate",

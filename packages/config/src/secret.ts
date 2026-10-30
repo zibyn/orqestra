@@ -36,3 +36,11 @@ export function decryptSecret(stored: string, key = encryptionKey()) {
 		return undefined;
 	}
 }
+
+/** What to store for a secret typed into a form: it encrypted, or the stored one when it was left blank. */
+export const sealSecret = (typed: string | undefined, stored?: string) =>
+	typed ? encryptSecret(typed) : stored;
+
+/** False once ORQESTRA_ENCRYPTION_KEY changed: the Admin must enter it again. */
+export const secretReadable = (stored: string) =>
+	decryptSecret(stored) !== undefined;

@@ -11,14 +11,15 @@
     "@earendil-works/pi-agent-core": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
-    "@earendil-works/pi-mcp": "1.4.0",
     "@orqestra/config": "workspace:*",
-    "@orqestra/db": "workspace:*",
-    "bullmq": "^6.5.0",
-    "pg": "^8.23.1"
+    "@orqestra/conversations": "workspace:*",
+    "@orqestra/tools": "workspace:*"
   },
   "devDependencies": {
+    "@earendil-works/pi-mcp": "1.4.0",
+    "@orqestra/db": "workspace:*",
     "@types/bun": "latest",
+    "drizzle-orm": "^0.45.4",
     "typescript": "^6.0.2"
   }
 }

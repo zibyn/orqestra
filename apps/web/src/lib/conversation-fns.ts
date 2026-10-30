@@ -1,33 +1,32 @@
 import { thinkingLevel } from "@orqestra/config/shared";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import * as conversations from "#/lib/conversations";
+import { conversations } from "#/lib/conversations";
 import { requireUserId } from "#/lib/session";
 
 const id = z.uuid();
 
 export const getAgentOptions = createServerFn().handler(async () => {
 	await requireUserId();
-	return conversations.listAgentOptions();
+	return conversations.agentOptions();
 });
 
 export const listConversations = createServerFn().handler(async () =>
-	conversations.listConversations(await requireUserId()),
+	conversations.list(await requireUserId()),
 );
 
 export const getConversation = createServerFn()
 	.validator(id)
 	.handler(
 		async ({ data }) =>
-			(await conversations.getConversation(await requireUserId(), data)) ??
-			null,
+			(await conversations.get(await requireUserId(), data)) ?? null,
 	);
 
 export const getSubagentMessages = createServerFn()
 	.validator(id)
 	.handler(
 		async ({ data }) =>
-			(await conversations.getSubagentMessages(await requireUserId(), data)) ??
+			(await conversations.subagentTranscript(await requireUserId(), data)) ??
 			null,
 	);
 
@@ -47,34 +46,26 @@ export const sendMessage = createServerFn({ method: "POST" })
 			thinking: thinkingLevel.optional(),
 		}),
 	)
-	.handler(async ({ data }) =>
-		conversations.sendMessage(await requireUserId(), data),
-	);
+	.handler(async ({ data }) => conversations.send(await requireUserId(), data));
 
 export const stopRun = createServerFn({ method: "POST" })
 	.validator(id)
-	.handler(async ({ data }) =>
-		conversations.stopRun(await requireUserId(), data),
-	);
+	.handler(async ({ data }) => conversations.stop(await requireUserId(), data));
 
 export const retryRun = createServerFn({ method: "POST" })
 	.validator(id)
 	.handler(async ({ data }) =>
-		conversations.retryRun(await requireUserId(), data),
+		conversations.retry(await requireUserId(), data),
 	);
 
 export const renameConversation = createServerFn({ method: "POST" })
 	.validator(z.object({ id, title: z.string().trim().min(1).max(100) }))
 	.handler(async ({ data }) =>
-		conversations.renameConversation(
-			await requireUserId(),
-			data.id,
-			data.title,
-		),
+		conversations.rename(await requireUserId(), data.id, data.title),
 	);
 
 export const deleteConversation = createServerFn({ method: "POST" })
 	.validator(id)
 	.handler(async ({ data }) =>
-		conversations.deleteConversation(await requireUserId(), data),
+		conversations.delete(await requireUserId(), data),
 	);

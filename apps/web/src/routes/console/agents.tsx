@@ -17,6 +17,7 @@ import { Label } from "#/components/ui/label";
 import { Switch } from "#/components/ui/switch";
 import { Textarea } from "#/components/ui/textarea";
 import { deleteAgent, listAgents, saveAgent } from "#/lib/agents";
+import { saveErrorTexts } from "#/lib/save-errors";
 import { inlineCode } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
 
@@ -207,7 +208,7 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 			const result = await saveAgent({
 				data: { id, create: !agent, definition: def },
 			});
-			setErrors(result.errors);
+			setErrors(saveErrorTexts(result.errors));
 			if (!Object.keys(result.errors).length) {
 				await router.invalidate();
 				onDone();
