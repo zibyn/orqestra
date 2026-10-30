@@ -181,6 +181,7 @@ export async function lastModel(tx: Tx, conversationId: string) {
 	return last as { model: string; thinkingLevel: string } | undefined;
 }
 
+/** How a Subagent's Run ended, as its runtime judged it: its Outcome and result; a stop stands whatever is reported. */
 export type Ended = {
 	outcome: "completed" | "partial" | "failed" | "stopped";
 	result: string;

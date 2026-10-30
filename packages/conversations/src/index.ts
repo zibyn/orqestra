@@ -30,7 +30,7 @@ import {
 
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 
-export type { ConversationEvent } from "./runs.ts";
+export type { ConversationEvent, Ended } from "./runs.ts";
 export { MAX_SUBAGENTS } from "./runs.ts";
 export {
 	BudgetExceeded,
@@ -38,7 +38,6 @@ export {
 	MAX_SUBAGENTS_PER_USER_MESSAGE,
 	NoSuchSubagent,
 	NoSuchTemplate,
-	type Outcome,
 	type RunHandle,
 	type RunHandler,
 	type StreamEvent,

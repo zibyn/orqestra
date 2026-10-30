@@ -1,11 +1,6 @@
 import type { Message } from "@earendil-works/pi-ai";
-import type {
-	Outcome,
-	RunHandle,
-	StreamEvent,
-	Transcript,
-	Turn,
-} from "./serve.ts";
+import type { Ended } from "./runs.ts";
+import type { RunHandle, StreamEvent, Transcript, Turn } from "./serve.ts";
 
 const unavailable = async (): Promise<never> => {
 	throw new Error("memoryRun has no Subagents: pass `subagents`");
@@ -42,7 +37,7 @@ export function memoryRun({
 		tokensBefore: number;
 	}[] = [];
 	const titles: string[] = [];
-	const outcomes: (Outcome | undefined)[] = [];
+	const outcomes: (Ended | undefined)[] = [];
 	let over = false;
 	const run: RunHandle = {
 		conversationId: "memory",

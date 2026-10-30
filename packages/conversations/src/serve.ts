@@ -80,8 +80,6 @@ export type Transcript = {
 	messages: TranscriptMessage[];
 	compaction?: { summary: string; firstKeptId: number; createdAt: Date };
 };
-/** How a Subagent's Run ended, as its runtime judged it; a stop stands whatever is reported. */
-export type Outcome = Ended;
 /** Streaming events of the reply under way; the Conversation they belong to is the Run's. */
 export type StreamEvent =
 	| { type: "start" }
@@ -113,7 +111,7 @@ export type RunHandle = {
 	 * Ends the reply: returns the inputs that arrived meanwhile, to reply to next, or none, and the Run is over.
 	 * A Subagent reports its `outcome`; a stopped Run is over whatever it reports.
 	 */
-	finish(outcome?: Outcome): Promise<Message[]>;
+	finish(outcome?: Ended): Promise<Message[]>;
 	/** Names the Conversation, unless the User renamed it meanwhile. */
 	setTitle(title: string): Promise<void>;
 	/** The Run's Subagents; only a top-level Conversation's Agent has them. */
