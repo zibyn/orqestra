@@ -5,15 +5,17 @@ import { type TSchema, Type } from "@earendil-works/pi-ai";
 import type { McpClient, McpFetch, McpTransport } from "@earendil-works/pi-mcp";
 import { cut } from "./cut.ts";
 import { mcpTools } from "./mcp.ts";
+import {
+	mcpServerOf,
+	mcpToolRef,
+	type SearchProviderId,
+	type ToolName,
+	type ToolRef,
+	toolNames,
+} from "./refs.ts";
 import { searchProvider } from "./search.ts";
 
-/** The built-in Tools, in the order they are offered. */
-const toolNames = ["search", "scrape"] as const;
-export type ToolName = (typeof toolNames)[number];
-/** A built-in Tool, or `mcp:<serverId>` for every Tool of that MCP Server. */
-export type ToolRef = ToolName | `mcp:${string}`;
-
-export type SearchProviderId = "tavily" | "firecrawl" | "deepseek";
+export type { SearchProviderId, ToolName, ToolRef } from "./refs.ts";
 
 /** A Tool's Search Provider and its decrypted key. */
 export interface ToolService {
@@ -39,7 +41,7 @@ export interface ToolServices {
 /** The Tool entries that can be offered in a Run now. */
 export const availableTools = (services: ToolServices): ToolRef[] => [
 	...toolNames.filter((t) => services.tools[t]),
-	...Object.keys(services.mcpServers).map((id) => `mcp:${id}` as const),
+	...Object.keys(services.mcpServers).map(mcpToolRef),
 ];
 
 const text = (t: string) => [{ type: "text" as const, text: t }];
@@ -126,9 +128,7 @@ export async function openToolbox(
 	const { signal, fetch, mcpTransport, timeoutMs = 60_000 } = options;
 	const available = availableTools(services);
 	const offered = allowed.filter((t) => available.includes(t));
-	const ids = offered.flatMap((t) =>
-		t.startsWith("mcp:") ? [t.slice(4)] : [],
-	);
+	const ids = offered.flatMap((t) => mcpServerOf(t) ?? []);
 	const clients: McpClient[] = [];
 	const mcp = await mcpTools(services.mcpServers, ids, clients, {
 		signal,

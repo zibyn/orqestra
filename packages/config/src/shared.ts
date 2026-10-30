@@ -1,6 +1,16 @@
 // No Node imports: browser code can use this module (as @orqestra/config/shared)
 import type { Message } from "@earendil-works/pi-ai";
+import { searchProviders, toolNames } from "@orqestra/tools/refs";
 import { z } from "zod";
+
+export {
+	mcpServerOf,
+	mcpToolRef,
+	type SearchProviderId,
+	searchProviders,
+	type ToolName,
+	type ToolRef,
+} from "@orqestra/tools/refs";
 
 /** Every thinking level pi knows; which ones a Model offers is narrowed by `resolveThinking`. */
 export const thinkingLevel = z.enum([
@@ -19,18 +29,8 @@ export const messageText = (message: Message) =>
 		? message.content
 		: message.content.map((c) => (c.type === "text" ? c.text : "")).join("");
 
-/** The Tools an Agent can call; which Search Provider serves each is picked in /console. */
-export const toolName = z.enum(["search", "scrape"]);
-export type ToolName = z.infer<typeof toolName>;
-
-/** The Search Providers Orqestra supports, with their official baseUrl; each can be configured at most once. */
-export const searchProviders = [
-	{ id: "tavily", name: "Tavily", baseUrl: "https://api.tavily.com" },
-	{ id: "firecrawl", name: "Firecrawl", baseUrl: "https://api.firecrawl.dev" },
-	{ id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com" },
-] as const;
+export const toolName = z.enum(toolNames);
 export const searchProviderId = z.enum(searchProviders.map((p) => p.id));
-export type SearchProviderId = z.infer<typeof searchProviderId>;
 
 /** An Agent's id, used in `conversation.agent_id`. */
 export const agentId = z
@@ -40,17 +40,11 @@ export const agentId = z
 /** An MCP Server's id, like an Agent's; never changes, since Agent Definitions and Tool names refer to it. */
 export const mcpServerId = agentId;
 
-/** An Agent's Tool entry: a built-in Tool, or `mcp:<serverId>` for every Tool of that MCP Server. */
+/** An Agent's Tool entry, as saved in its Definition. */
 export const toolRef = z.union([
 	toolName,
 	z.templateLiteral(["mcp:", mcpServerId]),
 ]);
-export type ToolRef = z.infer<typeof toolRef>;
-/** The Tool entry for every Tool of MCP Server `id`. */
-export const mcpToolRef = (id: string) => `mcp:${id}` as const;
-/** The MCP Server a Tool entry names, or undefined for a built-in Tool. */
-export const mcpServerOf = (tool: string) =>
-	tool.startsWith("mcp:") ? tool.slice(4) : undefined;
 
 /** A name turned into an Agent or MCP Server id; "" when nothing usable is left (e.g. a Chinese name). */
 export const slugify = (name: string) =>
