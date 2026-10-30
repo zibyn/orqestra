@@ -1,10 +1,6 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
-import {
-	messageText,
-	type OrqestraConfig,
-	resolveTurn,
-} from "@orqestra/config";
+import { messageText, type OrqestraConfig } from "@orqestra/config";
 import type { RunHandle } from "@orqestra/conversations";
 import type { openToolbox } from "@orqestra/tools";
 import { prepareContext } from "./compaction.ts";
@@ -17,8 +13,8 @@ import {
 } from "./tools.ts";
 
 export type RuntimeDeps = {
-	/** Subagent templates, the title's Model, and the services for the Tools. */
-	config: Pick<OrqestraConfig, "agents" | "models" | "tools" | "mcpServers">;
+	/** Subagent templates, and the services for the Tools. */
+	config: Pick<OrqestraConfig, "agents" | "tools" | "mcpServers">;
 	/** Every Model request of the Run goes through it. */
 	streamSimple: OrqestraConfig["streamSimple"];
 	openToolbox: typeof openToolbox;
@@ -126,9 +122,8 @@ export async function runAgent(
 
 		// titled after the first turn that produced a reply, stopped ones included
 		const first = !rows.some((r) => r.message.role === "assistant");
-		const titleTurn = resolveTurn(config, turn.agent.id);
-		if (first && !run.renamed && titleTurn)
-			await generateTitle(last.message, answer, titleTurn.model, streamSimple)
+		if (first && !run.renamed)
+			await generateTitle(last.message, answer, turn.defaultModel, streamSimple)
 				.then(async (title) => {
 					if (title) await run.setTitle(title);
 				})

@@ -346,11 +346,15 @@ export function resolveTurn(
 			? picked.model
 			: agent.defaultModel;
 	// loadConfig keeps only available Models in agent.models
-	const model = config.models.find((m) => modelRef(m) === ref) as Model<Api>;
+	const find = (ref: string) =>
+		config.models.find((m) => modelRef(m) === ref) as Model<Api>;
+	const model = find(ref);
+	/** The Agent's default Model, whatever was picked: it titles the Conversation. */
+	const defaultModel = find(agent.defaultModel);
 	const levels = resolveThinking(agent.thinking, model);
 	const thinking =
 		picked.thinking && levels.allowed.includes(picked.thinking)
 			? picked.thinking
 			: levels.default;
-	return { agent, model, thinking };
+	return { agent, model, defaultModel, thinking };
 }

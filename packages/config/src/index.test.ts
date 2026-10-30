@@ -444,6 +444,8 @@ describe("resolveTurn", () => {
 		});
 		expect(turn?.model.id).toBe("deepseek-v4-pro");
 		expect(turn?.thinking).toBe("max");
+		// the Conversation's title comes from the Agent's default Model, whatever was picked
+		expect(turn?.defaultModel.id).toBe("deepseek-flash");
 	});
 
 	it("falls back to the default Model once the picked one leaves the allowed list", async () => {
