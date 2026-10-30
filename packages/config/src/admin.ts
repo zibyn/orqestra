@@ -24,8 +24,9 @@ import {
 	modelRef,
 	type OrqestraConfig,
 	type SaveErrors,
+	type SearchProviderId,
+	searchProviders as searchProviderCatalog,
 	searchProviderId,
-	searchProviders,
 	type ToolName,
 	testConnection,
 	toolName,
@@ -99,14 +100,46 @@ const customBaseUrl = (url: string, fallback: string) =>
 // RFC 7230 token
 const headerName = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
-async function catalogProvider(id: string) {
-	const found = (await catalogProviders()).find((p) => p.id === id);
-	if (!found) throw new Error(`"${id}" is not a Provider in the Catalog`);
-	return found;
-}
+const catalogProvider = async (id: string) =>
+	(await catalogProviders()).find((p) => p.id === id);
+const notInCatalog = (id: string): never => {
+	throw new Error(`"${id}" is not a Provider in the Catalog`);
+};
 
 const storedProvider = (id: string) =>
 	db.query.provider.findFirst({ where: eq(provider.id, id) });
+
+/** Saves a Provider or a Search Provider: a blank key keeps the stored one, the default baseUrl is stored as null (it follows the default). */
+async function saveKeyed(
+	write: Deps["write"],
+	table: typeof provider | typeof searchProvider,
+	input: { id: string; apiKey?: string; baseUrl: string },
+	defaultBaseUrl: string,
+): Promise<{ errors: SaveErrors }> {
+	const baseUrl = customBaseUrl(input.baseUrl, defaultBaseUrl);
+	const [stored] = await db
+		.select({ apiKey: table.apiKey })
+		.from(table)
+		.where(eq(table.id, input.id));
+	const apiKey = sealSecret(input.apiKey, stored?.apiKey);
+	if (!apiKey) return { errors: { apiKey: { code: "api_key_required" } } };
+	await write((tx) =>
+		tx
+			.insert(table)
+			.values({ id: input.id, apiKey, baseUrl })
+			.onConflictDoUpdate({ target: table.id, set: { apiKey, baseUrl } }),
+	);
+	return { errors: {} };
+}
+
+/** Which Search Provider serves each Tool; null when none is picked. */
+export async function servedBy() {
+	const served = await db.select().from(toolService);
+	const by = (tool: ToolName) =>
+		(served.find((s) => s.tool === tool)?.searchProviderId ??
+			null) as SearchProviderId | null;
+	return { search: by("search"), scrape: by("scrape") };
+}
 
 const providers = ({ write }: Deps) => ({
 	/** The Catalog, and the Providers configured from it with their enabled Models. */
@@ -137,19 +170,9 @@ const providers = ({ write }: Deps) => ({
 	async save(
 		input: z.infer<typeof providerInput>,
 	): Promise<{ errors: SaveErrors }> {
-		const catalog = (await catalogProviders()).find((p) => p.id === input.id);
+		const catalog = await catalogProvider(input.id);
 		if (!catalog) return { errors: { id: { code: "not_in_catalog" } } };
-		const baseUrl = customBaseUrl(input.baseUrl, catalog.baseUrl);
-		const stored = await storedProvider(input.id);
-		const apiKey = sealSecret(input.apiKey, stored?.apiKey);
-		if (!apiKey) return { errors: { apiKey: { code: "api_key_required" } } };
-		await write((tx) =>
-			tx
-				.insert(provider)
-				.values({ id: input.id, apiKey, baseUrl })
-				.onConflictDoUpdate({ target: provider.id, set: { apiKey, baseUrl } }),
-		);
-		return { errors: {} };
+		return saveKeyed(write, provider, input, catalog.baseUrl);
 	},
 
 	/** Also deletes its key and enabled Models; Runs already using it finish. */
@@ -158,9 +181,8 @@ const providers = ({ write }: Deps) => ({
 
 	/** Tries unsaved values on one Model; null when it worked, else the error. */
 	async test(input: z.infer<typeof providerTestInput>) {
-		const model = (await catalogProvider(input.id)).models.find(
-			(m) => m.id === input.modelId,
-		);
+		const catalog = (await catalogProvider(input.id)) ?? notInCatalog(input.id);
+		const model = catalog.models.find((m) => m.id === input.modelId);
 		if (!model) throw new Error(`"${input.modelId}" is not in the Catalog`);
 		const stored = await storedProvider(input.id);
 		const apiKey =
@@ -171,7 +193,9 @@ const providers = ({ write }: Deps) => ({
 
 	async setModelEnabled(input: z.infer<typeof modelEnabledInput>) {
 		if (input.enabled) {
-			const catalog = await catalogProvider(input.providerId);
+			const catalog =
+				(await catalogProvider(input.providerId)) ??
+				notInCatalog(input.providerId);
 			if (!catalog.models.some((m) => m.id === input.modelId))
 				throw new Error(`"${input.modelId}" is not in the Catalog`);
 		}
@@ -193,23 +217,21 @@ const providers = ({ write }: Deps) => ({
 	},
 });
 
-const searchProvidersOf = ({ current, write }: Deps) => ({
+const searchProviders = ({ current, write }: Deps) => ({
 	/** Configured Search Providers, which one serves each Tool, and the Tools that are available. */
 	async list() {
 		const [rows, served, loaded] = await Promise.all([
 			db.select().from(searchProvider).orderBy(searchProvider.createdAt),
-			db.select().from(toolService),
+			servedBy(),
 			current(),
 		]);
-		const servedBy = (tool: ToolName) =>
-			served.find((s) => s.tool === tool)?.searchProviderId ?? null;
 		return {
 			configured: rows.map((r) => ({
 				id: r.id,
 				keyReadable: secretReadable(r.apiKey),
 				baseUrl: r.baseUrl,
 			})),
-			servedBy: { search: servedBy("search"), scrape: servedBy("scrape") },
+			servedBy: served,
 			/** Tools with a usable Search Provider. */
 			available: availableTools(loaded).filter(
 				(t): t is ToolName => toolName.safeParse(t).success,
@@ -221,23 +243,8 @@ const searchProvidersOf = ({ current, write }: Deps) => ({
 		input: z.infer<typeof searchProviderInput>,
 	): Promise<{ errors: SaveErrors }> {
 		const official =
-			searchProviders.find((p) => p.id === input.id)?.baseUrl ?? "";
-		const baseUrl = customBaseUrl(input.baseUrl, official);
-		const stored = await db.query.searchProvider.findFirst({
-			where: eq(searchProvider.id, input.id),
-		});
-		const apiKey = sealSecret(input.apiKey, stored?.apiKey);
-		if (!apiKey) return { errors: { apiKey: { code: "api_key_required" } } };
-		await write((tx) =>
-			tx
-				.insert(searchProvider)
-				.values({ id: input.id, apiKey, baseUrl })
-				.onConflictDoUpdate({
-					target: searchProvider.id,
-					set: { apiKey, baseUrl },
-				}),
-		);
-		return { errors: {} };
+			searchProviderCatalog.find((p) => p.id === input.id)?.baseUrl ?? "";
+		return saveKeyed(write, searchProvider, input, official);
 	},
 
 	/** Tools it served become unavailable until another is picked. */
@@ -437,7 +444,7 @@ const agents = ({ current, write }: Deps) => ({
 
 export const admin = (deps: Deps) => ({
 	providers: providers(deps),
-	searchProviders: searchProvidersOf(deps),
+	searchProviders: searchProviders(deps),
 	mcpServers: mcpServers(deps),
 	agents: agents(deps),
 });

@@ -5,11 +5,10 @@ import {
 	mcpServer,
 	provider,
 	searchProvider,
-	toolService,
 } from "@orqestra/db/schema";
 import { availableTools } from "@orqestra/tools";
 import { sql } from "drizzle-orm";
-import { admin } from "./admin.ts";
+import { admin, servedBy } from "./admin.ts";
 import {
 	loadConfig,
 	modelRef,
@@ -43,13 +42,10 @@ async function loadSettings(): Promise<Settings> {
 			db.select().from(provider),
 			db.select().from(enabledModel),
 			db.select().from(searchProvider),
-			db.select().from(toolService),
+			servedBy(),
 			db.select().from(mcpServer).orderBy(mcpServer.createdAt),
 			db.select().from(agent).orderBy(agent.createdAt),
 		]);
-	const servedBy = (tool: string) =>
-		(served.find((s) => s.tool === tool)?.searchProviderId ??
-			null) as SearchProviderId | null;
 	return {
 		providers: providers.map((p) => ({
 			id: p.id,
@@ -65,7 +61,7 @@ async function loadSettings(): Promise<Settings> {
 			apiKey: decryptSecret(p.apiKey, key),
 			baseUrl: p.baseUrl,
 		})),
-		servedBy: { search: servedBy("search"), scrape: servedBy("scrape") },
+		servedBy: served,
 		mcpServers: mcpServers.map((s) => ({
 			id: s.id,
 			name: s.name,
