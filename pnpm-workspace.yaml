@@ -9,3 +9,6 @@ allowBuilds:
   msgpackr-extract: false
   '@google/genai': false
   protobufjs: false
+
+minimumReleaseAgeExclude:
+  - '@zibyn/polaris@0.1.3'

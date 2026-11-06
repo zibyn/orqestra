@@ -6,13 +6,13 @@ import {
 } from "@tanstack/react-router";
 import { ArrowLeftIcon } from "lucide-react";
 import { Button } from "#/components/ui/button";
-import { isAdmin } from "#/lib/identity";
+import { signIn } from "#/lib/instance";
 import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/console")({
-	beforeLoad: ({ context }) => {
-		if (!context.user) throw redirect({ to: "/login" });
-		if (!isAdmin(context.user)) throw redirect({ to: "/" });
+	beforeLoad: ({ context, location }) => {
+		if (!context.user) throw signIn(location.href);
+		if (!context.user.admin) throw redirect({ to: "/" });
 	},
 	component: Console,
 });
@@ -37,16 +37,6 @@ function Console() {
 					<span className="text-lg font-semibold">{m.console()}</span>
 				</div>
 				<nav className="flex gap-4 text-sm">
-					<Link
-						to="/console"
-						className={tabClass}
-						activeOptions={{ exact: true }}
-					>
-						{m.console_users()}
-					</Link>
-					<Link to="/console/settings" className={tabClass}>
-						{m.console_settings()}
-					</Link>
 					<Link to="/console/providers" className={tabClass}>
 						{m.providers()}
 					</Link>

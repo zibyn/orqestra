@@ -3,13 +3,12 @@ import type { QueryClient } from "@tanstack/react-query";
 import {
 	createRootRouteWithContext,
 	HeadContent,
-	redirect,
 	Scripts,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 
 import { TooltipProvider } from "#/components/ui/tooltip";
-import { getUserAndSetupState } from "#/lib/instance";
+import { getUser } from "#/lib/instance";
 import { themeScript } from "#/lib/theme";
 import { getLocale } from "#/paraglide/runtime";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
@@ -20,19 +19,14 @@ interface MyRouterContext {
 }
 
 export const Route = createRootRouteWithContext<MyRouterContext>()({
-	beforeLoad: async ({ location }) => {
+	beforeLoad: async () => {
 		// Other redirect strategies are possible; see
 		// https://github.com/TanStack/router/tree/main/examples/react/i18n-paraglide#offline-redirect
 		if (typeof document !== "undefined") {
 			document.documentElement.setAttribute("lang", getLocale());
 		}
 
-		// Instance Setup gate: everything goes to /setup until setup is completed, then /setup is gone for good
-		const { needsSetup, user } = await getUserAndSetupState();
-		const onSetup = location.pathname === "/setup";
-		if (needsSetup && !onSetup) throw redirect({ to: "/setup" });
-		if (!needsSetup && onSetup) throw redirect({ to: "/login" });
-		return { user };
+		return { user: await getUser() };
 	},
 
 	head: () => ({

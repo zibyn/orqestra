@@ -7,27 +7,19 @@ A self-hosted platform where signed-in users talk to an AI agent, with identity 
 ### People and access
 
 **User**:
-A person with an account in Orqestra. Every user has exactly one role: Admin or Member.
+A person in Polaris' User pool who may use Orqestra, identified by their Polaris `sub`. Orqestra keeps no user records of its own: who may sign in, and with which role, is decided in Polaris. Every User is either an Admin or a Member.
 _Avoid_: Account, customer
 
 **Admin**:
-A user with the `admin` role, allowed to manage users and instance settings.
+A User holding the `orqestra:admin` Entitlement at Orqestra's API in Polaris, allowed to configure Providers, Search Providers, MCP Servers and Agent Definitions in the console.
 _Avoid_: Superuser, owner
 
 **Member**:
-A user with the `user` role; the default for everyone who is not an Admin.
+A User allowed to sign in to Orqestra who is not an Admin.
 _Avoid_: Normal user, regular user
 
-**Default Admin**:
-The first Admin, created during Instance Setup before anyone else can sign in.
-_Avoid_: Root, bootstrap user
-
-**Instance Setup**:
-The one-time process that creates the Default Admin; it can no longer run once any Admin exists.
-_Avoid_: Onboarding, installation
-
 **Identity Provider**:
-The external OIDC server (Polaris) that authenticates users on Orqestra's behalf.
+Polaris, the external OIDC server that owns the User pool and signs Users in on Orqestra's behalf.
 _Avoid_: IdP, SSO server, auth server
 
 ### Agent

@@ -242,10 +242,7 @@ describe.skipIf(!url)(
 			await db.execute(
 				sql`select pg_notify(${runs.STOP_CHANNEL}, id::text) from conversation where status = 'running'`,
 			);
-			await db.execute(sql`truncate "user" cascade`);
-			await db
-				.insert(schema.user)
-				.values({ id: userId, name: "U", email: "u@x.io" });
+			await db.execute(sql`truncate conversation cascade`);
 		});
 
 		it("streams a Run's events to whoever subscribes", async () => {
@@ -1203,9 +1200,6 @@ describe.skipIf(!url)(
 		it("hides a Conversation from everyone but its owner", async () => {
 			script({ parent: [say("hi")] });
 			const id = await send("hi");
-			await db
-				.insert(schema.user)
-				.values({ id: "admin", name: "A", email: "a@x.io", role: "admin" });
 			expect(await conversations.get("admin", id)).toBeUndefined();
 			expect(await conversations.list("admin")).toEqual([]);
 			expect(

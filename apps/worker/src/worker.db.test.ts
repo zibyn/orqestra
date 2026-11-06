@@ -23,7 +23,6 @@ import { openToolbox } from "@orqestra/tools";
 // (lifecycle scenarios are tested there, runtime ones in src/runtime): needs TEST_DATABASE_URL, which src/test-env.ts sets up
 const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
-const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
 const { config } = await import("@orqestra/config/live");
 const { createConversations } = await import("@orqestra/conversations");
@@ -159,10 +158,7 @@ describe.skipIf(!url)(
 			await db.execute(
 				sql`select pg_notify('conversation_stop', id::text) from conversation where status = 'running'`,
 			);
-			await db.execute(sql`truncate "user" cascade`);
-			await db
-				.insert(schema.user)
-				.values({ id: userId, name: "U", email: "u@x.io" });
+			await db.execute(sql`truncate conversation cascade`);
 		});
 
 		it("streams a reply over SSE, then saves it and a title", async () => {

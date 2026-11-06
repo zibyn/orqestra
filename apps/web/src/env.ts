@@ -3,27 +3,19 @@ import { z } from "zod";
 
 export const env = createEnv({
 	server: {
-		SERVER_URL: z.string().url().optional(),
-		// Comma-separated extra origins allowed to sign in besides BETTER_AUTH_URL, e.g. a LAN address
-		BETTER_AUTH_TRUSTED_ORIGINS: z
-			.string()
-			.optional()
-			.transform(
-				(s) =>
-					s
-						?.split(",")
-						.map((o) => o.trim())
-						.filter(Boolean) ?? [],
-			),
+		// Where Orqestra is served; Polaris redirects back to {ORQESTRA_URL}/auth/callback
+		ORQESTRA_URL: z.url(),
+		POLARIS_ISSUER: z.url(),
+		POLARIS_CLIENT_ID: z.string().min(1),
+		POLARIS_CLIENT_SECRET: z.string().min(1),
+		// Identifier of the Application's default API at Polaris, where Roles grant `orqestra:admin`
+		POLARIS_API: z.string().min(1),
+		// Encrypts the session cookie; changing it signs everyone out. `openssl rand -base64 32`
+		POLARIS_SECRET: z.string().min(32),
 		// Encrypts Provider API keys in the database; `openssl rand -base64 32`
 		ORQESTRA_ENCRYPTION_KEY: z.base64().refine((s) => atob(s).length === 32, {
 			message: "must be 32 bytes of base64 (openssl rand -base64 32)",
 		}),
-		ADMIN_EMAIL: z.string().email().optional(),
-		ADMIN_PASSWORD: z.string().min(8).optional(),
-		OIDC_ISSUER: z.string().url().optional(),
-		OIDC_CLIENT_ID: z.string().optional(),
-		OIDC_CLIENT_SECRET: z.string().optional(),
 	},
 
 	/**
