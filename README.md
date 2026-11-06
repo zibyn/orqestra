@@ -121,40 +121,26 @@ console.log(env.VITE_APP_TITLE);
 
 
 
-## Setting up Better Auth
+## Sign-in with Polaris
 
-1. Generate and set the `BETTER_AUTH_SECRET` environment variable in your `.env.local`:
+Orqestra keeps no users of its own: Polaris owns the User pool and signs everyone in (`docs/adr/0003-polaris-owns-the-user-pool.md`). In Polaris' console:
 
-   ```bash
-   pnpm dlx @better-auth/cli secret
-   ```
+1. Create an API for Orqestra (its identifier goes in `POLARIS_API`), a Permission `orqestra:admin`, and Roles such as `admin` (with that Permission) and `member` (without).
+2. Create a Web Application: `client_secret_basic`, refresh tokens on, redirect URI `{ORQESTRA_URL}/auth/callback`, post logout redirect URI `{ORQESTRA_URL}`, default API the one above, and `requireRole` on so only Users with a Role at it can sign in.
+3. Give Users their Role.
 
-2. Visit the [Better Auth documentation](https://www.better-auth.com) to unlock the full potential of authentication in your app.
-
-### Adding a Database (Optional)
-
-Better Auth can work in stateless mode, but to persist user data, add a database:
-
-```typescript
-// src/lib/auth.ts
-import { betterAuth } from "better-auth";
-import { Pool } from "pg";
-
-export const auth = betterAuth({
-  database: new Pool({
-    connectionString: process.env.DATABASE_URL,
-  }),
-  // ... rest of config
-});
-```
-
-Then run migrations:
+Then set in `.env.local`:
 
 ```bash
-pnpm dlx @better-auth/cli migrate
+ORQESTRA_URL=https://orqestra.example.com
+POLARIS_ISSUER=https://auth.example.com
+POLARIS_CLIENT_ID=...
+POLARIS_CLIENT_SECRET=...
+POLARIS_API=https://orqestra.example.com/api
+POLARIS_SECRET=$(openssl rand -base64 32)  # encrypts the session cookie; changing it signs everyone out
 ```
 
-
+Upgrading from the better-auth version: back up the database, then `pnpm db:migrate`. Conversations of Users who had signed in with Polaris move to their Polaris `sub`; those of password-only users are kept but hidden until their `user_id` is set to the person's `sub` by hand.
 
 ## Routing
 

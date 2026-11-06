@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { AppSidebar } from "#/components/AppSidebar";
 import {
 	SidebarInset,
@@ -6,12 +6,13 @@ import {
 	SidebarTrigger,
 } from "#/components/ui/sidebar";
 import { getAgentOptions, listConversations } from "#/lib/conversation-fns";
+import { signIn } from "#/lib/instance";
 import { m } from "#/paraglide/messages";
 
 // Signed-in two-column shell: Conversation sidebar on the left, the current view on the right
 export const Route = createFileRoute("/_app")({
-	beforeLoad: ({ context }) => {
-		if (!context.user) throw redirect({ to: "/login" });
+	beforeLoad: ({ context, location }) => {
+		if (!context.user) throw signIn(location.href);
 		return { user: context.user };
 	},
 	loader: async () => {

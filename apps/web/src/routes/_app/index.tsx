@@ -9,7 +9,6 @@ import { MessageSquareIcon } from "lucide-react";
 import { useState } from "react";
 import { Composer } from "#/components/Composer";
 import { sendMessage } from "#/lib/conversation-fns";
-import { isAdmin } from "#/lib/identity";
 import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/_app/")({ component: NewConversation });
@@ -32,7 +31,7 @@ function NewConversation() {
 				<h1 className="text-lg font-medium">{m.empty_title()}</h1>
 				<p className="text-sm text-muted-foreground">
 					{!agentId ? (
-						isAdmin(user) ? (
+						user.admin ? (
 							<Link to="/console/providers" className="text-link underline">
 								{m.no_models_admin()}
 							</Link>

@@ -40,16 +40,24 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 } from "#/components/ui/sidebar";
-import { signOut } from "#/lib/auth-client";
 import { deleteConversation, renameConversation } from "#/lib/conversation-fns";
-import { displayName, isAdmin } from "#/lib/identity";
+import type { User } from "#/lib/identity";
 import { m } from "#/paraglide/messages";
+
+// The SDK's logout is POST only, so another site cannot sign the User out with a link
+function signOut() {
+	const form = document.createElement("form");
+	form.method = "post";
+	form.action = "/auth/logout";
+	document.body.append(form);
+	form.submit();
+}
 
 export function AppSidebar({
 	user,
 	conversations,
 }: {
-	user: { email: string; phoneNumber?: string | null; role?: string | null };
+	user: User;
 	conversations: { id: string; title: string | null; background: boolean }[];
 }) {
 	return (
@@ -84,21 +92,21 @@ export function AppSidebar({
 									aria-hidden
 									className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-medium uppercase"
 								>
-									{displayName(user).slice(0, 1)}
+									{user.name.slice(0, 1)}
 								</span>
-								<span className="flex-1 truncate">{displayName(user)}</span>
+								<span className="flex-1 truncate">{user.name}</span>
 								<ChevronsUpDownIcon className="ml-auto" />
 							</DropdownMenuTrigger>
 							<DropdownMenuContent side="top" className="min-w-56">
 								<DropdownMenuGroup>
 									<DropdownMenuLabel className="truncate">
-										{displayName(user)}
+										{user.name}
 									</DropdownMenuLabel>
 								</DropdownMenuGroup>
 								<DropdownMenuSeparator />
 								<ThemeSwitcher />
 								<ParaglideLocaleSwitcher />
-								{isAdmin(user) && (
+								{user.admin && (
 									<DropdownMenuItem render={<Link to="/console" />}>
 										<SettingsIcon />
 										{m.console()}
