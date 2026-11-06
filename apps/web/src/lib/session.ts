@@ -29,7 +29,13 @@ async function read(request: Request, setCookie: (cookie: string) => void) {
 	const { session, headers } = await polaris.getSession(request);
 	for (const cookie of headers.getSetCookie()) setCookie(cookie);
 	if (!session) return null;
-	const { entitlements } = await verifyAccessToken(session.accessToken);
+	const { entitlements } = await verifyAccessToken(session.accessToken).catch(
+		(err) => {
+			// The SDK's message hides which check failed (aud, iss, typ…); a misconfigured Application shows here
+			console.error("Polaris access token refused:", err.cause ?? err);
+			throw err;
+		},
+	);
 	return toUser(session.user, entitlements);
 }
 
