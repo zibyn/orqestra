@@ -14,11 +14,13 @@ export function toUser(
 		typeof claim === "string" && claim ? claim : undefined;
 	return {
 		id: claims.sub,
-		// email before phone, as people know themselves by these more than by a display name
+		// The name the User gave themselves, then how they sign in; the sub only when Polaris sends none
 		name:
+			text(claims.name) ??
+			text(claims.nickname) ??
+			text(claims.preferred_username) ??
 			text(claims.email) ??
 			text(claims.phone_number) ??
-			text(claims.name) ??
 			claims.sub,
 		admin: entitlements.includes(ADMIN_ENTITLEMENT),
 	};

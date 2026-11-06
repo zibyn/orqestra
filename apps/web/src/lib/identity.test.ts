@@ -12,16 +12,29 @@ describe("signed-in User", () => {
 		expect(toUser({ sub: "s1" }, []).admin).toBe(false);
 	});
 
-	it("shows email, then phone, then name, then sub", () => {
+	it("shows name, nickname, username, email, phone, then sub", () => {
 		const claims = {
 			sub: "s1",
+			name: "Ada Lovelace",
+			nickname: "Ada",
+			preferred_username: "ada",
 			email: "m@x.io",
 			phone_number: "+8613800000000",
-			name: "M",
 		};
-		expect(toUser(claims, []).name).toBe("m@x.io");
-		expect(toUser({ ...claims, email: "" }, []).name).toBe("+8613800000000");
-		expect(toUser({ sub: "s1", name: "M" }, []).name).toBe("M");
+		const without = (...keys: string[]) =>
+			toUser(
+				Object.fromEntries(
+					Object.entries(claims).filter(([k]) => !keys.includes(k)),
+				) as typeof claims,
+				[],
+			).name;
+		expect(without()).toBe("Ada Lovelace");
+		expect(toUser({ ...claims, name: "" }, []).name).toBe("Ada");
+		expect(without("name", "nickname")).toBe("ada");
+		expect(without("name", "nickname", "preferred_username")).toBe("m@x.io");
+		expect(without("name", "nickname", "preferred_username", "email")).toBe(
+			"+8613800000000",
+		);
 		expect(toUser({ sub: "s1" }, []).name).toBe("s1");
 	});
 });
