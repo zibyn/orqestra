@@ -8,8 +8,8 @@ export const env = createEnv({
 		POLARIS_ISSUER: z.url(),
 		POLARIS_CLIENT_ID: z.string().min(1),
 		POLARIS_CLIENT_SECRET: z.string().min(1),
-		// Identifier of the Application's default API at Polaris, where Roles grant `orqestra:admin`
-		POLARIS_API: z.string().min(1),
+		// The access tokens' aud: identifier of the Application's default API at Polaris, where Roles grant `orqestra:admin`
+		POLARIS_AUDIENCE: z.string().min(1),
 		// Encrypts the session cookie; changing it signs everyone out. `openssl rand -base64 32`
 		POLARIS_SECRET: z.string().min(32),
 		// Encrypts Provider API keys in the database; `openssl rand -base64 32`

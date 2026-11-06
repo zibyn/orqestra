@@ -13,5 +13,5 @@ export const polaris = createPolaris({
 // The Application's default API at Polaris; the session's access token is issued for it
 export const verifyAccessToken = accessTokenVerifier({
 	issuer: env.POLARIS_ISSUER,
-	audience: env.POLARIS_API,
+	audience: env.POLARIS_AUDIENCE,
 });

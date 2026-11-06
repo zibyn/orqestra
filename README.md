@@ -125,7 +125,7 @@ console.log(env.VITE_APP_TITLE);
 
 Orqestra keeps no users of its own: Polaris owns the User pool and signs everyone in (`docs/adr/0003-polaris-owns-the-user-pool.md`). In Polaris' console:
 
-1. Create an API for Orqestra (its identifier goes in `POLARIS_API`), a Permission `orqestra:admin`, and Roles such as `admin` (with that Permission) and `member` (without).
+1. Create an API for Orqestra (its identifier, e.g. `orqestra`, goes in `POLARIS_AUDIENCE`: the `aud` of the access tokens), a Permission `orqestra:admin`, and Roles such as `admin` (with that Permission) and `member` (without).
 2. Create a Web Application: `client_secret_basic`, refresh tokens on, redirect URI `{ORQESTRA_URL}/auth/callback`, post logout redirect URI `{ORQESTRA_URL}`, default API the one above, and `requireRole` on so only Users with a Role at it can sign in.
 3. Give Users their Role.
 
@@ -136,7 +136,7 @@ ORQESTRA_URL=https://orqestra.example.com
 POLARIS_ISSUER=https://auth.example.com
 POLARIS_CLIENT_ID=...
 POLARIS_CLIENT_SECRET=...
-POLARIS_API=https://orqestra.example.com/api
+POLARIS_AUDIENCE=orqestra
 POLARIS_SECRET=$(openssl rand -base64 32)  # encrypts the session cookie; changing it signs everyone out
 ```
 
