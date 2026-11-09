@@ -21,7 +21,6 @@ import { Route as ConsoleSandboxRouteImport } from './routes/console/sandbox'
 import { Route as ConsoleSearchRouteImport } from './routes/console/search'
 import { Route as ConsoleSkillsRouteImport } from './routes/console/skills'
 import { Route as AppCConversationIdRouteImport } from './routes/_app/c.$conversationId'
-import { Route as ApiConversationsIdEventsRouteImport } from './routes/api/conversations/$id/events'
 import { Route as ApiConversationsIdFilesRouteImport } from './routes/api/conversations/$id/files'
 import { Route as ApiConversationsIdUploadsRouteImport } from './routes/api/conversations/$id/uploads'
 
@@ -84,12 +83,6 @@ const AppCConversationIdRoute = AppCConversationIdRouteImport.update({
   path: '/c/$conversationId',
   getParentRoute: () => AppRoute,
 } as any)
-const ApiConversationsIdEventsRoute =
-  ApiConversationsIdEventsRouteImport.update({
-    id: '/api/conversations/$id/events',
-    path: '/api/conversations/$id/events',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const ApiConversationsIdFilesRoute = ApiConversationsIdFilesRouteImport.update({
   id: '/api/conversations/$id/files',
   path: '/api/conversations/$id/files',
@@ -114,7 +107,6 @@ export interface FileRoutesByFullPath {
   '/console/skills': typeof ConsoleSkillsRoute
   '/console/': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
-  '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
   '/api/conversations/$id/files': typeof ApiConversationsIdFilesRoute
   '/api/conversations/$id/uploads': typeof ApiConversationsIdUploadsRoute
 }
@@ -129,7 +121,6 @@ export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
-  '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
   '/api/conversations/$id/files': typeof ApiConversationsIdFilesRoute
   '/api/conversations/$id/uploads': typeof ApiConversationsIdUploadsRoute
 }
@@ -147,7 +138,6 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/console/': typeof ConsoleIndexRoute
   '/_app/c/$conversationId': typeof AppCConversationIdRoute
-  '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
   '/api/conversations/$id/files': typeof ApiConversationsIdFilesRoute
   '/api/conversations/$id/uploads': typeof ApiConversationsIdUploadsRoute
 }
@@ -165,7 +155,6 @@ export interface FileRouteTypes {
     | '/console/skills'
     | '/console/'
     | '/c/$conversationId'
-    | '/api/conversations/$id/events'
     | '/api/conversations/$id/files'
     | '/api/conversations/$id/uploads'
   fileRoutesByTo: FileRoutesByTo
@@ -180,7 +169,6 @@ export interface FileRouteTypes {
     | '/'
     | '/console'
     | '/c/$conversationId'
-    | '/api/conversations/$id/events'
     | '/api/conversations/$id/files'
     | '/api/conversations/$id/uploads'
   id:
@@ -197,7 +185,6 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/console/'
     | '/_app/c/$conversationId'
-    | '/api/conversations/$id/events'
     | '/api/conversations/$id/files'
     | '/api/conversations/$id/uploads'
   fileRoutesById: FileRoutesById
@@ -205,7 +192,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   ConsoleRoute: typeof ConsoleRouteWithChildren
-  ApiConversationsIdEventsRoute: typeof ApiConversationsIdEventsRoute
   ApiConversationsIdFilesRoute: typeof ApiConversationsIdFilesRoute
   ApiConversationsIdUploadsRoute: typeof ApiConversationsIdUploadsRoute
 }
@@ -296,13 +282,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCConversationIdRouteImport
       parentRoute: typeof AppRoute
     }
-    '/api/conversations/$id/events': {
-      id: '/api/conversations/$id/events'
-      path: '/api/conversations/$id/events'
-      fullPath: '/api/conversations/$id/events'
-      preLoaderRoute: typeof ApiConversationsIdEventsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/conversations/$id/files': {
       id: '/api/conversations/$id/files'
       path: '/api/conversations/$id/files'
@@ -360,7 +339,6 @@ const ConsoleRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   ConsoleRoute: ConsoleRouteWithChildren,
-  ApiConversationsIdEventsRoute: ApiConversationsIdEventsRoute,
   ApiConversationsIdFilesRoute: ApiConversationsIdFilesRoute,
   ApiConversationsIdUploadsRoute: ApiConversationsIdUploadsRoute,
 }

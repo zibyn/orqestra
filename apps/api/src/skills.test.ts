@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { config } from "@orqestra/config/live";
 import { SKILL_ZIP_MAX_BYTES } from "@orqestra/config/shared";
 import { zip } from "@orqestra/config/test-zip";
+import type { Conversations } from "@orqestra/conversations";
 import { createApp, type User } from "./app.ts";
 
 const ada: User = { id: "s1", name: "Ada", admin: true };
@@ -16,6 +17,7 @@ function app(user: User | null) {
 			return { user, cookies: [] };
 		},
 		auth: () => new Response(),
+		conversations: {} as Conversations,
 	});
 	return { handle: (request: Request) => api.handle(request), reads };
 }
