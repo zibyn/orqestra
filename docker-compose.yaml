@@ -82,13 +82,8 @@ volumes:
 
 configs:
   caddyfile:
-    # shortcut: web still serves the routes in @web until they move to the api; drop each as it does
     content: |
       :3000 {
-      	@web path_regexp ^/api/skills$$
-      	handle @web {
-      		reverse_proxy web:3000
-      	}
       	@api path /api/* /auth/*
       	handle @api {
       		reverse_proxy api:3001

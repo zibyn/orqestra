@@ -3,6 +3,7 @@ import { Elysia } from "elysia";
 import { z } from "zod";
 import { download, upload } from "./files.ts";
 import type { User } from "./identity.ts";
+import { skills } from "./skills.ts";
 
 export type { User };
 
@@ -18,6 +19,18 @@ export type Session = (
 /** Polaris' /auth/login, /auth/callback and /auth/logout. */
 export type Auth = (request: Request) => Response | Promise<Response>;
 
+/** `user` for the routes of whoever uses it; by its name, the session is read once per request however many do. */
+const signedIn = (session: Session) =>
+	new Elysia({ name: "signed-in" }).resolve(
+		{ as: "scoped" },
+		async ({ request, set }) => {
+			const { user, cookies } = await session(request);
+			if (cookies.length) set.headers["set-cookie"] = cookies;
+			return { user };
+		},
+	);
+export type SignedIn = ReturnType<typeof signedIn>;
+
 const unauthorized = { errors: { session: { code: "unauthorized" } } };
 
 /** The api; production passes Polaris (see polaris.ts), tests a fake. */
@@ -30,16 +43,13 @@ export function createApp({
 	auth: Auth;
 	conversations: Conversations;
 }) {
+	const user = signedIn(session);
 	return new Elysia()
 		.all("/auth/*", ({ request }) => auth(request))
 		.group("/api", (api) =>
 			api
-				// once per request, so that only one read may refresh
-				.resolve(async ({ request, set }) => {
-					const { user, cookies } = await session(request);
-					if (cookies.length) set.headers["set-cookie"] = cookies;
-					return { user };
-				})
+				.use(user)
+				.use(skills(user))
 				.get(
 					"/session",
 					({ user, status }) => user ?? status(401, unauthorized),

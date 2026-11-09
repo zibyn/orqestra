@@ -13,7 +13,6 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppMemoryRouteImport } from './routes/_app/memory'
-import { Route as ApiSkillsRouteImport } from './routes/api/skills'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
 import { Route as ConsoleMcpRouteImport } from './routes/console/mcp'
@@ -41,11 +40,6 @@ const AppMemoryRoute = AppMemoryRouteImport.update({
   id: '/memory',
   path: '/memory',
   getParentRoute: () => AppRoute,
-} as any)
-const ApiSkillsRoute = ApiSkillsRouteImport.update({
-  id: '/api/skills',
-  path: '/api/skills',
-  getParentRoute: () => rootRouteImport,
 } as any)
 const ConsoleIndexRoute = ConsoleIndexRouteImport.update({
   id: '/',
@@ -92,7 +86,6 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleRouteWithChildren
   '/memory': typeof AppMemoryRoute
-  '/api/skills': typeof ApiSkillsRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -104,7 +97,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/memory': typeof AppMemoryRoute
-  '/api/skills': typeof ApiSkillsRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -120,7 +112,6 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/console': typeof ConsoleRouteWithChildren
   '/_app/memory': typeof AppMemoryRoute
-  '/api/skills': typeof ApiSkillsRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -137,7 +128,6 @@ export interface FileRouteTypes {
     | '/'
     | '/console'
     | '/memory'
-    | '/api/skills'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
@@ -149,7 +139,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/memory'
-    | '/api/skills'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
@@ -164,7 +153,6 @@ export interface FileRouteTypes {
     | '/_app'
     | '/console'
     | '/_app/memory'
-    | '/api/skills'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
@@ -179,7 +167,6 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   ConsoleRoute: typeof ConsoleRouteWithChildren
-  ApiSkillsRoute: typeof ApiSkillsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -211,13 +198,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/memory'
       preLoaderRoute: typeof AppMemoryRouteImport
       parentRoute: typeof AppRoute
-    }
-    '/api/skills': {
-      id: '/api/skills'
-      path: '/api/skills'
-      fullPath: '/api/skills'
-      preLoaderRoute: typeof ApiSkillsRouteImport
-      parentRoute: typeof rootRouteImport
     }
     '/console/': {
       id: '/console/'
@@ -318,7 +298,6 @@ const ConsoleRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   ConsoleRoute: ConsoleRouteWithChildren,
-  ApiSkillsRoute: ApiSkillsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
