@@ -35,7 +35,7 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 } from "#/components/ui/sidebar";
-import { deleteConversation, renameConversation } from "#/lib/conversation-fns";
+import { api, ok } from "#/lib/api";
 import { m } from "#/paraglide/messages";
 
 export function AppSidebar({
@@ -100,7 +100,9 @@ function ConversationItem({
 	const rename = async (value: string) => {
 		setEditing(false);
 		if (!value.trim() || value === title) return;
-		await renameConversation({ data: { id: conversation.id, title: value } });
+		await ok(
+			api().api.conversations({ id: conversation.id }).patch({ title: value }),
+		);
 		await router.invalidate();
 	};
 
@@ -162,7 +164,9 @@ function ConversationItem({
 						onClick={async () => {
 							// shortcut: native confirm until the app has an AlertDialog component
 							if (!window.confirm(m.delete_confirm())) return;
-							await deleteConversation({ data: conversation.id });
+							await ok(
+								api().api.conversations({ id: conversation.id }).delete(),
+							);
 							if (active) await navigate({ to: "/" });
 							await router.invalidate();
 						}}

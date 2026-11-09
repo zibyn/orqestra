@@ -2,6 +2,7 @@ import type { Conversations } from "@orqestra/conversations";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { agents } from "./agents.ts";
+import { conversationRoutes } from "./conversations.ts";
 import { download, upload } from "./files.ts";
 import type { User } from "./identity.ts";
 import { mcpServers } from "./mcp-servers.ts";
@@ -50,80 +51,76 @@ export function createApp({
 	conversations: Conversations;
 }) {
 	const user = signedIn(session);
-	return (
-		new Elysia()
-			// invalid input is 422 with an error per field, like a save's own field errors
-			.onError(({ code, error, status }) => {
-				if (code !== "VALIDATION") return;
-				const errors: Record<string, { code: "invalid"; detail: string }> = {};
-				for (const { path, message } of error.all as {
-					path: string;
-					message: string;
-				}[])
-					errors[path === "root" ? "" : path] ??= {
-						code: "invalid",
-						detail: message,
-					};
-				return status(422, { errors });
-			})
-			.all("/auth/*", ({ request }) => auth(request))
-			.group("/api", (api) =>
-				api
-					.use(user)
-					.use(skills(user))
-					.use(providers(user))
-					.use(searchProviders(user))
-					.use(mcpServers(user))
-					.use(sandboxProvider(user))
-					.use(agents(user))
-					.get(
-						"/session",
-						({ user, status }) => user ?? status(401, unauthorized),
-					)
-					// a Conversation's live events as server-sent events, until the client goes; see conversations.subscribe
-					.get(
-						"/conversations/:id/events",
-						async ({ user, params, request, set, status }) => {
-							if (!user) return status(401, unauthorized);
-							const id = z.uuid().safeParse(params.id);
-							const stream =
-								id.success &&
-								(await conversations.subscribe(
-									user.id,
-									id.data,
-									request.signal,
-								));
-							if (!stream)
-								return status(404, {
-									errors: { conversation: { code: "not_found" } },
-								});
-							set.headers["content-type"] = "text/event-stream";
-							set.headers["cache-control"] = "no-cache";
-							return new Response(stream);
-						},
-					)
-					.post(
-						"/conversations/:id/uploads",
-						({ user, status, params, request }) =>
-							user
-								? upload(conversations, user.id, params.id, request)
-								: status(401, unauthorized),
-						// the body is the file, streamed into the Sandbox as it arrives
-						{ parse: "none" },
-					)
-					.get(
-						"/conversations/:id/files",
-						({ user, status, params, request, set }) => {
-							// the file may change in the Sandbox, and is the User's alone
-							set.headers["cache-control"] = "private, no-store";
-							return user
-								? download(conversations, user.id, params.id, request)
-								: status(401, unauthorized);
-						},
-					)
-					.use(memoryRoutes(user)),
-			)
-	);
+	return new Elysia()
+		.all("/auth/*", ({ request }) => auth(request))
+		.group("/api", (api) =>
+			api
+				// invalid input: every field zod refused, with its message
+				.onError(({ code, error, status }) => {
+					if (code !== "VALIDATION") return;
+					return status(422, {
+						errors: Object.fromEntries(
+							error.all.map((issue) => [
+								// `/thinking/default` as `thinking.default`, the console's field names
+								"path" in issue
+									? String(issue.path).replace(/^\//, "").replaceAll("/", ".")
+									: "",
+								{ code: "invalid", detail: issue.summary ?? issue.message },
+							]),
+						),
+					});
+				})
+				.use(user)
+				.use(skills(user))
+				.use(conversationRoutes(user, conversations))
+				.use(providers(user))
+				.use(searchProviders(user))
+				.use(mcpServers(user))
+				.use(sandboxProvider(user))
+				.use(agents(user))
+				.get(
+					"/session",
+					({ user, status }) => user ?? status(401, unauthorized),
+				)
+				// a Conversation's live events as server-sent events, until the client goes; see conversations.subscribe
+				.get(
+					"/conversations/:id/events",
+					async ({ user, params, request, set, status }) => {
+						if (!user) return status(401, unauthorized);
+						const id = z.uuid().safeParse(params.id);
+						const stream =
+							id.success &&
+							(await conversations.subscribe(user.id, id.data, request.signal));
+						if (!stream)
+							return status(404, {
+								errors: { conversation: { code: "not_found" } },
+							});
+						set.headers["content-type"] = "text/event-stream";
+						set.headers["cache-control"] = "no-cache";
+						return new Response(stream);
+					},
+				)
+				.post(
+					"/conversations/:id/uploads",
+					({ user, status, params, request }) =>
+						user
+							? upload(conversations, user.id, params.id, request)
+							: status(401, unauthorized),
+					// the body is the file, streamed into the Sandbox as it arrives
+					{ parse: "none" },
+				)
+				.get(
+					"/conversations/:id/files",
+					({ user, status, params, request, set }) => {
+						// the file may change in the Sandbox, and is the User's alone
+						set.headers["cache-control"] = "private, no-store";
+						return user
+							? download(conversations, user.id, params.id, request)
+							: status(401, unauthorized);
+					},
+				)
+				.use(memoryRoutes(user)),
+		);
 }
 
 export type App = ReturnType<typeof createApp>;
