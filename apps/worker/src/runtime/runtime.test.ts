@@ -873,5 +873,67 @@ describe("runAgent with memory", () => {
 		await runAgent(run("remembers", { isSubagent: true }).run, memDeps);
 		expect(prompt(context)).toBe("You are a test.");
 		expect(tools(context)).not.toContain("memory_");
+		expect(tools(context)).not.toContain('"recall"');
+	});
+
+	it("gives an Agent without memory no Recall", async () => {
+		answer();
+		await runAgent(run("forgets").run, memDeps);
+		expect(tools(context)).not.toContain('"recall"');
+	});
+
+	it("searches the User's past Conversations by keyword and time with Recall, and opens one", async () => {
+		const searched: unknown[] = [];
+		const at = new Date("2026-03-01T10:00:00Z");
+		const recall = {
+			search: async (keyword: string, range?: object) => {
+				searched.push({ keyword, range });
+				return [
+					{ conversationId: "c1", title: "杭州", at, snippet: "去杭州出差" },
+				];
+			},
+			open: async (id: string) =>
+				id === "c1"
+					? {
+							title: "杭州",
+							messages: [
+								{ role: "user" as const, text: "去杭州出差", at },
+								{ role: "assistant" as const, text: "好的", at },
+							],
+						}
+					: undefined,
+		};
+		script([
+			fauxAssistantMessage([
+				fauxToolCall("recall", {
+					query: "杭州",
+					after: "2026-01-01",
+					before: "2026-12-31T23:59:59Z",
+				}),
+				fauxToolCall("recall", { conversation: "c1" }),
+				fauxToolCall("recall", { conversation: "c2" }),
+				fauxToolCall("recall", {}),
+			]),
+			fauxAssistantMessage("done"),
+		]);
+		const m = run("remembers", { recall });
+		await runAgent(m.run, memDeps);
+
+		expect(searched).toEqual([
+			{
+				keyword: "杭州",
+				range: {
+					after: new Date("2026-01-01T00:00:00Z"),
+					before: new Date("2026-12-31T23:59:59Z"),
+				},
+			},
+		]);
+		const [search, open, missing, neither] = results(m);
+		expect(JSON.stringify(search.content)).toContain("c1");
+		expect(JSON.stringify(search.content)).toContain("去杭州出差");
+		expect(JSON.stringify(search.content)).toContain("2026-03-01T10:00:00");
+		expect(JSON.stringify(open.content)).toContain("好的");
+		expect(missing.isError).toBe(true);
+		expect(neither.isError).toBe(true);
 	});
 });
