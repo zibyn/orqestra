@@ -500,26 +500,49 @@ describe("runAgent with Skills", () => {
 		expect(o.calls).toEqual([]);
 	});
 
-	it("offers no Sandbox, Tools or Skill list without a Sandbox Provider or an available Skill", async () => {
-		for (const cfg of [
-			{ ...skillConfig(), sandboxProvider: undefined },
-			{
-				...skillConfig(),
-				agents: [agent({ id: "skilled", tools: [], skills: ["gone"] })],
+	it("offers no Sandbox, Tools or Skill list without a Sandbox Provider", async () => {
+		let context: Context | undefined;
+		script([
+			(c) => {
+				context = c;
+				return fauxAssistantMessage("ok");
 			},
-		]) {
-			let context: Context | undefined;
-			script([
-				(c) => {
-					context = c;
-					return fauxAssistantMessage("ok");
-				},
-			]);
-			const { m, deps } = setup(memoryOrrery(), cfg);
-			await runAgent(m.run, deps);
-			expect(systemPrompt(context)).toBe("You are a test.");
-			expect(offeredTools(context)).toEqual([]);
-		}
+		]);
+		const { m, deps } = setup(memoryOrrery(), {
+			...skillConfig(),
+			sandboxProvider: undefined,
+		});
+		await runAgent(m.run, deps);
+		expect(systemPrompt(context)).toBe("You are a test.");
+		expect(offeredTools(context)).toEqual([]);
+	});
+
+	it("offers the Sandbox without a Skill list, and writes no Skills, when no Skill is available", async () => {
+		const contexts: Context[] = [];
+		script([
+			(c) => {
+				contexts.push(c);
+				return fauxAssistantMessage(
+					fauxToolCall("bash", { command: "echo hi" }),
+				);
+			},
+			(c) => {
+				contexts.push(c);
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		const o = memoryOrrery();
+		const { m, deps } = setup(o, {
+			...skillConfig(),
+			agents: [agent({ id: "skilled", tools: [], skills: ["gone"] })],
+		});
+		await runAgent(m.run, deps);
+		expect(systemPrompt(contexts[0])).toBe("You are a test.");
+		expect(offeredTools(contexts[0])).toEqual(["read", "bash", "attach"]);
+		expect(o.calls.filter((c) => c.startsWith("createSandbox"))).toHaveLength(
+			1,
+		);
+		expect(o.calls.some((c) => c.startsWith("uploadArchive"))).toBe(false);
 	});
 
 	it("creates the Sandbox when a Tool first needs it, writes the Skills, and runs commands in it", async () => {

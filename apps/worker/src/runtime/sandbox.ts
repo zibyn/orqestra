@@ -108,7 +108,7 @@ export function sandboxTools(
 			.then(async () => {
 				const { id, woke } = await run.sandbox(client, provider);
 				if (woke || !written) {
-					await writeSkills(id);
+					if (skills.length) await writeSkills(id);
 					written = true;
 				}
 				return id;

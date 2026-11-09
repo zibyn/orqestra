@@ -65,7 +65,7 @@ A folder of know-how in the Agent Skills format, added by an Admin by upload or 
 _Avoid_: Plugin, prompt, template, Tool
 
 **Sandbox**:
-The isolated machine where an Agent reads its Skills, runs their scripts and works on files, served by the Sandbox Provider. A Conversation gets one the first time its Agent needs it, only if its Agent Definition allows a Skill; it sleeps when idle and wakes with its files intact, until the Conversation is deleted. A Subagent gets a Sandbox of its own. Reading and running in it are Tools, served by the Sandbox Provider.
+The isolated machine where an Agent reads its Skills, runs their scripts and works on files, served by the Sandbox Provider. A Conversation gets one the first time its Agent needs it, whenever a Sandbox Provider is configured, with or without Skills; it sleeps when idle and wakes with its files intact, until the Conversation is deleted. A Subagent gets a Sandbox of its own. Reading and running in it are Tools, served by the Sandbox Provider.
 _Avoid_: Container, VM, workspace, code interpreter
 
 **Sandbox Provider**:

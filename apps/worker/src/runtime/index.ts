@@ -48,15 +48,14 @@ export async function runAgent(
 	const last = rows.at(-1) as (typeof rows)[number];
 	// MCP Servers are connected for this Run only, so changes on the server side show up in the next one
 	const toolbox = await openToolbox(config, turn.agent.tools, { signal });
-	// no Sandbox, Sandbox Tools or Skill list without a Sandbox Provider or an available Skill
+	// no Sandbox or Sandbox Tools without a Sandbox Provider; no Skill list without an available Skill
 	const skills = turnSkills(config, turn.agent);
-	const sandbox =
-		skills.length && config.sandboxProvider
-			? sandboxTools(run, config.sandboxProvider, skills, {
-					orrery,
-					skillFiles,
-				})
-			: [];
+	const sandbox = config.sandboxProvider
+		? sandboxTools(run, config.sandboxProvider, skills, {
+				orrery,
+				skillFiles,
+			})
+		: [];
 	try {
 		const { messages, compaction } = await prepareContext(
 			run.transcript,

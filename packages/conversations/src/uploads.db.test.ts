@@ -141,17 +141,26 @@ describe.skipIf(!url)("Attachments (Postgres, memoryOrrery)", () => {
 		expect(o.calls).toEqual([]);
 	});
 
-	it("refuses uploads to an Agent without Skills", async () => {
+	it("takes uploads for an Agent without Skills, and refuses them without a Sandbox Provider", async () => {
 		const id = await newConversation("plain");
-		await expect(upload(id, "a.txt")).rejects.toThrow("takes no attachments");
-		expect(o.calls).toEqual([]);
+		expect((await upload(id, "a.txt"))?.name).toBe("a.txt");
+		const { sandboxProvider } = config;
+		config.sandboxProvider = undefined;
+		try {
+			const other = await newConversation("plain");
+			await expect(upload(other, "b.txt")).rejects.toThrow(
+				"takes no attachments",
+			);
+		} finally {
+			config.sandboxProvider = sandboxProvider;
+		}
 	});
 
 	it("tells which Agents take attachments", async () => {
 		const options = await conversations.agentOptions();
 		expect(
 			Object.fromEntries(options.map((a) => [a.id, a.attachments])),
-		).toEqual({ skilled: true, plain: false });
+		).toEqual({ skilled: true, plain: true });
 	});
 
 	it("starts an empty Conversation to upload into before its first message", async () => {

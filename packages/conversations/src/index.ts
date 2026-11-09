@@ -90,12 +90,6 @@ const ownedSubagent = async (userId: string, id: string) => {
 	return row as { parentId: string; number: number } | undefined;
 };
 
-/** An Agent takes attachments when it has a Sandbox: a Sandbox Provider and a Skill it may use. */
-const takesAttachments = (
-	cfg: OrqestraConfig,
-	agent: Pick<AgentDefinition, "skills">,
-) => turnSkills(cfg, agent).length > 0;
-
 export function createConversations({
 	config,
 	skillFiles,
@@ -164,7 +158,7 @@ export function createConversations({
 					description: a.description,
 					default: a.default,
 					pickable: a.pickable,
-					attachments: takesAttachments(cfg, a),
+					attachments: !!cfg.sandboxProvider,
 					defaultModel: a.defaultModel,
 					// the User may invoke those the Agent may not
 					skills: turnSkills(cfg, a).map(({ name, description }) => ({
@@ -296,7 +290,7 @@ export function createConversations({
 			if (!conv || conv.parentId) return undefined;
 			const cfg = await config();
 			const turn = resolveTurn(cfg, conv.agentId);
-			if (!turn || !cfg.sandboxProvider || !takesAttachments(cfg, turn.agent))
+			if (!turn || !cfg.sandboxProvider)
 				throw new ConversationError("This Agent takes no attachments");
 			// orrery's 65-second request timeout is too short to stream 50 MB from a slow browser
 			const client = orrery({ ...cfg.sandboxProvider, timeoutMs: 10 * 60_000 });
