@@ -225,11 +225,18 @@ const stopSubagents = (numbers: number[]): Call => ({
 	name: "subagent_stop",
 	run: async ({ run }) => `Stopping ${await run.subagents.stop(numbers)}`,
 });
-// a reply that never comes; it ends only when the Run is stopped
-const hang: Step = ({ run }) =>
-	new Promise((_, reject) =>
-		run.signal.addEventListener("abort", () => reject(new Error("aborted"))),
+/** Resolves once `signal` aborts, at once if it already has: a Stop can land before the step listens. */
+const untilAborted = (signal: AbortSignal) =>
+	new Promise<void>((resolve) =>
+		signal.aborted
+			? resolve()
+			: signal.addEventListener("abort", () => resolve(), { once: true }),
 	);
+// a reply that never comes; it ends only when the Run is stopped
+const hang: Step = async ({ run }) => {
+	await untilAborted(run.signal);
+	throw new Error("aborted");
+};
 const fail: Step = () => {
 	throw new Error("boom");
 };
@@ -1080,9 +1087,7 @@ describe.skipIf(!url)(
 				parent: [
 					async ({ run }) => {
 						await run.stream({ type: "start" });
-						await new Promise((r) =>
-							run.signal.addEventListener("abort", r, { once: true }),
-						);
+						await untilAborted(run.signal);
 						// a stopped reply keeps what was generated
 						return "half";
 					},
@@ -1116,8 +1121,7 @@ describe.skipIf(!url)(
 				["user", "also this"],
 				["assistant", "answer"],
 			]);
-			// two Runs back to back; 5s was too tight on CI runners
-		}, 15_000);
+		});
 
 		it(`holds a stopped Subagent's slot until its Run ends`, async () => {
 			const [parent] = await db
