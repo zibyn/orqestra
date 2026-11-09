@@ -32,3 +32,11 @@ export const saveErrorTexts = (errors: SaveErrors) =>
 	Object.fromEntries(
 		Object.entries(errors).map(([field, e]) => [field, saveErrorText(e)]),
 	);
+
+/** The first field error of a save, translated; undefined when it was saved. */
+export const firstError = (result: { errors: SaveErrors }) =>
+	Object.values(saveErrorTexts(result.errors))[0];
+
+/** What to show for a failed request. */
+export const errorText = (error: unknown) =>
+	error instanceof Error ? error.message : m.request_failed();

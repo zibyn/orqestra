@@ -5,26 +5,19 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import {
-	ChevronsUpDownIcon,
 	Loader2Icon,
-	LogOutIcon,
 	MoreHorizontalIcon,
 	PencilIcon,
-	SettingsIcon,
 	SquarePenIcon,
 	Trash2Icon,
 } from "lucide-react";
 import { useState } from "react";
-import ParaglideLocaleSwitcher from "#/components/LocaleSwitcher";
-import { ThemeSwitcher } from "#/components/ThemeSwitcher";
+import { NavUser } from "#/components/NavUser";
 import { Button } from "#/components/ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
-	DropdownMenuGroup,
 	DropdownMenuItem,
-	DropdownMenuLabel,
-	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
 import {
@@ -43,15 +36,6 @@ import {
 import { deleteConversation, renameConversation } from "#/lib/conversation-fns";
 import type { User } from "#/lib/identity";
 import { m } from "#/paraglide/messages";
-
-// The SDK's logout is POST only, so another site cannot sign the User out with a link
-function signOut() {
-	const form = document.createElement("form");
-	form.method = "post";
-	form.action = "/auth/logout";
-	document.body.append(form);
-	form.submit();
-}
 
 export function AppSidebar({
 	user,
@@ -84,43 +68,7 @@ export function AppSidebar({
 				</SidebarGroup>
 			</SidebarContent>
 			<SidebarFooter>
-				<SidebarMenu>
-					<SidebarMenuItem>
-						<DropdownMenu>
-							<DropdownMenuTrigger render={<SidebarMenuButton size="lg" />}>
-								<span
-									aria-hidden
-									className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background text-xs font-medium uppercase"
-								>
-									{user.name.slice(0, 1)}
-								</span>
-								<span className="flex-1 truncate">{user.name}</span>
-								<ChevronsUpDownIcon className="ml-auto" />
-							</DropdownMenuTrigger>
-							<DropdownMenuContent side="top" className="min-w-56">
-								<DropdownMenuGroup>
-									<DropdownMenuLabel className="truncate">
-										{user.name}
-									</DropdownMenuLabel>
-								</DropdownMenuGroup>
-								<DropdownMenuSeparator />
-								<ThemeSwitcher />
-								<ParaglideLocaleSwitcher />
-								{user.admin && (
-									<DropdownMenuItem render={<Link to="/console" />}>
-										<SettingsIcon />
-										{m.console()}
-									</DropdownMenuItem>
-								)}
-								<DropdownMenuSeparator />
-								<DropdownMenuItem onClick={signOut}>
-									<LogOutIcon />
-									{m.sign_out()}
-								</DropdownMenuItem>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</SidebarMenuItem>
-				</SidebarMenu>
+				<NavUser user={user} />
 			</SidebarFooter>
 		</Sidebar>
 	);

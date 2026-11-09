@@ -7,7 +7,7 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { requireAdmin } from "#/lib/session";
 
-// Search Providers and which one serves each Tool, edited by Admins in /console/providers. API keys only go in.
+// Search Providers and which one serves each Tool, edited by Admins in /console/search. API keys only go in.
 
 export const getSearchProviders = createServerFn().handler(async () => {
 	await requireAdmin();

@@ -139,5 +139,7 @@
   "save_default_required": "请改为将另一个 Agent 设为默认。",
   "save_default_not_pickable": "默认 Agent 必须可供 User 选择。",
   "save_default_model_not_allowed": "“{model}”不在允许的 Model 中。",
-  "save_thinking_default_not_allowed": "“{level}”不在允许的思考档位中。"
+  "save_thinking_default_not_allowed": "“{level}”不在允许的思考档位中。",
+  "tools": "Tool",
+  "back_to_conversations": "返回对话"
 }

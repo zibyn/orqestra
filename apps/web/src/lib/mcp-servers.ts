@@ -7,7 +7,7 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { requireAdmin } from "#/lib/session";
 
-// MCP Servers, edited by Admins in /console/providers. Header values only go in.
+// MCP Servers, edited by Admins in /console/mcp. Header values only go in.
 
 export const getMcpServers = createServerFn().handler(async () => {
 	await requireAdmin();

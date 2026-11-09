@@ -62,7 +62,10 @@ Use the Tailwind names (`bg-background`, `text-muted-foreground`, `border-border
   - User messages: right-aligned, `bg-muted` bubble, `rounded-2xl px-4 py-2.5`, max ~80% width.
   - Agent replies: no bubble; plain prose (`prose prose-neutral dark:prose-invert`) aligned to the left of the column.
 - **Standalone pages** (login, setup): a single `Card` centered on the screen, `max-w-sm`.
-- **Console**: centered `max-w-4xl` column with a page header, a tab-like nav and content below.
+- **Console** (`src/routes/console.tsx`): its own shadcn `Sidebar` (`variant="inset"`, `collapsible="icon"`) and `SidebarInset`, after the shadcn sidebar blocks.
+  - Sidebar header: Orqestra / Console. Content: nav groups (Models: Providers, Agents; Tools: Search Providers, MCP Servers) and "Back to conversations" at the bottom. Footer: the same user menu as the app (`NavUser`).
+  - Top bar: `SidebarTrigger`, a vertical `Separator` and a `Breadcrumb` (Console › page).
+  - Pages use `ConsolePage` (centered `max-w-5xl`: title, one-line description, optional primary action). Each item is a `Card` (`CardTitle` with an outline `Badge` for its id, `CardAction` for edit/delete); forms use `FieldGroup` + `Field`; warnings use a destructive `Alert`.
 
 ## Components
 
@@ -81,7 +84,7 @@ Icon-only buttons use `size="icon"` / `icon-sm` and must have an `aria-label` or
 
 ### Forms
 
-- Stack fields with `flex flex-col gap-4`; each field is a `Label` above its `Input` (`gap-2`).
+- Use `FieldGroup` + `Field` (`FieldLabel`, `FieldDescription`, `FieldError`); switches in a list are horizontal `Field`s.
 - Submit button goes last, full width in standalone cards (`w-full`).
 - Errors: one line of `text-sm text-destructive` below the form (or under the field) — no toasts for form errors.
 

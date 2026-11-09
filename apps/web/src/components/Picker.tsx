@@ -1,7 +1,8 @@
-import { Label } from "#/components/ui/label";
+import { Field, FieldError, FieldLabel } from "#/components/ui/field";
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
@@ -22,25 +23,31 @@ export function Picker({
 	items: { value: string; label: string }[];
 }) {
 	return (
-		<div className="flex flex-col gap-2">
-			<Label>{label}</Label>
+		<Field data-invalid={!!error || undefined}>
+			<FieldLabel>{label}</FieldLabel>
 			<Select
 				items={items}
 				value={value}
 				onValueChange={(v) => v && onChange(v)}
 			>
-				<SelectTrigger aria-label={label} className="min-w-48 self-start">
+				<SelectTrigger
+					aria-label={label}
+					aria-invalid={!!error || undefined}
+					className="min-w-48"
+				>
 					<SelectValue />
 				</SelectTrigger>
 				<SelectContent>
-					{items.map((item) => (
-						<SelectItem key={item.value} value={item.value}>
-							{item.label}
-						</SelectItem>
-					))}
+					<SelectGroup>
+						{items.map((item) => (
+							<SelectItem key={item.value} value={item.value}>
+								{item.label}
+							</SelectItem>
+						))}
+					</SelectGroup>
 				</SelectContent>
 			</Select>
-			{error && <p className="text-destructive">{error}</p>}
-		</div>
+			<FieldError>{error}</FieldError>
+		</Field>
 	);
 }

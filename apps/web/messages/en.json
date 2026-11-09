@@ -139,5 +139,7 @@
   "save_default_required": "Make another Agent the default instead.",
   "save_default_not_pickable": "The default Agent must be pickable by Users.",
   "save_default_model_not_allowed": "\"{model}\" is not one of the allowed Models.",
-  "save_thinking_default_not_allowed": "\"{level}\" is not one of the allowed thinking levels."
+  "save_thinking_default_not_allowed": "\"{level}\" is not one of the allowed thinking levels.",
+  "tools": "Tools",
+  "back_to_conversations": "Back to conversations"
 }

@@ -15,7 +15,9 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AuthSplatRouteImport } from './routes/auth/$'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
+import { Route as ConsoleMcpRouteImport } from './routes/console/mcp'
 import { Route as ConsoleProvidersRouteImport } from './routes/console/providers'
+import { Route as ConsoleSearchRouteImport } from './routes/console/search'
 import { Route as AppCConversationIdRouteImport } from './routes/_app/c.$conversationId'
 import { Route as ApiConversationsIdEventsRouteImport } from './routes/api/conversations/$id/events'
 
@@ -48,9 +50,19 @@ const ConsoleAgentsRoute = ConsoleAgentsRouteImport.update({
   path: '/agents',
   getParentRoute: () => ConsoleRoute,
 } as any)
+const ConsoleMcpRoute = ConsoleMcpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
+  getParentRoute: () => ConsoleRoute,
+} as any)
 const ConsoleProvidersRoute = ConsoleProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
+  getParentRoute: () => ConsoleRoute,
+} as any)
+const ConsoleSearchRoute = ConsoleSearchRouteImport.update({
+  id: '/search',
+  path: '/search',
   getParentRoute: () => ConsoleRoute,
 } as any)
 const AppCConversationIdRoute = AppCConversationIdRouteImport.update({
@@ -70,7 +82,9 @@ export interface FileRoutesByFullPath {
   '/console': typeof ConsoleRouteWithChildren
   '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
+  '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
+  '/console/search': typeof ConsoleSearchRoute
   '/console/': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
   '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
@@ -78,7 +92,9 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
+  '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
+  '/console/search': typeof ConsoleSearchRoute
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
@@ -90,7 +106,9 @@ export interface FileRoutesById {
   '/console': typeof ConsoleRouteWithChildren
   '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
+  '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
+  '/console/search': typeof ConsoleSearchRoute
   '/_app/': typeof AppIndexRoute
   '/console/': typeof ConsoleIndexRoute
   '/_app/c/$conversationId': typeof AppCConversationIdRoute
@@ -103,7 +121,9 @@ export interface FileRouteTypes {
     | '/console'
     | '/auth/$'
     | '/console/agents'
+    | '/console/mcp'
     | '/console/providers'
+    | '/console/search'
     | '/console/'
     | '/c/$conversationId'
     | '/api/conversations/$id/events'
@@ -111,7 +131,9 @@ export interface FileRouteTypes {
   to:
     | '/auth/$'
     | '/console/agents'
+    | '/console/mcp'
     | '/console/providers'
+    | '/console/search'
     | '/'
     | '/console'
     | '/c/$conversationId'
@@ -122,7 +144,9 @@ export interface FileRouteTypes {
     | '/console'
     | '/auth/$'
     | '/console/agents'
+    | '/console/mcp'
     | '/console/providers'
+    | '/console/search'
     | '/_app/'
     | '/console/'
     | '/_app/c/$conversationId'
@@ -180,11 +204,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleAgentsRouteImport
       parentRoute: typeof ConsoleRoute
     }
+    '/console/mcp': {
+      id: '/console/mcp'
+      path: '/mcp'
+      fullPath: '/console/mcp'
+      preLoaderRoute: typeof ConsoleMcpRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
     '/console/providers': {
       id: '/console/providers'
       path: '/providers'
       fullPath: '/console/providers'
       preLoaderRoute: typeof ConsoleProvidersRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/console/search': {
+      id: '/console/search'
+      path: '/search'
+      fullPath: '/console/search'
+      preLoaderRoute: typeof ConsoleSearchRouteImport
       parentRoute: typeof ConsoleRoute
     }
     '/_app/c/$conversationId': {
@@ -218,13 +256,17 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface ConsoleRouteChildren {
   ConsoleAgentsRoute: typeof ConsoleAgentsRoute
+  ConsoleMcpRoute: typeof ConsoleMcpRoute
   ConsoleProvidersRoute: typeof ConsoleProvidersRoute
+  ConsoleSearchRoute: typeof ConsoleSearchRoute
   ConsoleIndexRoute: typeof ConsoleIndexRoute
 }
 
 const ConsoleRouteChildren: ConsoleRouteChildren = {
   ConsoleAgentsRoute: ConsoleAgentsRoute,
+  ConsoleMcpRoute: ConsoleMcpRoute,
   ConsoleProvidersRoute: ConsoleProvidersRoute,
+  ConsoleSearchRoute: ConsoleSearchRoute,
   ConsoleIndexRoute: ConsoleIndexRoute,
 }
 

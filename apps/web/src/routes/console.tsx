@@ -3,9 +3,42 @@ import {
 	Link,
 	Outlet,
 	redirect,
+	useLocation,
 } from "@tanstack/react-router";
-import { ArrowLeftIcon } from "lucide-react";
-import { Button } from "#/components/ui/button";
+import {
+	ArrowLeftIcon,
+	BotIcon,
+	BoxesIcon,
+	type LucideIcon,
+	PlugIcon,
+	SearchIcon,
+	SettingsIcon,
+} from "lucide-react";
+import { NavUser } from "#/components/NavUser";
+import {
+	Breadcrumb,
+	BreadcrumbItem,
+	BreadcrumbLink,
+	BreadcrumbList,
+	BreadcrumbPage,
+	BreadcrumbSeparator,
+} from "#/components/ui/breadcrumb";
+import { Separator } from "#/components/ui/separator";
+import {
+	Sidebar,
+	SidebarContent,
+	SidebarFooter,
+	SidebarGroup,
+	SidebarGroupLabel,
+	SidebarHeader,
+	SidebarInset,
+	SidebarMenu,
+	SidebarMenuButton,
+	SidebarMenuItem,
+	SidebarProvider,
+	SidebarRail,
+	SidebarTrigger,
+} from "#/components/ui/sidebar";
 import { signIn } from "#/lib/instance";
 import { m } from "#/paraglide/messages";
 
@@ -13,39 +46,134 @@ export const Route = createFileRoute("/console")({
 	beforeLoad: ({ context, location }) => {
 		if (!context.user) throw signIn(location.href);
 		if (!context.user.admin) throw redirect({ to: "/" });
+		return { user: context.user };
 	},
 	component: Console,
 });
 
-const tabClass =
-	"-mb-px border-b-2 border-transparent px-1 pb-2 text-muted-foreground transition-colors hover:text-foreground data-[status=active]:border-foreground data-[status=active]:text-foreground";
+type NavItem = {
+	to:
+		| "/console/providers"
+		| "/console/agents"
+		| "/console/search"
+		| "/console/mcp";
+	label: () => string;
+	icon: LucideIcon;
+};
+
+// One list drives the sidebar and the breadcrumb; labels are functions so they follow the locale
+const nav: { label: () => string; items: NavItem[] }[] = [
+	{
+		label: m.models,
+		items: [
+			{ to: "/console/providers", label: m.providers, icon: BoxesIcon },
+			{ to: "/console/agents", label: m.console_agents, icon: BotIcon },
+		],
+	},
+	{
+		label: m.tools,
+		items: [
+			{ to: "/console/search", label: m.search_providers, icon: SearchIcon },
+			{ to: "/console/mcp", label: m.mcp_servers, icon: PlugIcon },
+		],
+	},
+];
 
 function Console() {
+	const { user } = Route.useRouteContext();
+	const { pathname } = useLocation();
+	const current = nav
+		.flatMap((g) => g.items)
+		.find((item) => pathname.startsWith(item.to));
+
 	return (
-		<main className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6">
-			<header className="flex flex-col gap-4 border-b">
-				<div className="flex items-center gap-2">
-					<Button
-						variant="ghost"
-						size="icon-sm"
-						aria-label={m.back_to_app()}
-						nativeButton={false}
-						render={<Link to="/" />}
-					>
-						<ArrowLeftIcon />
-					</Button>
-					<span className="text-lg font-semibold">{m.console()}</span>
+		<SidebarProvider>
+			<Sidebar collapsible="icon" variant="inset">
+				<SidebarHeader>
+					<SidebarMenu>
+						<SidebarMenuItem>
+							<SidebarMenuButton size="lg" render={<Link to="/console" />}>
+								<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
+									<SettingsIcon />
+								</span>
+								<span className="flex flex-col leading-tight">
+									<span className="truncate font-medium">Orqestra</span>
+									<span className="truncate text-xs text-muted-foreground">
+										{m.console()}
+									</span>
+								</span>
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+					</SidebarMenu>
+				</SidebarHeader>
+				<SidebarContent>
+					{nav.map((group) => (
+						<SidebarGroup key={group.items[0].to}>
+							<SidebarGroupLabel>{group.label()}</SidebarGroupLabel>
+							<SidebarMenu>
+								{group.items.map((item) => (
+									<SidebarMenuItem key={item.to}>
+										<SidebarMenuButton
+											isActive={item === current}
+											tooltip={item.label()}
+											render={<Link to={item.to} />}
+										>
+											<item.icon />
+											<span>{item.label()}</span>
+										</SidebarMenuButton>
+									</SidebarMenuItem>
+								))}
+							</SidebarMenu>
+						</SidebarGroup>
+					))}
+					<SidebarGroup className="mt-auto">
+						<SidebarMenu>
+							<SidebarMenuItem>
+								<SidebarMenuButton
+									tooltip={m.back_to_conversations()}
+									render={<Link to="/" />}
+								>
+									<ArrowLeftIcon />
+									<span>{m.back_to_conversations()}</span>
+								</SidebarMenuButton>
+							</SidebarMenuItem>
+						</SidebarMenu>
+					</SidebarGroup>
+				</SidebarContent>
+				<SidebarFooter>
+					<NavUser user={user} />
+				</SidebarFooter>
+				<SidebarRail />
+			</Sidebar>
+			<SidebarInset>
+				<header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+					<SidebarTrigger className="-ml-1" aria-label={m.toggle_sidebar()} />
+					<Separator
+						orientation="vertical"
+						className="mr-2 data-[orientation=vertical]:h-4"
+					/>
+					<Breadcrumb>
+						<BreadcrumbList>
+							<BreadcrumbItem className="hidden md:block">
+								<BreadcrumbLink render={<Link to="/console" />}>
+									{m.console()}
+								</BreadcrumbLink>
+							</BreadcrumbItem>
+							{current && (
+								<>
+									<BreadcrumbSeparator className="hidden md:block" />
+									<BreadcrumbItem>
+										<BreadcrumbPage>{current.label()}</BreadcrumbPage>
+									</BreadcrumbItem>
+								</>
+							)}
+						</BreadcrumbList>
+					</Breadcrumb>
+				</header>
+				<div className="flex flex-1 flex-col p-4 md:p-8">
+					<Outlet />
 				</div>
-				<nav className="flex gap-4 text-sm">
-					<Link to="/console/providers" className={tabClass}>
-						{m.providers()}
-					</Link>
-					<Link to="/console/agents" className={tabClass}>
-						{m.console_agents()}
-					</Link>
-				</nav>
-			</header>
-			<Outlet />
-		</main>
+			</SidebarInset>
+		</SidebarProvider>
 	);
 }
