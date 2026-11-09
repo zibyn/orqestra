@@ -1,18 +1,18 @@
 import { inflateRawSync } from "node:zlib";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import type { SaveError } from "./shared.ts";
+import type { SaveError, SkillFile } from "./shared.ts";
 
 // A Skill uploaded as a zip, checked against the Agent Skills standard (agentskills.io) and Orqestra's limits.
 
 export const SKILL_MAX_BYTES = 10 * 1024 * 1024;
 export const SKILL_MAX_FILES = 200;
 
-/** A Skill's files, paths relative to its folder (`SKILL.md`, `scripts/…`). */
+/** A Skill with its files. */
 export interface SkillFiles {
 	name: string;
 	description: string;
 	disableModelInvocation: boolean;
-	files: { path: string; content: Uint8Array }[];
+	files: SkillFile[];
 }
 
 /** lowercase letters, digits and single hyphens between them, at most 64 characters */
@@ -21,11 +21,10 @@ export const skillName = /^(?=.{1,64}$)[a-z0-9]+(-[a-z0-9]+)*$/;
 const S_IFMT = 0o170000;
 const S_IFLNK = 0o120000;
 
-type Entry = { path: string; content: Uint8Array };
 type Fail = { error: SaveError };
 
 /** Reads the zip's central directory; stored and deflated entries only, no zip64. */
-function unzip(bytes: Uint8Array): Entry[] | Fail {
+function unzip(bytes: Uint8Array): SkillFile[] | Fail {
 	const invalid = { error: { code: "skill_zip_invalid" as const } };
 	const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	// the end record sits in the last 22 bytes plus a comment of up to 64 KiB
@@ -73,7 +72,7 @@ function unzip(bytes: Uint8Array): Entry[] | Fail {
 		if (total > SKILL_MAX_BYTES) return { error: { code: "skill_too_large" } };
 		raw.push(entry);
 	}
-	const entries: Entry[] = [];
+	const entries: SkillFile[] = [];
 	for (const e of raw) {
 		if (e.offset + 30 > buf.length || buf.readUInt32LE(e.offset) !== 0x04034b50)
 			return invalid;
@@ -134,12 +133,20 @@ export function parseSkillZip(bytes: Uint8Array): { skill: SkillFiles } | Fail {
 
 /** Checks a Skill's files against the standard and the limits; `folder` is the name it must carry, when there is one. */
 export function checkSkill(
-	files: SkillFiles["files"],
+	files: SkillFile[],
 	folder?: string,
 ): { skill: SkillFiles } | Fail {
 	const unsafe = files.find((f) => !safePath(f.path));
 	if (unsafe)
 		return { error: { code: "skill_path_unsafe", path: unsafe.path } };
+	const seen = new Set<string>();
+	for (const { path } of files) {
+		if (seen.has(path))
+			return { error: { code: "skill_path_duplicate", path } };
+		seen.add(path);
+	}
+	const nested = files.find((f) => f.path.endsWith("/SKILL.md"));
+	if (nested) return { error: { code: "skill_md_nested", path: nested.path } };
 	if (files.length > SKILL_MAX_FILES)
 		return { error: { code: "skill_too_many_files" } };
 	if (files.reduce((n, f) => n + f.content.length, 0) > SKILL_MAX_BYTES)
@@ -160,7 +167,7 @@ export function checkSkill(
 	if (
 		typeof description !== "string" ||
 		!description.trim() ||
-		description.length > 1024
+		[...description].length > 1024
 	)
 		return { error: { code: "skill_description_invalid" } };
 	return {

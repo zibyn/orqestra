@@ -4,7 +4,7 @@ import {
 	formatSkillsForPrompt,
 	type Skill,
 } from "@earendil-works/pi-coding-agent";
-import { SKILLS_DIR, type turnSkills } from "@orqestra/config";
+import { SKILLS_DIR, type SkillFile, type turnSkills } from "@orqestra/config";
 import type { RunHandle } from "@orqestra/conversations";
 import {
 	type Orrery,
@@ -20,9 +20,7 @@ const MAX_STREAM_CHARS = 20_000;
 const MAX_FILE_CHARS = 50_000;
 
 type Skills = ReturnType<typeof turnSkills>;
-export type SkillFiles = (
-	versionId: number,
-) => Promise<{ path: string; content: Uint8Array }[]>;
+export type SkillFiles = (versionId: number) => Promise<SkillFile[]>;
 
 /** The Skills block of the system prompt: name, description and location of those the model may invoke. */
 export const skillsPrompt = (skills: Skills) =>

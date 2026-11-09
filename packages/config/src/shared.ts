@@ -26,6 +26,9 @@ export const thinkingLevel = z.enum([
 /** The largest attachment a User can upload into a Sandbox. */
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
+/** The largest Skill zip an Admin can upload: 10 MB of files unzipped, stored as they are, plus room for the zip's headers. */
+export const SKILL_ZIP_MAX_BYTES = 12 * 1024 * 1024;
+
 /** A message's text, without thinking or tool calls. */
 export const messageText = (message: Message) =>
 	typeof message.content === "string"
@@ -109,7 +112,15 @@ export type SaveError =
 				| "skill_too_many_files"
 				| "skill_exists";
 	  }
-	| { code: "skill_path_unsafe" | "skill_symlink"; path: string }
+	| {
+			code:
+				| "skill_path_unsafe"
+				| "skill_symlink"
+				| "skill_path_duplicate"
+				| "skill_md_nested"
+				| "skill_file_binary";
+			path: string;
+	  }
 	| { code: "skill_name_mismatch"; name: string; folder: string }
 	| { code: "invalid"; detail: string }
 	| {
@@ -147,6 +158,9 @@ export function definitionIssues(def: z.infer<typeof agentDefinition>) {
 	return issues;
 }
 
+/** One of a Skill version's files, its path relative to the Skill's folder (`SKILL.md`, `scripts/…`). */
+export type SkillFile = { path: string; content: Uint8Array };
+
 /** Where a Sandbox holds its Skills, one folder each. */
 export const SKILLS_DIR = "/workspace/.skills";
 
@@ -154,6 +168,12 @@ export const SKILLS_DIR = "/workspace/.skills";
 export function skillBlock(name: string, body: string, args: string) {
 	const block = `<skill name="${name}" location="${SKILLS_DIR}/${name}/SKILL.md">\nReferences are relative to ${SKILLS_DIR}/${name}.\n\n${body}\n</skill>`;
 	return args ? `${block}\n\n${args}` : block;
+}
+
+/** The Skill a User's text invokes as `/skill:name args`, and the args; undefined when it invokes none. */
+export function invokedSkill(text: string) {
+	const match = text.match(/^\/skill:(\S+)\s*([\s\S]*)$/);
+	return match ? { name: match[1], args: match[2].trim() } : undefined;
 }
 
 /** The Skill a User's message invoked and what they wrote with it; undefined when it invokes none. */

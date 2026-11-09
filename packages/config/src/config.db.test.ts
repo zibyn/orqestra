@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import type { SkillFile } from "./shared.ts";
 
 // Writes through the interface against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -235,7 +236,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 					content: content as string,
 				})),
 			]);
-		const text = (files: { path: string; content: Uint8Array }[]) =>
+		const text = (files: SkillFile[]) =>
 			Object.fromEntries(
 				files.map((f) => [f.path, new TextDecoder().decode(f.content)]),
 			);
@@ -372,6 +373,43 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 			);
 			expect(Buffer.from(logo?.content ?? [])).toEqual(png);
 			expect((await config.skills.list())[0].versions).toHaveLength(2);
+		});
+
+		it("refuses text for a binary file, and a path given twice", async () => {
+			await config.skills.upload(
+				zip([
+					{
+						path: "SKILL.md",
+						content: "---\nname: pdf\ndescription: v1\n---\n",
+					},
+					{ path: "logo.png", content: Buffer.from([0x89, 0x00, 0xff]) },
+				]),
+				false,
+			);
+			const [{ currentVersionId }] = await config.skills.list();
+			const base = currentVersionId ?? 0;
+			const md = {
+				path: "SKILL.md",
+				text: "---\nname: pdf\ndescription: v2\n---\n",
+			};
+			expect(
+				await config.skills.edit("pdf", base, [
+					md,
+					{ path: "logo.png", text: "x" },
+				]),
+			).toEqual({
+				errors: { file: { code: "skill_file_binary", path: "logo.png" } },
+			});
+			expect(
+				await config.skills.edit("pdf", base, [
+					md,
+					{ path: "a.md", text: "1" },
+					{ path: "a.md", text: "2" },
+				]),
+			).toEqual({
+				errors: { file: { code: "skill_path_duplicate", path: "a.md" } },
+			});
+			expect((await config.skills.list())[0].versions).toHaveLength(1);
 		});
 
 		it("refuses an edit the standard or the Skill's name does not allow", async () => {

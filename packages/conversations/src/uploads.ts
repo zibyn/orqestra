@@ -14,6 +14,12 @@ export class UploadTooLarge extends Error {
 /** The path the Agent reads an attachment at. */
 export const uploadPath = (name: string) => `/workspace/${UPLOADS}/${name}`;
 
+/** `name` as its stem and extension (with its dot); a leading dot starts no extension. */
+function splitName(name: string) {
+	const dot = name.lastIndexOf(".");
+	return dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+}
+
 /**
  * A file name safe to use as one path segment in the Sandbox: the last segment of what the browser sent,
  * without control characters or leading dots (no `..`, no hidden files), at most 200 bytes, keeping the extension.
@@ -25,9 +31,9 @@ export function safeFileName(name: string) {
 		.trim()
 		.replace(/^\.+/, "");
 	if (!clean) return "file";
-	const dot = clean.lastIndexOf(".");
-	const ext = dot > 0 && clean.length - dot <= 16 ? clean.slice(dot) : "";
-	let stem = [...clean.slice(0, clean.length - ext.length)];
+	let [rest, ext] = splitName(clean);
+	if (ext.length > 16) [rest, ext] = [clean, ""];
+	let stem = [...rest];
 	while (Buffer.byteLength(stem.join("") + ext) > 200) stem = stem.slice(0, -1);
 	clean = stem.join("") + ext;
 	return clean;
@@ -35,9 +41,7 @@ export function safeFileName(name: string) {
 
 /** `name`, or `stem (n).ext` with the first n not taken. */
 function freeName(name: string, taken: Set<string>) {
-	const dot = name.lastIndexOf(".");
-	const [stem, ext] =
-		dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+	const [stem, ext] = splitName(name);
 	let free = name;
 	for (let n = 1; taken.has(free); n++) free = `${stem} (${n})${ext}`;
 	return free;

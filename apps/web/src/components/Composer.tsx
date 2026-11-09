@@ -1,4 +1,4 @@
-import { MAX_UPLOAD_BYTES } from "@orqestra/config/shared";
+import { invokedSkill, MAX_UPLOAD_BYTES } from "@orqestra/config/shared";
 import { FileIcon, PaperclipIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import {
@@ -92,6 +92,12 @@ export function Composer({
 					e.preventDefault();
 					// sent while running, it waits in the inbox for the next step boundary
 					if (!text.trim() || sending) return;
+					// pi would refuse it as sent; say why here instead
+					const skill = invokedSkill(text);
+					if (skill && !agent.skills.some((s) => s.name === skill.name)) {
+						setError(m.skill_not_usable({ name: skill.name }));
+						return;
+					}
 					setSending(true);
 					setError("");
 					try {

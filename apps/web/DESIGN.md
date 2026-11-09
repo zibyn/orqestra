@@ -63,7 +63,7 @@ Use the Tailwind names (`bg-background`, `text-muted-foreground`, `border-border
   - Agent replies: no bubble; plain prose (`prose prose-neutral dark:prose-invert`) aligned to the left of the column.
 - **Standalone pages** (login, setup): a single `Card` centered on the screen, `max-w-sm`.
 - **Console** (`src/routes/console.tsx`): its own shadcn `Sidebar` (`variant="inset"`, `collapsible="icon"`) and `SidebarInset`, after the shadcn sidebar blocks.
-  - Sidebar header: Orqestra / Console. Content: nav groups (Models: Providers, Agents; Tools: Search Providers, MCP Servers) and "Back to conversations" at the bottom. Footer: the same user menu as the app (`NavUser`).
+  - Sidebar header: Orqestra / Console. Content: nav groups (Models: Providers, Agents, Skills; Tools: Search Providers, MCP Servers, Sandbox Provider) and "Back to conversations" at the bottom. Footer: the same user menu as the app (`NavUser`).
   - Top bar: `SidebarTrigger`, a vertical `Separator` and a `Breadcrumb` (Console › page).
   - Pages use `ConsolePage` (centered `max-w-5xl`: title, one-line description, optional primary action). Each item is a `Card` (`CardTitle` with an outline `Badge` for its id, `CardAction` for edit/delete); forms use `FieldGroup` + `Field`; warnings use a destructive `Alert`.
 

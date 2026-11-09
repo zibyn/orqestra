@@ -1,9 +1,12 @@
 import type { Message } from "@earendil-works/pi-ai";
 import {
+	type AgentDefinition,
+	invokedSkill,
 	modelRef,
 	type OrqestraConfig,
 	resolveThinking,
 	resolveTurn,
+	type SkillFile,
 	skillBlock,
 	skillInstructions,
 	type ThinkingLevel,
@@ -90,7 +93,7 @@ const ownedSubagent = async (userId: string, id: string) => {
 /** An Agent takes attachments when it has a Sandbox: a Sandbox Provider and a Skill it may use. */
 const takesAttachments = (
 	cfg: OrqestraConfig,
-	agent: Parameters<typeof turnSkills>[1],
+	agent: Pick<AgentDefinition, "skills">,
 ) => turnSkills(cfg, agent).length > 0;
 
 export function createConversations({
@@ -101,21 +104,19 @@ export function createConversations({
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
 	/** A Skill version's files, read when a User invokes it. */
-	skillFiles: (
-		versionId: number,
-	) => Promise<{ path: string; content: Uint8Array }[]>;
+	skillFiles: (versionId: number) => Promise<SkillFile[]>;
 	/** The Sandbox Provider's client, for deleting Sandboxes and uploading attachments; tests pass a fake. */
 	orrery?: typeof orreryClient;
 }) {
 	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
 	async function expandSkill(
 		cfg: OrqestraConfig,
-		agent: Parameters<typeof turnSkills>[1],
+		agent: Pick<AgentDefinition, "skills">,
 		text: string,
 	) {
-		const invoked = text.match(/^\/skill:(\S+)\s*([\s\S]*)$/);
+		const invoked = invokedSkill(text);
 		if (!invoked) return text;
-		const [, name, args] = invoked;
+		const { name, args } = invoked;
 		const skill = turnSkills(cfg, agent).find((s) => s.name === name);
 		const md = skill
 			? (await skillFiles(skill.versionId)).find((f) => f.path === "SKILL.md")
@@ -124,7 +125,7 @@ export function createConversations({
 		return skillBlock(
 			name,
 			skillInstructions(new TextDecoder().decode(md.content)),
-			args.trim(),
+			args,
 		);
 	}
 
@@ -465,7 +466,7 @@ export function createConversations({
 		},
 
 		/**
-		 * A file in the Sandbox of the user's Conversation, a Subagent's included, streamed from orrery as it arrives.
+		 * A file the Agent attached in the user's Conversation, a Subagent's included, streamed from its Sandbox by orrery as it arrives.
 		 * Starts the Sandbox if Idle Stop stopped it, but never creates one. `path` is absolute or relative to /workspace.
 		 */
 		async openFile(
@@ -487,6 +488,22 @@ export function createConversations({
 			if (!(await owned(userId, id))) return { error: "not_found" };
 			const relative = workspacePath(path);
 			if (!relative) return { error: "no_file" };
+			// only what the Agent attached here: the rest of the Sandbox is its working space
+			const attached = await db
+				.select({ id: message.id })
+				.from(message)
+				.where(
+					and(
+						eq(message.conversationId, id),
+						sql`${message.message} @> ${JSON.stringify({
+							role: "toolResult",
+							toolName: "attach",
+							details: { attachment: { path: `/workspace/${relative}` } },
+						})}::jsonb`,
+					),
+				)
+				.limit(1);
+			if (!attached.length) return { error: "no_file" };
 			const provider = (await config()).sandboxProvider;
 			if (!provider) return { error: "unavailable" };
 			const client = orrery(provider);

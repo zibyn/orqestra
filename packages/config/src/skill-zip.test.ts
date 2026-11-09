@@ -137,6 +137,34 @@ describe("parseSkillZip", () => {
 			code: "skill_description_invalid",
 		});
 		expect(described("d".repeat(1024))).toBeUndefined();
+		// counted in characters, not UTF-16 units
+		expect(described("😀".repeat(1024))).toBeUndefined();
+		expect(described("😀".repeat(1025))).toEqual({
+			code: "skill_description_invalid",
+		});
+	});
+
+	it("refuses a second SKILL.md anywhere in the Skill", () => {
+		expect(
+			error(
+				zip([
+					{ path: "pdf-tools/SKILL.md", content: pdf },
+					{ path: "pdf-tools/references/SKILL.md", content: pdf },
+				]),
+			),
+		).toEqual({ code: "skill_md_nested", path: "references/SKILL.md" });
+	});
+
+	it("refuses a path given twice", () => {
+		expect(
+			error(
+				zip([
+					{ path: "SKILL.md", content: pdf },
+					{ path: "a.md", content: "1" },
+					{ path: "a.md", content: "2" },
+				]),
+			),
+		).toEqual({ code: "skill_path_duplicate", path: "a.md" });
 	});
 
 	it("refuses paths that leave the folder, and symlinks", () => {

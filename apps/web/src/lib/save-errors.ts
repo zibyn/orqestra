@@ -32,6 +32,9 @@ const texts: {
 	skill_too_many_files: () => m.skill_too_many_files(),
 	skill_path_unsafe: (e) => m.skill_path_unsafe({ path: e.path }),
 	skill_symlink: (e) => m.skill_symlink({ path: e.path }),
+	skill_path_duplicate: (e) => m.skill_path_duplicate({ path: e.path }),
+	skill_md_nested: (e) => m.skill_md_nested({ path: e.path }),
+	skill_file_binary: (e) => m.skill_file_binary({ path: e.path }),
 	skill_exists: () => m.skill_exists(),
 };
 

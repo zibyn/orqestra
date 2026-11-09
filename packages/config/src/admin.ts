@@ -31,6 +31,7 @@ import {
 	type OrqestraConfig,
 	type SaveErrors,
 	type SearchProviderId,
+	type SkillFile,
 	searchProviders as searchProviderCatalog,
 	searchProviderId,
 	type ToolName,
@@ -548,10 +549,14 @@ const skills = ({ write }: Deps) => ({
 		const old = new Map(
 			(await skillFiles(base)).map((f) => [f.path, f.content]),
 		);
-		const contents: SkillFiles["files"] = [];
+		const contents: SkillFile[] = [];
 		for (const { path, text } of files) {
+			const kept = old.get(path);
+			// the console shows a binary file without its bytes, so text for it would replace it unseen
+			if (text !== undefined && kept && asText(kept) === undefined)
+				return { errors: { file: { code: "skill_file_binary", path } } };
 			const content =
-				text === undefined ? old.get(path) : new TextEncoder().encode(text);
+				text === undefined ? kept : new TextEncoder().encode(text);
 			if (!content) return { errors: { file: { code: "not_found" } } };
 			contents.push({ path, content });
 		}
