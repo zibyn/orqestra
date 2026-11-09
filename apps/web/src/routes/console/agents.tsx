@@ -103,7 +103,8 @@ function AgentCard({
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const def = agent.definition;
-	const missingTools = (def.tools ?? toolName.options).filter(
+	// no `tools` means every available one, so only named Tools can be missing
+	const missingTools = (def.tools ?? []).filter(
 		(t) => !availableTools.includes(t),
 	);
 
