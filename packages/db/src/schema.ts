@@ -167,6 +167,14 @@ export const memory = pgTable(
 	(table) => [unique().on(table.userId, table.path)],
 );
 
+// A User's memory master switch; no row means on
+export const memorySetting = pgTable("memory_setting", {
+	// the owner's Polaris `sub`
+	userId: text("user_id").primaryKey(),
+	// off: the User's Memories stay, but no Agent reads or writes them
+	enabled: boolean("enabled").notNull(),
+});
+
 // Providers an Admin configured from the Catalog; at most one row per Catalog Provider
 export const provider = pgTable("provider", {
 	// the Catalog (pi) Provider id

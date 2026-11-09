@@ -1,5 +1,5 @@
 import { db, type Tx } from "@orqestra/db";
-import { memory } from "@orqestra/db/schema";
+import { conversation, memory, memorySetting } from "@orqestra/db/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 
 /** Memories one User may have. */
@@ -83,6 +83,66 @@ const columns = {
 	conversationId: memory.conversationId,
 	updatedAt: memory.updatedAt,
 };
+
+/** User `userId`'s Memories as their Memory page shows and changes them, and their memory master switch. */
+export function userMemories(userId: string) {
+	const at = (path: string) => atFor(userId, path);
+	const found = (rows: unknown[], path: string) => {
+		if (!rows.length) throw missing(path);
+	};
+	return {
+		/** Latest updated first, each with the Conversation that last wrote it, null once that is deleted. */
+		list: async () =>
+			(
+				await db
+					.select({
+						...columns,
+						title: conversation.title,
+					})
+					.from(memory)
+					.leftJoin(conversation, eq(conversation.id, memory.conversationId))
+					.where(eq(memory.userId, userId))
+					.orderBy(desc(memory.updatedAt), memory.path)
+			).map(({ title, ...m }) => ({
+				...m,
+				conversation: m.conversationId ? { id: m.conversationId, title } : null,
+			})),
+		/** Replaces its description and body, under the same limits as the Memory Tools. */
+		async update(path: string, description: string, body: string) {
+			checkMemory(path, description, body);
+			found(
+				await db
+					.update(memory)
+					.set({ description, body, updatedAt: new Date() })
+					.where(at(path))
+					.returning({ id: memory.id }),
+				path,
+			);
+		},
+		async delete(path: string) {
+			found(
+				await db.delete(memory).where(at(path)).returning({ id: memory.id }),
+				path,
+			);
+		},
+		deleteAll: () => db.delete(memory).where(eq(memory.userId, userId)),
+		/** The master switch: off, the Memories stay but the User's next Runs neither read nor write them. */
+		on: () => memoryOn(userId),
+		setOn: (enabled: boolean) =>
+			db
+				.insert(memorySetting)
+				.values({ userId, enabled })
+				.onConflictDoUpdate({ target: memorySetting.userId, set: { enabled } }),
+	};
+}
+
+export const memoryOn = async (userId: string) =>
+	(
+		await db
+			.select({ enabled: memorySetting.enabled })
+			.from(memorySetting)
+			.where(eq(memorySetting.userId, userId))
+	)[0]?.enabled ?? true;
 
 // a User's writes go one at a time, so the count and `before` hold
 const lockedFor = <T>(userId: string, fn: (tx: Tx) => Promise<T>) =>

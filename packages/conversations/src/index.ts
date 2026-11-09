@@ -53,6 +53,7 @@ export {
 	type Memories,
 	type Memory,
 	MemoryError,
+	userMemories,
 } from "./memories.ts";
 export {
 	MAX_RECALL_RESULTS,

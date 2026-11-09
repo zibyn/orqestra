@@ -230,5 +230,21 @@
   "no_mcp_servers_title": "还没有 MCP Server",
   "no_mcp_servers": "添加一个 MCP Server，它的 Tools 就能分给 Agent 使用。",
   "no_search_providers_title": "还没有 Search Provider",
-  "no_search_providers": "添加一个 Search Provider 来提供 Search 和 Scrape Tool。"
+  "no_search_providers": "添加一个 Search Provider 来提供 Search 和 Scrape Tool。",
+  "memory_page": "记忆",
+  "memory_page_hint": "Agent 跨对话记住的关于你的内容。只有你能查看和修改。",
+  "memory_on": "使用记忆",
+  "memory_off_notice": "记忆已关闭：你的记忆仍保留，但在你重新打开前，Agent 不会读写它们。",
+  "memory_filter": "过滤记忆",
+  "memory_delete_all": "全部删除",
+  "memory_delete_all_confirm": "删除你的全部记忆？此操作无法撤销。",
+  "memory_delete_confirm": "删除这条记忆？",
+  "memory_from": "来自「{title}」",
+  "memory_from_deleted": "来自已删除的对话",
+  "memory_description": "描述",
+  "memory_body": "内容",
+  "memory_body_too_long": "最多 {max} 字节；当前 {bytes} 字节。",
+  "no_memories_title": "还没有记忆",
+  "no_memories": "开启了记忆的 Agent 会把你让它记住的内容写在这里。",
+  "no_memories_match": "没有匹配的记忆。"
 }

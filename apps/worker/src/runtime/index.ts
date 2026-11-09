@@ -57,12 +57,10 @@ export async function runAgent(
 				skillFiles,
 			})
 		: [];
-	// a Subagent only reads; the Index is a snapshot, so writes during the Run leave the prompt (and its cache) alone
-	const memory = turn.agent.memory;
+	// a Subagent only reads; none when the User turned memory off; the Index is a snapshot, so writes during the Run leave the prompt (and its cache) alone
+	const memory = turn.agent.memory ? run.memories : undefined;
 	try {
-		const memoryBlock = memory
-			? memoryPrompt(await run.memories.index(), sub)
-			: "";
+		const memoryBlock = memory ? memoryPrompt(await memory.index(), sub) : "";
 		const { messages, compaction } = await prepareContext(
 			run.transcript,
 			turn.model,
@@ -88,7 +86,7 @@ export async function runAgent(
 					...toolbox.tools,
 					...sandbox,
 					...(memory
-						? [...memoryTools(run.memories, sub), recallTool(run.recall)]
+						? [...memoryTools(memory, sub), recallTool(run.recall)]
 						: []),
 					...(sub ? [] : subagentTools(config, run.subagents)),
 				],

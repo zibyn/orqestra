@@ -230,5 +230,21 @@
   "no_mcp_servers_title": "No MCP Servers yet",
   "no_mcp_servers": "Add an MCP Server so its Tools can be given to Agents.",
   "no_search_providers_title": "No Search Providers yet",
-  "no_search_providers": "Add a Search Provider to serve the Search and Scrape Tools."
+  "no_search_providers": "Add a Search Provider to serve the Search and Scrape Tools.",
+  "memory_page": "Memory",
+  "memory_page_hint": "What agents remember about you across conversations. Only you can see and change it.",
+  "memory_on": "Use memory",
+  "memory_off_notice": "Memory is off: your memories are kept, but no agent reads or writes them until you turn it back on.",
+  "memory_filter": "Filter memories",
+  "memory_delete_all": "Delete all",
+  "memory_delete_all_confirm": "Delete all your memories? This cannot be undone.",
+  "memory_delete_confirm": "Delete this memory?",
+  "memory_from": "From {title}",
+  "memory_from_deleted": "From a deleted conversation",
+  "memory_description": "Description",
+  "memory_body": "Content",
+  "memory_body_too_long": "At most {max} bytes; this has {bytes}.",
+  "no_memories_title": "No memories yet",
+  "no_memories": "Agents with memory write down what you tell them to remember here.",
+  "no_memories_match": "No memories match."
 }

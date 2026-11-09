@@ -1,5 +1,10 @@
 import { Link } from "@tanstack/react-router";
-import { ChevronsUpDownIcon, LogOutIcon, SettingsIcon } from "lucide-react";
+import {
+	BrainIcon,
+	ChevronsUpDownIcon,
+	LogOutIcon,
+	SettingsIcon,
+} from "lucide-react";
 import ParaglideLocaleSwitcher from "#/components/LocaleSwitcher";
 import { ThemeSwitcher } from "#/components/ThemeSwitcher";
 import {
@@ -28,7 +33,7 @@ function signOut() {
 	form.submit();
 }
 
-/** The user menu at the foot of a sidebar: theme, language, /console for Admins, sign out. */
+/** The user menu at the foot of a sidebar: theme, language, Memory, /console for Admins, sign out. */
 export function NavUser({ user }: { user: User }) {
 	return (
 		<SidebarMenu>
@@ -55,6 +60,10 @@ export function NavUser({ user }: { user: User }) {
 						<DropdownMenuSeparator />
 						<ThemeSwitcher />
 						<ParaglideLocaleSwitcher />
+						<DropdownMenuItem render={<Link to="/memory" />}>
+							<BrainIcon />
+							{m.memory_page()}
+						</DropdownMenuItem>
 						{user.admin && (
 							<DropdownMenuItem render={<Link to="/console" />}>
 								<SettingsIcon />

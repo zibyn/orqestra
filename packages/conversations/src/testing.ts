@@ -32,6 +32,7 @@ export function memoryRun({
 	renamed = false,
 	subagents = { start: unavailable, message: unavailable, stop: unavailable },
 	memories = [],
+	memoryOff = false,
 	recall = { search: async () => [], open: async () => undefined },
 }: {
 	transcript: Transcript;
@@ -43,6 +44,8 @@ export function memoryRun({
 	subagents?: RunHandle["subagents"];
 	/** The User's Memories as the Run begins. */
 	memories?: Pick<Memory, "path" | "description" | "body">[];
+	/** The User turned memory off: the Run gets no Memories. */
+	memoryOff?: boolean;
 	/** The User's past Conversations; none by default. */
 	recall?: Recall;
 }) {
@@ -96,7 +99,7 @@ export function memoryRun({
 				},
 				{ signal: stopper.signal },
 			),
-		memories: userMemories,
+		memories: memoryOff ? undefined : userMemories,
 		recall,
 		subagents,
 	};

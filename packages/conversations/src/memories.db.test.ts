@@ -7,7 +7,9 @@ if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
-const { memoriesOf, MAX_MEMORIES, MemoryError } = await import("./memories.ts");
+const { memoriesOf, MAX_MEMORIES, MemoryError, userMemories } = await import(
+	"./memories.ts"
+);
 const { createConversations } = await import("./index.ts");
 
 const newConversation = async (userId: string) =>
@@ -23,7 +25,9 @@ describe.skipIf(!url)("Memories (Postgres)", () => {
 	let mine: ReturnType<typeof memoriesOf>;
 	let conversationId: string;
 	beforeEach(async () => {
-		await db.execute(sql`truncate conversation, memory cascade`);
+		await db.execute(
+			sql`truncate conversation, memory, memory_setting cascade`,
+		);
 		conversationId = await newConversation("u1");
 		mine = memoriesOf("u1", conversationId);
 	});
@@ -120,6 +124,78 @@ describe.skipIf(!url)("Memories (Postgres)", () => {
 			.where(sql`${schema.conversation.id} = ${conversationId}`);
 		expect(await memoriesOf("u1", conversationId).read("p")).toMatchObject({
 			conversationId: null,
+		});
+	});
+
+	describe("on the User's Memory page", () => {
+		it("lists only the User's own Memories, each with the Conversation that wrote it, or none once deleted", async () => {
+			await db
+				.update(schema.conversation)
+				.set({ title: "Planning" })
+				.where(sql`${schema.conversation.id} = ${conversationId}`);
+			await mine.write("p", "d", "b");
+			const gone = await newConversation("u1");
+			await memoriesOf("u1", gone).write("q", "e", "c");
+			await db
+				.delete(schema.conversation)
+				.where(sql`${schema.conversation.id} = ${gone}`);
+			await memoriesOf("u2", await newConversation("u2")).write("r", "f", "x");
+			expect(await userMemories("u1").list()).toEqual([
+				expect.objectContaining({
+					path: "q",
+					conversation: null,
+				}),
+				expect.objectContaining({
+					path: "p",
+					description: "d",
+					body: "b",
+					conversation: { id: conversationId, title: "Planning" },
+				}),
+			]);
+		});
+
+		it("edits a Memory's description and body under the Tools' limits, keeping where it came from", async () => {
+			await mine.write("p", "d", "b");
+			const page = userMemories("u1");
+			await page.update("p", "new", "body");
+			expect(await mine.read("p")).toMatchObject({
+				description: "new",
+				body: "body",
+				conversationId,
+			});
+			await expect(page.update("p", "d".repeat(151), "b")).rejects.toThrow(
+				/150/,
+			);
+			await expect(page.update("p", "d", "b".repeat(4097))).rejects.toThrow(
+				/4096/,
+			);
+			await expect(page.update("nope", "d", "b")).rejects.toThrow(MemoryError);
+			await expect(userMemories("u2").update("p", "x", "y")).rejects.toThrow(
+				MemoryError,
+			);
+		});
+
+		it("deletes one Memory, or all of the User's, leaving other Users' alone", async () => {
+			await mine.write("p", "d", "b");
+			await mine.write("q", "d", "b");
+			const theirs = memoriesOf("u2", await newConversation("u2"));
+			await theirs.write("p", "d", "b");
+			const page = userMemories("u1");
+			await page.delete("p");
+			expect((await page.list()).map((m) => m.path)).toEqual(["q"]);
+			await expect(userMemories("u2").delete("q")).rejects.toThrow(MemoryError);
+			await page.deleteAll();
+			expect(await page.list()).toEqual([]);
+			expect(await theirs.read("p")).toBeDefined();
+		});
+
+		it("keeps memory on until the User turns it off, per User", async () => {
+			expect(await userMemories("u1").on()).toBe(true);
+			await userMemories("u1").setOn(false);
+			expect(await userMemories("u1").on()).toBe(false);
+			expect(await userMemories("u2").on()).toBe(true);
+			await userMemories("u1").setOn(true);
+			expect(await userMemories("u1").on()).toBe(true);
 		});
 	});
 });

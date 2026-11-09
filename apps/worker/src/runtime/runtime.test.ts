@@ -784,6 +784,24 @@ describe("runAgent with memory", () => {
 			expect(tools(context)).toContain(`"memory_${name}"`);
 	});
 
+	it("leaves memory out entirely while the User has it off, even for an Agent with memory", async () => {
+		answer();
+		await runAgent(run("remembers", { memoryOff: true }).run, memDeps);
+		expect(prompt(context)).toBe("You are a test.");
+		expect(tools(context)).not.toContain("memory_");
+		expect(tools(context)).not.toContain(`"recall"`);
+	});
+
+	it("gives a Subagent no memory while its User has it off", async () => {
+		answer();
+		await runAgent(
+			run("remembers", { memoryOff: true, isSubagent: true }).run,
+			memDeps,
+		);
+		expect(tools(context)).not.toContain("memory_");
+		expect(tools(context)).not.toContain(`"recall"`);
+	});
+
 	it("reads and writes the User's Memories through the Tools, keeping the Index of the Run's start", async () => {
 		const prompts: string[] = [];
 		script([
