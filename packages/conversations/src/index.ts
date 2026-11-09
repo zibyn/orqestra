@@ -14,6 +14,13 @@ import {
 	message,
 	subagent,
 } from "@orqestra/db/schema";
+import {
+	type Orrery,
+	OrreryError,
+	orrery as orreryClient,
+	type SandboxProvider,
+	workspacePath,
+} from "@orqestra/tools";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import pg from "pg";
 import {
@@ -30,6 +37,7 @@ import {
 	stopSubagents,
 } from "./runs.ts";
 
+import { SandboxGone, wakeSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 
 export type { ConversationEvent, Ended } from "./runs.ts";
@@ -77,9 +85,12 @@ const ownedSubagent = async (userId: string, id: string) => {
 
 export function createConversations({
 	config,
+	orrery = orreryClient,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
+	/** The Sandbox Provider's client; tests pass one kept in memory. */
+	orrery?: (provider: SandboxProvider) => Orrery;
 }) {
 	return {
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
@@ -322,6 +333,53 @@ export function createConversations({
 			// its Run and its Subagents' stop first, then they go (cascade); a Run that outlives its Conversation saves nothing more
 			await requestStop([id, ...children.map((c) => c.id)]);
 			await db.delete(conversation).where(eq(conversation.id, id));
+		},
+
+		/**
+		 * A file in the Sandbox of the user's Conversation, a Subagent's included, streamed from orrery as it arrives.
+		 * Starts the Sandbox if Idle Stop stopped it, but never creates one. `path` is absolute or relative to /workspace.
+		 */
+		async openFile(
+			userId: string,
+			id: string,
+			path: string,
+			signal: AbortSignal,
+		): Promise<
+			| {
+					file: {
+						name: string;
+						size?: number;
+						body: ReadableStream<Uint8Array>;
+					};
+			  }
+			| { error: "not_found" | "no_file" | "gone" | "unavailable" }
+		> {
+			// a Subagent's Conversation carries its parent's userId
+			if (!(await owned(userId, id))) return { error: "not_found" };
+			const relative = workspacePath(path);
+			if (!relative) return { error: "no_file" };
+			const provider = (await config()).sandboxProvider;
+			if (!provider) return { error: "unavailable" };
+			const client = orrery(provider);
+			try {
+				const { id: sandbox } = await wakeSandbox(id, client, provider, {
+					signal,
+				});
+				const file = await client.openFile(sandbox, relative, { signal });
+				return {
+					file: {
+						name: relative.slice(relative.lastIndexOf("/") + 1),
+						...file,
+					},
+				};
+			} catch (error) {
+				if (error instanceof SandboxGone) return { error: "gone" };
+				if (error instanceof OrreryError && error.code === "not_found")
+					return { error: "no_file" };
+				if (!signal.aborted)
+					console.error("A file could not be read from its Sandbox:", error);
+				return { error: "unavailable" };
+			}
 		},
 
 		/** A Subagent's transcript, loaded when its panel opens; undefined when it is not the user's. */

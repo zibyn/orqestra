@@ -164,6 +164,46 @@ describe("orrery client", () => {
 		]);
 	});
 
+	it("streams a file as it arrives, the timeout bounding only the wait for its start", async () => {
+		const fake = fakeOrrery((s) =>
+			s.url.endsWith("path=slow")
+				? new Response(
+						new ReadableStream({
+							async pull(controller) {
+								await new Promise((r) => setTimeout(r, 60));
+								controller.enqueue(new TextEncoder().encode("late"));
+								controller.close();
+							},
+						}),
+						{ headers: { "content-length": "4" } },
+					)
+				: new Promise(() => {}),
+		);
+		const client = orrery({
+			url: "http://o",
+			token: "t",
+			fetch: async (i, init) => {
+				const pending = fake.fetch(i, init);
+				// a reply that never starts gives up as fetch does when its signal aborts
+				return Promise.race([
+					pending,
+					new Promise<never>((_, reject) =>
+						init?.signal?.addEventListener("abort", () =>
+							reject(init.signal?.reason),
+						),
+					),
+				]);
+			},
+			timeoutMs: 30,
+		});
+		const file = await client.openFile("sb1", "slow");
+		expect(file.size).toBe(4);
+		expect(await new Response(file.body).text()).toBe("late");
+		await expect(client.openFile("sb1", "never")).rejects.toMatchObject({
+			name: "TimeoutError",
+		});
+	});
+
 	it("surfaces orrery's error code, status and detail", async () => {
 		const fake = fakeOrrery(() =>
 			problem(409, "conflict", "sandbox is not ready"),

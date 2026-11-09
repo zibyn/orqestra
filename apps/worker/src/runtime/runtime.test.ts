@@ -473,7 +473,7 @@ describe("runAgent with Skills", () => {
 			) ?? []
 		).filter((n) => !n.startsWith("subagent"));
 
-	it("lists the Skills the model may invoke in the prompt, and offers read and bash", async () => {
+	it("lists the Skills the model may invoke in the prompt, and offers read, bash and attach", async () => {
 		let context: Context | undefined;
 		script([
 			(c) => {
@@ -495,7 +495,7 @@ describe("runAgent with Skills", () => {
 			"<location>/workspace/.skills/pdf/SKILL.md</location>",
 		);
 		expect(prompt).not.toContain("manual");
-		expect(offeredTools(context)).toEqual(["read", "bash"]);
+		expect(offeredTools(context)).toEqual(["read", "bash", "attach"]);
 		// nothing is created until a Tool needs it
 		expect(o.calls).toEqual([]);
 	});
@@ -611,6 +611,50 @@ describe("runAgent with Skills", () => {
 		expect(noisy.length).toBeLessThan(60_000);
 		expect(noisy).toContain("cut off");
 		expect(killed).toContain("oom_killed");
+	});
+
+	it("attaches only an existing regular file under /workspace to the reply", async () => {
+		script([
+			fauxAssistantMessage(
+				fauxToolCall("attach", { path: "/workspace/out/./report.pdf" }),
+			),
+			fauxAssistantMessage(fauxToolCall("attach", { path: "out" })),
+			fauxAssistantMessage(fauxToolCall("attach", { path: "/etc/passwd" })),
+			fauxAssistantMessage(fauxToolCall("attach", { path: "../etc/passwd" })),
+			fauxAssistantMessage("done"),
+		]);
+		// bash as it answers in a Sandbox holding out/report.pdf (12 bytes) and the folder out
+		const o = memoryOrrery({
+			exec: (command) =>
+				command.includes("realpath")
+					? command.includes("'/workspace/out/report.pdf'")
+						? { stdout: "12\n/workspace/out/report.pdf" }
+						: { exit_code: 1 }
+					: {},
+		});
+		const { m, deps } = setup(o);
+		await runAgent(m.run, deps);
+
+		const [file, folder, outside, escaping] = toolResults(m);
+		expect(file.isError).toBe(false);
+		expect(file.details).toEqual({
+			attachment: {
+				path: "/workspace/out/report.pdf",
+				name: "report.pdf",
+				size: 12,
+			},
+		});
+		expect(resultText(file)).toContain("report.pdf");
+		for (const refused of [folder, outside, escaping]) {
+			expect(refused.isError).toBe(true);
+			expect(resultText(refused)).toContain("/workspace");
+		}
+		// paths outside /workspace never reach the Sandbox
+		expect(
+			o.calls.filter(
+				(c) => c.startsWith("createExec") && c.includes("realpath"),
+			),
+		).toHaveLength(2);
 	});
 
 	it("answers a clear error when orrery cannot be reached, and the Run goes on", async () => {

@@ -1,4 +1,5 @@
 // Using a Sandbox through the orrery client: getting one ready, and running a command to its end.
+import { posix } from "node:path";
 import {
 	type Frame,
 	frameBytes,
@@ -84,6 +85,22 @@ export async function readySandbox(
 		id = await claim(id, create);
 		woke = true;
 	}
+}
+
+const WORKSPACE = "/workspace/";
+
+/**
+ * A path given absolute or relative to /workspace, as the orrery Files API takes it (relative to /workspace);
+ * undefined when it is /workspace itself or reaches outside it.
+ */
+export function workspacePath(path: string) {
+	if (!path || path.includes("\0")) return undefined;
+	const full = posix.normalize(
+		posix.isAbsolute(path) ? path : WORKSPACE + path,
+	);
+	return full.startsWith(WORKSPACE) && full.length > WORKSPACE.length
+		? full.slice(WORKSPACE.length)
+		: undefined;
 }
 
 /** A finished command: `exit` is its code, null when it did not exit (`cause` says why: timed_out, oom_killed, canceled…). */
