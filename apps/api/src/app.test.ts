@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { Conversations } from "@orqestra/conversations";
 import { createApp, type Session } from "./app.ts";
 
 const ada = { id: "s1", name: "Ada", admin: true };
@@ -14,7 +15,8 @@ function app(user: typeof ada | null, cookies: string[] = []) {
 		new Response(`auth ${new URL(request.url).pathname}`, {
 			headers: { "set-cookie": "polaris.tx=t; Path=/" },
 		});
-	const api = createApp({ session, auth });
+	// no route here reaches Conversations; events.db.test.ts uses the real ones
+	const api = createApp({ session, auth, conversations: {} as Conversations });
 	// handle needs its app as this
 	return { handle: (request: Request) => api.handle(request), reads };
 }
