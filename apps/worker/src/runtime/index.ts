@@ -1,9 +1,10 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
-import { messageText, type OrqestraConfig } from "@orqestra/config";
+import { messageText, type OrqestraConfig, turnSkills } from "@orqestra/config";
 import type { RunHandle } from "@orqestra/conversations";
-import type { openToolbox } from "@orqestra/tools";
+import { type openToolbox, orrery as orreryClient } from "@orqestra/tools";
 import { prepareContext } from "./compaction.ts";
+import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
 import { generateTitle } from "./title.ts";
 import {
 	MAX_SUBAGENT_STEPS,
@@ -13,11 +14,18 @@ import {
 } from "./tools.ts";
 
 export type RuntimeDeps = {
-	/** Subagent templates, and the services for the Tools. */
-	config: Pick<OrqestraConfig, "agents" | "tools" | "mcpServers">;
+	/** Subagent templates, the services for the Tools, and the Skills with the Sandbox Provider. */
+	config: Pick<
+		OrqestraConfig,
+		"agents" | "tools" | "mcpServers" | "skills" | "sandboxProvider"
+	>;
 	/** Every Model request of the Run goes through it. */
 	streamSimple: OrqestraConfig["streamSimple"];
 	openToolbox: typeof openToolbox;
+	/** A Skill version's files, written into the Sandbox. */
+	skillFiles: SkillFiles;
+	/** The Sandbox Provider's client; tests stand in for orrery. */
+	orrery?: typeof orreryClient;
 };
 
 /**
@@ -26,7 +34,13 @@ export type RuntimeDeps = {
  */
 export async function runAgent(
 	run: RunHandle,
-	{ config, streamSimple, openToolbox }: RuntimeDeps,
+	{
+		config,
+		streamSimple,
+		openToolbox,
+		skillFiles,
+		orrery = orreryClient,
+	}: RuntimeDeps,
 ) {
 	const { conversationId, turn, signal } = run;
 	const sub = run.isSubagent;
@@ -34,6 +48,15 @@ export async function runAgent(
 	const last = rows.at(-1) as (typeof rows)[number];
 	// MCP Servers are connected for this Run only, so changes on the server side show up in the next one
 	const toolbox = await openToolbox(config, turn.agent.tools, { signal });
+	// no Sandbox, Sandbox Tools or Skill list without a Sandbox Provider or an available Skill
+	const skills = turnSkills(config, turn.agent);
+	const sandbox =
+		skills.length && config.sandboxProvider
+			? sandboxTools(run, config.sandboxProvider, skills, {
+					orrery,
+					skillFiles,
+				})
+			: [];
 	try {
 		const { messages, compaction } = await prepareContext(
 			run.transcript,
@@ -52,12 +75,14 @@ export async function runAgent(
 		let steps = 0;
 		const agent = new Agent({
 			initialState: {
-				systemPrompt: turn.agent.instructions,
+				systemPrompt: turn.agent.instructions + skillsPrompt(skills),
 				model: turn.model,
 				thinkingLevel: turn.thinking,
-				tools: sub
-					? toolbox.tools
-					: [...toolbox.tools, ...subagentTools(config, run.subagents)],
+				tools: [
+					...toolbox.tools,
+					...sandbox,
+					...(sub ? [] : subagentTools(config, run.subagents)),
+				],
 				messages,
 			},
 			streamFn: streamSimple,

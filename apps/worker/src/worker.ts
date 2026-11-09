@@ -1,4 +1,5 @@
 import type { OrqestraConfig } from "@orqestra/config";
+import { skillFiles } from "@orqestra/config/live";
 import { createConversations } from "@orqestra/conversations";
 import { openToolbox } from "@orqestra/tools";
 import { runAgent } from "./runtime/index.ts";
@@ -79,6 +80,7 @@ export function startAgentWorker(
 				config,
 				streamSimple: limitProviders(config.streamSimple),
 				openToolbox: toolbox,
+				skillFiles,
 			}),
 		options,
 	);

@@ -38,6 +38,8 @@ const {
 } = await import("./index.ts");
 const runs = await import("./runs.ts");
 const { memoryRun } = await import("./testing.ts");
+const { memoryOrrery } = await import("@orqestra/tools/testing");
+const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 };
 
 // Models only for the Turn: the scripted handler below replies in their place
 const faux = fauxProvider({
@@ -1259,6 +1261,30 @@ describe.skipIf(!url)(
 					},
 					[["again"], []],
 				],
+				[
+					"keeps the Conversation's one Sandbox, starting it once stopped",
+					async (run) => {
+						const o = memoryOrrery();
+						const first = await run.sandbox(o.client, provider);
+						const again = await run.sandbox(o.client, provider);
+						o.stop(first.id);
+						const woken = await run.sandbox(o.client, provider);
+						await reply(run);
+						await run.finish();
+						return [
+							first,
+							again,
+							woken,
+							o.calls.filter((c) => c.startsWith("createSandbox")).length,
+						];
+					},
+					[
+						{ id: "sb1", woke: true },
+						{ id: "sb1", woke: false },
+						{ id: "sb1", woke: true },
+						1,
+					],
+				],
 			];
 
 			for (const [name, scenario, expected] of scenarios) {
@@ -1297,6 +1323,28 @@ describe.skipIf(!url)(
 					expect(memory.over).toBe(true);
 				});
 			}
+		});
+
+		it("creates one Sandbox for a Conversation asked for it twice at once, and keeps its id", async () => {
+			const { ensureSandbox } = await import("./index.ts");
+			const [conv] = await db
+				.insert(schema.conversation)
+				.values({ userId, agentId: "faux" })
+				.returning();
+			const o = memoryOrrery();
+			const both = await Promise.all([
+				ensureSandbox(conv.id, o.client, provider),
+				ensureSandbox(conv.id, o.client, provider),
+			]);
+			expect(both.map((s) => s.id)).toEqual(["sb1", "sb1"]);
+			expect(o.calls.filter((c) => c.startsWith("createSandbox"))).toHaveLength(
+				1,
+			);
+			const [row] = await db
+				.select({ sandboxId: schema.conversation.sandboxId })
+				.from(schema.conversation)
+				.where(sql`${schema.conversation.id} = ${conv.id}`);
+			expect(row.sandboxId).toBe("sb1");
 		});
 
 		// last: these swap the worker

@@ -1,4 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
+import { readySandbox } from "@orqestra/tools";
 import type { Ended } from "./runs.ts";
 import type { RunHandle, StreamEvent, Transcript, Turn } from "./serve.ts";
 
@@ -39,6 +40,7 @@ export function memoryRun({
 	const titles: string[] = [];
 	const outcomes: (Ended | undefined)[] = [];
 	let over = false;
+	let sandboxId: string | null = null;
 	const run: RunHandle = {
 		conversationId: "memory",
 		isSubagent,
@@ -65,6 +67,16 @@ export function memoryRun({
 		setTitle: async (title) => {
 			if (!renamed) titles.push(title);
 		},
+		sandbox: (client, provider) =>
+			readySandbox(
+				client,
+				provider,
+				async (replacing, create) => {
+					if (!sandboxId || sandboxId === replacing) sandboxId = await create();
+					return sandboxId;
+				},
+				{ signal: stopper.signal },
+			),
 		subagents,
 	};
 	return {
@@ -76,6 +88,10 @@ export function memoryRun({
 		/** The last `finish` returned no input. */
 		get over() {
 			return over;
+		},
+		/** The Conversation's Sandbox, once `sandbox` created one. */
+		get sandboxId() {
+			return sandboxId;
 		},
 		saved,
 		streamed,

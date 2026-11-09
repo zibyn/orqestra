@@ -34,6 +34,7 @@ import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 
 export type { ConversationEvent, Ended } from "./runs.ts";
 export { MAX_SUBAGENTS } from "./runs.ts";
+export { ensureSandbox } from "./sandbox.ts";
 export {
 	BudgetExceeded,
 	MAX_SUBAGENT_TASKS,

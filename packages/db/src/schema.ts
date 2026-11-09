@@ -47,6 +47,8 @@ export const conversation = pgTable(
 		jobId: text("job_id"),
 		// Subagents this Conversation's Agent started or continued since the User's last message
 		subagentsSinceUser: integer("subagents_since_user").default(0).notNull(),
+		// its orrery Sandbox, created the first time its Agent needs one; null until then
+		sandboxId: text("sandbox_id"),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()

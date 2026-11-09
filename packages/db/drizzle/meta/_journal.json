@@ -29,6 +29,13 @@
       "when": 1794205402587,
       "tag": "0003_skills",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794206650262,
+      "tag": "0004_conversation_sandbox",
+      "breakpoints": true
     }
   ]
 }

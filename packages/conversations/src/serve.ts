@@ -14,6 +14,7 @@ import {
 	message,
 	subagent,
 } from "@orqestra/db/schema";
+import type { Orrery, SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
@@ -33,6 +34,7 @@ import {
 	stopSubagents,
 	subagentOf,
 } from "./runs.ts";
+import { ensureSandbox } from "./sandbox.ts";
 
 /** Tasks one start of Subagents may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
@@ -114,6 +116,11 @@ export type RunHandle = {
 	finish(outcome?: Ended): Promise<Message[]>;
 	/** Names the Conversation, unless the User renamed it meanwhile. */
 	setTitle(title: string): Promise<void>;
+	/** The Conversation's Sandbox, ready to use: created the first time, started if stopped (`woke`); see `ensureSandbox`. */
+	sandbox(
+		client: Orrery,
+		provider: SandboxProvider,
+	): Promise<{ id: string; woke: boolean }>;
 	/** The Run's Subagents; only a top-level Conversation's Agent has them. */
 	subagents: {
 		/** Starts a Subagent per task, numbered in order; throws NoSuchTemplate, TemplateOffline or BudgetExceeded. */
@@ -357,6 +364,8 @@ async function open(
 				);
 			await saved();
 		},
+		sandbox: (client, provider) =>
+			ensureSandbox(conversationId, client, provider, { signal }),
 		subagents: subagentsOf(cfg, conv, turn, saved),
 	};
 }
