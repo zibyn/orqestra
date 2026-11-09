@@ -86,8 +86,7 @@ const columns = {
 
 /** User `userId`'s Memories as their Memory page shows and changes them, and their memory master switch. */
 export function userMemories(userId: string) {
-	const at = (path: string) =>
-		and(eq(memory.userId, userId), eq(memory.path, path));
+	const at = (path: string) => atFor(userId, path);
 	const found = (rows: unknown[], path: string) => {
 		if (!rows.length) throw missing(path);
 	};
@@ -145,18 +144,91 @@ export const memoryOn = async (userId: string) =>
 			.where(eq(memorySetting.userId, userId))
 	)[0]?.enabled ?? true;
 
+// a User's writes go one at a time, so the count and `before` hold
+const lockedFor = <T>(userId: string, fn: (tx: Tx) => Promise<T>) =>
+	db.transaction(async (tx) => {
+		await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${userId}))`);
+		return fn(tx);
+	});
+const atFor = (userId: string, path: string) =>
+	and(eq(memory.userId, userId), eq(memory.path, path));
+const findFor = async (tx: Tx | typeof db, userId: string, path: string) =>
+	(await tx.select(columns).from(memory).where(atFor(userId, path)))[0];
+
+/** The Memory Tools whose calls change a Memory, and the `details` their results keep. */
+export const MEMORY_CHANGES = ["memory_write", "memory_edit", "memory_delete"];
+type Change = {
+	path: string;
+	before?: Pick<Memory, "description" | "body">;
+	/** memory_write's */
+	after?: Pick<Memory, "description" | "body">;
+	/** memory_edit's */
+	old?: string;
+	new?: string;
+};
+
+/**
+ * Reverses one Memory Tool call of User `userId` from the `before` its result kept, writing it down as from `conversationId`;
+ * `markUndone` runs in the same transaction. Refuses with "changed" when the Memory is no longer as that call left it.
+ */
+export function undoChange(
+	userId: string,
+	conversationId: string,
+	toolName: string,
+	change: Change,
+	markUndone: (tx: Tx) => Promise<unknown>,
+) {
+	const { path, before } = change;
+	const after =
+		toolName === "memory_write"
+			? change.after
+			: toolName === "memory_edit" && before
+				? {
+						description: before.description,
+						body: replaceOnce(before.body, change.old ?? "", change.new ?? ""),
+					}
+				: undefined;
+	return lockedFor(
+		userId,
+		async (tx): Promise<"changed" | "full" | undefined> => {
+			const now = await findFor(tx, userId, path);
+			const same = after
+				? now?.description === after.description && now.body === after.body
+				: !now;
+			if (!same) return "changed";
+			if (!before) await tx.delete(memory).where(atFor(userId, path));
+			else {
+				if (!now) {
+					const [{ n }] = await tx
+						.select({ n: sql<number>`count(*)::int` })
+						.from(memory)
+						.where(eq(memory.userId, userId));
+					if (n >= MAX_MEMORIES) return "full";
+				}
+				const values = {
+					description: before.description,
+					body: before.body,
+					conversationId,
+					updatedAt: new Date(),
+				};
+				await tx
+					.insert(memory)
+					.values({ userId, path, ...values })
+					.onConflictDoUpdate({
+						target: [memory.userId, memory.path],
+						set: values,
+					});
+			}
+			await markUndone(tx);
+		},
+	);
+}
+
 /** The Memories of User `userId`, written down as coming from Conversation `conversationId`. */
 export function memoriesOf(userId: string, conversationId: string): Memories {
-	const at = (path: string) =>
-		and(eq(memory.userId, userId), eq(memory.path, path));
-	// a User's writes go one at a time, so the count and `before` hold
-	const locked = <T>(fn: (tx: Tx) => Promise<T>) =>
-		db.transaction(async (tx) => {
-			await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${userId}))`);
-			return fn(tx);
-		});
-	const find = async (tx: Tx | typeof db, path: string) =>
-		(await tx.select(columns).from(memory).where(at(path)))[0];
+	const at = (path: string) => atFor(userId, path);
+	const locked = <T>(fn: (tx: Tx) => Promise<T>) => lockedFor(userId, fn);
+	const find = (tx: Tx | typeof db, path: string) => findFor(tx, userId, path);
 
 	return {
 		index: () =>

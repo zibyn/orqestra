@@ -27,6 +27,7 @@ import {
 } from "@orqestra/tools";
 import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
+import { MEMORY_CHANGES, undoChange } from "./memories.ts";
 import {
 	AGENT_RUNS_QUEUE,
 	conversationChannel,
@@ -40,7 +41,6 @@ import {
 	saved,
 	stopSubagents,
 } from "./runs.ts";
-
 import { ensureSandbox, SandboxGone, wakeSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
@@ -86,6 +86,7 @@ export { UploadTooLarge } from "./uploads.ts";
 export class ConversationError extends Error {
 	override name = "ConversationError";
 }
+class AlreadyUndone extends Error {}
 
 const owned = (userId: string, id: string) =>
 	db.query.conversation.findFirst({
@@ -535,6 +536,59 @@ export function createConversations({
 					console.error("A file could not be read from its Sandbox:", error);
 				return { error: "unavailable" };
 			}
+		},
+
+		/**
+		 * Reverses the Memory change of the Agent's Tool call `toolCallId` in the user's Conversation, from the `before` its result kept,
+		 * and marks that result `undone`. Refuses when the Memory changed since, so a later change is never lost.
+		 */
+		async undoMemory(
+			userId: string,
+			id: string,
+			toolCallId: string,
+		): Promise<{ error?: "not_found" | "undone" | "changed" | "full" }> {
+			if (!(await owned(userId, id))) return { error: "not_found" };
+			const [row] = await db
+				.select({ id: message.id, message: message.message })
+				.from(message)
+				.where(
+					and(
+						eq(message.conversationId, id),
+						sql`${message.message} @> ${JSON.stringify({ role: "toolResult", toolCallId, isError: false })}::jsonb`,
+					),
+				);
+			const result = row?.message as
+				| { toolName: string; details?: { undone?: boolean; path: string } }
+				| undefined;
+			if (!result?.details || !MEMORY_CHANGES.includes(result.toolName))
+				return { error: "not_found" };
+			if (result.details.undone) return { error: "undone" };
+			const error = await undoChange(
+				userId,
+				id,
+				result.toolName,
+				result.details,
+				async (tx) => {
+					const marked = await tx
+						.update(message)
+						.set({
+							message: sql`jsonb_set(${message.message}, '{details,undone}', 'true')`,
+						})
+						.where(
+							and(
+								eq(message.id, row.id),
+								sql`not coalesce((${message.message}#>>'{details,undone}')::boolean, false)`,
+							),
+						)
+						.returning({ id: message.id });
+					// undone meanwhile: roll back
+					if (!marked.length) throw new AlreadyUndone();
+				},
+			).catch((e) => {
+				if (e instanceof AlreadyUndone) return "undone" as const;
+				throw e;
+			});
+			return error ? { error } : {};
 		},
 
 		/** A Subagent's transcript, loaded when its panel opens; undefined when it is not the user's. */
