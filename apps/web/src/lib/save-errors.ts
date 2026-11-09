@@ -6,6 +6,7 @@ const texts: {
 	[C in Code]: (error: SaveError & { code: C }) => string;
 } = {
 	api_key_required: () => m.api_key_required(),
+	token_required: () => m.sandbox_token_required(),
 	not_in_catalog: () => m.save_not_in_catalog(),
 	not_found: () => m.save_not_found(),
 	id_invalid: () => m.save_id_invalid(),

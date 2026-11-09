@@ -9,6 +9,7 @@ import {
 	ArrowLeftIcon,
 	BotIcon,
 	BoxesIcon,
+	ContainerIcon,
 	type LucideIcon,
 	PlugIcon,
 	SearchIcon,
@@ -56,7 +57,8 @@ type NavItem = {
 		| "/console/providers"
 		| "/console/agents"
 		| "/console/search"
-		| "/console/mcp";
+		| "/console/mcp"
+		| "/console/sandbox";
 	label: () => string;
 	icon: LucideIcon;
 };
@@ -75,6 +77,11 @@ const nav: { label: () => string; items: NavItem[] }[] = [
 		items: [
 			{ to: "/console/search", label: m.search_providers, icon: SearchIcon },
 			{ to: "/console/mcp", label: m.mcp_servers, icon: PlugIcon },
+			{
+				to: "/console/sandbox",
+				label: m.sandbox_provider,
+				icon: ContainerIcon,
+			},
 		],
 	},
 ];

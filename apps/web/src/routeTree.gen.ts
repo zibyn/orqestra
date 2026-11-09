@@ -17,6 +17,7 @@ import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
 import { Route as ConsoleMcpRouteImport } from './routes/console/mcp'
 import { Route as ConsoleProvidersRouteImport } from './routes/console/providers'
+import { Route as ConsoleSandboxRouteImport } from './routes/console/sandbox'
 import { Route as ConsoleSearchRouteImport } from './routes/console/search'
 import { Route as AppCConversationIdRouteImport } from './routes/_app/c.$conversationId'
 import { Route as ApiConversationsIdEventsRouteImport } from './routes/api/conversations/$id/events'
@@ -60,6 +61,11 @@ const ConsoleProvidersRoute = ConsoleProvidersRouteImport.update({
   path: '/providers',
   getParentRoute: () => ConsoleRoute,
 } as any)
+const ConsoleSandboxRoute = ConsoleSandboxRouteImport.update({
+  id: '/sandbox',
+  path: '/sandbox',
+  getParentRoute: () => ConsoleRoute,
+} as any)
 const ConsoleSearchRoute = ConsoleSearchRouteImport.update({
   id: '/search',
   path: '/search',
@@ -84,6 +90,7 @@ export interface FileRoutesByFullPath {
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
+  '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
   '/console/': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
@@ -94,6 +101,7 @@ export interface FileRoutesByTo {
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
+  '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleIndexRoute
@@ -108,6 +116,7 @@ export interface FileRoutesById {
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
+  '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
   '/_app/': typeof AppIndexRoute
   '/console/': typeof ConsoleIndexRoute
@@ -123,6 +132,7 @@ export interface FileRouteTypes {
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
+    | '/console/sandbox'
     | '/console/search'
     | '/console/'
     | '/c/$conversationId'
@@ -133,6 +143,7 @@ export interface FileRouteTypes {
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
+    | '/console/sandbox'
     | '/console/search'
     | '/'
     | '/console'
@@ -146,6 +157,7 @@ export interface FileRouteTypes {
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
+    | '/console/sandbox'
     | '/console/search'
     | '/_app/'
     | '/console/'
@@ -218,6 +230,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleProvidersRouteImport
       parentRoute: typeof ConsoleRoute
     }
+    '/console/sandbox': {
+      id: '/console/sandbox'
+      path: '/sandbox'
+      fullPath: '/console/sandbox'
+      preLoaderRoute: typeof ConsoleSandboxRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
     '/console/search': {
       id: '/console/search'
       path: '/search'
@@ -258,6 +277,7 @@ interface ConsoleRouteChildren {
   ConsoleAgentsRoute: typeof ConsoleAgentsRoute
   ConsoleMcpRoute: typeof ConsoleMcpRoute
   ConsoleProvidersRoute: typeof ConsoleProvidersRoute
+  ConsoleSandboxRoute: typeof ConsoleSandboxRoute
   ConsoleSearchRoute: typeof ConsoleSearchRoute
   ConsoleIndexRoute: typeof ConsoleIndexRoute
 }
@@ -266,6 +286,7 @@ const ConsoleRouteChildren: ConsoleRouteChildren = {
   ConsoleAgentsRoute: ConsoleAgentsRoute,
   ConsoleMcpRoute: ConsoleMcpRoute,
   ConsoleProvidersRoute: ConsoleProvidersRoute,
+  ConsoleSandboxRoute: ConsoleSandboxRoute,
   ConsoleSearchRoute: ConsoleSearchRoute,
   ConsoleIndexRoute: ConsoleIndexRoute,
 }
@@ -282,12 +303,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

@@ -1,4 +1,4 @@
-// The Toolbox: which Tools are available, the Tools of one Run, and the MCP connection test.
+// The Toolbox: which Tools are available, the Tools of one Run, the MCP connection test, and the orrery client.
 // A leaf: knows nothing of how the services are stored or configured.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
@@ -158,3 +158,4 @@ export async function openToolbox(
 }
 
 export { type McpTestResult, testMcpServer } from "./mcp.ts";
+export * from "./orrery.ts";

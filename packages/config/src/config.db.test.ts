@@ -39,7 +39,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 	// leaves only a default Agent, as the baseline does, also for the next package's tests
 	const reset = async () => {
 		await db.execute(
-			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, agent cascade`,
+			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, agent cascade`,
 		);
 		await config.agents.save({
 			id: "general",
@@ -218,6 +218,59 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 				["other", []],
 			]);
 			expect(mcpServers).toEqual([{ id: "files", name: "files" }]);
+		});
+	});
+
+	describe("Sandbox Provider", () => {
+		// nothing listens there, so the connection test fails fast
+		const orrery = {
+			url: "http://127.0.0.1:9",
+			token: "orr_1_s",
+			snapshot: "",
+			cpu: 2,
+			memory: 2147483648,
+		};
+
+		it("requires a token on the first save", async () => {
+			expect(
+				await config.sandboxProvider.save({ ...orrery, token: "" }),
+			).toEqual({ errors: { token: { code: "token_required" } } });
+			expect(await config.sandboxProvider.get()).toBeNull();
+		});
+
+		it("is saved even when the connection test fails, and keeps the token when left blank", async () => {
+			const saved = await config.sandboxProvider.save(orrery);
+			expect(saved).toMatchObject({
+				errors: {},
+				test: { ok: false, reason: "unreachable" },
+			});
+			await config.sandboxProvider.save({
+				...orrery,
+				token: "",
+				snapshot: "skills",
+				cpu: 4,
+			});
+			expect(await config.sandboxProvider.get()).toEqual({
+				url: "http://127.0.0.1:9",
+				tokenReadable: true,
+				snapshot: "skills",
+				cpu: 4,
+				memory: 2147483648,
+			});
+			expect((await config.current()).sandboxProvider).toEqual({
+				url: "http://127.0.0.1:9",
+				token: "orr_1_s",
+				snapshot: "skills",
+				cpu: 4,
+				memory: 2147483648,
+			});
+		});
+
+		it("is unavailable once deleted", async () => {
+			await config.sandboxProvider.save(orrery);
+			await config.sandboxProvider.delete();
+			expect(await config.sandboxProvider.get()).toBeNull();
+			expect((await config.current()).sandboxProvider).toBeUndefined();
 		});
 	});
 
