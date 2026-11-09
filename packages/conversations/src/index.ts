@@ -4,7 +4,10 @@ import {
 	type OrqestraConfig,
 	resolveThinking,
 	resolveTurn,
+	skillBlock,
+	skillInstructions,
 	type ThinkingLevel,
+	turnSkills,
 } from "@orqestra/config";
 import { db } from "@orqestra/db";
 import {
@@ -77,10 +80,36 @@ const ownedSubagent = async (userId: string, id: string) => {
 
 export function createConversations({
 	config,
+	skillFiles,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
+	/** A Skill version's files, read when a User invokes it. */
+	skillFiles: (
+		versionId: number,
+	) => Promise<{ path: string; content: Uint8Array }[]>;
 }) {
+	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
+	async function expandSkill(
+		cfg: OrqestraConfig,
+		agent: Parameters<typeof turnSkills>[1],
+		text: string,
+	) {
+		const invoked = text.match(/^\/skill:(\S+)\s*([\s\S]*)$/);
+		if (!invoked) return text;
+		const [, name, args] = invoked;
+		const skill = turnSkills(cfg, agent).find((s) => s.name === name);
+		const md = skill
+			? (await skillFiles(skill.versionId)).find((f) => f.path === "SKILL.md")
+			: undefined;
+		if (!md) throw new ConversationError("This Skill is unavailable");
+		return skillBlock(
+			name,
+			skillInstructions(new TextDecoder().decode(md.content)),
+			args.trim(),
+		);
+	}
+
 	return {
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
@@ -99,6 +128,11 @@ export function createConversations({
 					default: a.default,
 					pickable: a.pickable,
 					defaultModel: a.defaultModel,
+					// the User may invoke those the Agent may not
+					skills: turnSkills(cfg, a).map(({ name, description }) => ({
+						name,
+						description,
+					})),
 					models: a.models.map((ref) => {
 						const model = cfg.models.find((m) => modelRef(m) === ref);
 						return {
@@ -218,6 +252,7 @@ export function createConversations({
 			// existing Conversations keep their Agent even after it stops being pickable
 			if (!existing && !turn.agent.pickable)
 				throw new ConversationError("This Agent cannot be picked");
+			const content = await expandSkill(cfg, turn.agent, input.text);
 
 			const conversationId = await db.transaction(async (tx) => {
 				let id = existing?.id;
@@ -237,7 +272,7 @@ export function createConversations({
 				}
 				await tx.insert(inbox).values({
 					conversationId: id,
-					message: { role: "user", content: input.text, timestamp: Date.now() },
+					message: { role: "user", content, timestamp: Date.now() },
 					model: modelRef(turn.model),
 					thinkingLevel: turn.thinking,
 					wake: true,

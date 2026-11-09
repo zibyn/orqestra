@@ -13,6 +13,8 @@
   "empty_title": "What can I help with?",
   "empty_hint": "Type a message below to start a new conversation.",
   "composer_placeholder": "Message the Agent…",
+  "composer_skills": "Skills",
+  "skill_used": "Used Skill: {name}",
   "send": "Send",
   "back_to_app": "Back",
   "console_agents": "Agents",

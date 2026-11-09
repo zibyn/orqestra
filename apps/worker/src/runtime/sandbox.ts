@@ -4,7 +4,7 @@ import {
 	formatSkillsForPrompt,
 	type Skill,
 } from "@earendil-works/pi-coding-agent";
-import type { turnSkills } from "@orqestra/config";
+import { SKILLS_DIR, type turnSkills } from "@orqestra/config";
 import type { RunHandle } from "@orqestra/conversations";
 import {
 	type Orrery,
@@ -14,8 +14,6 @@ import {
 	tar,
 } from "@orqestra/tools";
 
-/** Where the Skills are written in a Sandbox, one folder each. */
-const SKILLS_DIR = "/workspace/.skills";
 /** Characters of a command's stdout or stderr the model gets; the start of longer output is cut. */
 const MAX_STREAM_CHARS = 20_000;
 const MAX_FILE_CHARS = 50_000;
