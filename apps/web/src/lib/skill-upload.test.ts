@@ -10,9 +10,13 @@ vi.mock("#/lib/session", () => ({
 vi.mock("@orqestra/config/live", () => ({ config: { skills: { upload } } }));
 
 const { Route } = await import("#/routes/api/skills");
-// biome-ignore lint/suspicious/noExplicitAny: the handler's context is TanStack's, only request is read
-const post = (request: Request) =>
-	(Route.options.server as any).handlers.POST({ request });
+// the handler's context is TanStack's; it reads only the request
+const post = (
+	Route.options.server as unknown as {
+		handlers: { POST: (ctx: { request: Request }) => Promise<Response> };
+	}
+).handlers.POST;
+const send = (request: Request) => post({ request });
 
 /** A body that records whether it was read. */
 function body(bytes: Uint8Array) {
@@ -52,7 +56,7 @@ describe("uploading a Skill", () => {
 
 	it("passes the zip and replace to the Skills", async () => {
 		const { stream } = body(new Uint8Array([1, 2, 3]));
-		const response = await post(request(stream, {}, "?replace=true"));
+		const response = await send(request(stream, {}, "?replace=true"));
 		expect(await response.json()).toEqual({ errors: {}, name: "pdf" });
 		expect(upload).toHaveBeenCalledWith(new Uint8Array([1, 2, 3]), true);
 	});
@@ -64,7 +68,7 @@ describe("uploading a Skill", () => {
 		] as const) {
 			user.admin = admin;
 			const { stream, state } = body(new Uint8Array([1]));
-			expect((await post(request(stream))).status).toBe(status);
+			expect((await send(request(stream))).status).toBe(status);
 			expect(state.read).toBe(false);
 		}
 		expect(upload).not.toHaveBeenCalled();
@@ -72,14 +76,14 @@ describe("uploading a Skill", () => {
 
 	it("refuses a zip over the limit, by its declared length or as it comes", async () => {
 		const declared = body(new Uint8Array([1]));
-		const refused = await post(
+		const refused = await send(
 			request(declared.stream, {
 				"content-length": String(SKILL_ZIP_MAX_BYTES + 1),
 			}),
 		);
 		expect(refused.status).toBe(413);
 		expect(declared.state.read).toBe(false);
-		const counted = await post(
+		const counted = await send(
 			request(body(new Uint8Array(SKILL_ZIP_MAX_BYTES + 1)).stream),
 		);
 		expect(counted.status).toBe(413);
