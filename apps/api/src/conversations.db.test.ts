@@ -82,10 +82,8 @@ describe.skipIf(!url)("Conversations through the api", () => {
 	beforeEach(async () => {
 		await db.$client.query("truncate conversation cascade");
 	});
-	afterAll(async () => {
-		await stopWorker?.();
-		await db.$client.end();
-	});
+	// the shared pool stays open for the files after this one (see test-env.ts)
+	afterAll(() => stopWorker?.());
 
 	it("is 401 without a User", async () => {
 		const { status, body } = await app(null)("GET", "/api/conversations");
