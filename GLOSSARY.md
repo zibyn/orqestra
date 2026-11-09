@@ -29,7 +29,7 @@ A role the user converses with, such as a general assistant or a translator, def
 _Avoid_: Bot, assistant, model, persona
 
 **Agent Definition**:
-The reusable description of an Agent, maintained by Admins: its name, description, instructions, allowed Models, thinking levels, Tools and Skills, and whether Users can pick it. Users start Conversations only with Agents they can pick; any definition can serve as the template for a Subagent.
+The reusable description of an Agent, maintained by Admins: its name, description, instructions, allowed Models, thinking levels, Tools and Skills, whether it uses memory (off unless the Admin turns it on), and whether Users can pick it. Users start Conversations only with Agents they can pick; any definition can serve as the template for a Subagent.
 _Avoid_: Profile, persona, preset
 
 **Subagent**:
@@ -111,3 +111,21 @@ _Avoid_: Exchange, round
 **Run**:
 The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time; inputs that arrive meanwhile are delivered between its steps, and it ends only once none are left. Each Subagent runs in Runs of its own, and the User stopping a Conversation stops its Subagents too.
 _Avoid_: Job, task, generation
+
+### Memory
+
+**Memory**:
+One note an Agent keeps about a User across Conversations, such as a preference, a fact about them or work in progress, written by the Agent during a Run and shaped like a file: a path, a short description and a Markdown body. Memories belong to the User, not to an Agent: every Agent whose Agent Definition turns memory on reads and writes the same ones, while a Subagent can only read them. A Memory never expires; the Agent updates or deletes it when it turns out stale or wrong. Only the User can see, edit and delete their Memories, not even an Admin; turning memory off leaves them unused until it is turned back on, and they outlive the Conversation that wrote them.
+_Avoid_: Fact, profile, note, knowledge
+
+**Memory Index**:
+The list of a User's Memories, one line each with its path and description, that an Agent sees as its Run starts; it reads a Memory's body only when it needs it.
+_Avoid_: Memory file, summary, profile
+
+**Recall**:
+The Tool that finds a User's past Conversations by keyword and opens them, so an Agent can use what was said before even if no Memory holds it. It comes and goes with memory, and never finds an Incognito Conversation.
+_Avoid_: Search (that is the web), history search, chat search
+
+**Incognito Conversation**:
+A Conversation the User starts with memory off: its Agent neither reads nor writes Memories nor uses Recall, and Recall never finds it. It is chosen when the Conversation starts and cannot be changed afterwards; otherwise it is an ordinary Conversation.
+_Avoid_: Private chat, temporary chat
