@@ -57,10 +57,10 @@ type Response<T> =
 	| { data: T; error: null }
 	| { data: null; error: { status: unknown; value: unknown } };
 
-/** An api call's data; any error is thrown, its text request_failed. */
+/** An api call's data; its error is thrown, for errorText. */
 export async function ok<T>(response: Promise<Response<T>>) {
 	const { data, error } = await response;
-	if (error) throw new Error(m.request_failed());
+	if (error) throw error;
 	return data as T;
 }
 
@@ -70,10 +70,16 @@ export async function saved<T extends { errors: SaveErrors }>(
 ) {
 	const { data, error } = await response;
 	if (error?.status === 422) return error.value as T;
-	if (error) throw new Error(m.request_failed());
+	if (error) throw error;
 	return data as T;
 }
 
-/** What to show for a failed request. */
-export const errorText = (error: unknown) =>
-	error instanceof Error ? error.message : m.request_failed();
+/** What to show for a failed request: the first field error of an api error's body, when it has a known code. */
+export function errorText(error: unknown) {
+	const errors = (error as { value?: { errors?: SaveErrors } } | null)?.value
+		?.errors;
+	const first = errors && Object.values(errors)[0];
+	if (first)
+		return first.code in texts ? saveErrorText(first) : m.request_failed();
+	return error instanceof Error ? error.message : m.request_failed();
+}

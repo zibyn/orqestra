@@ -57,7 +57,3 @@ export async function requireUserId() {
 	if (!user) throw new Error("Unauthorized");
 	return user.id;
 }
-
-export async function requireAdmin() {
-	if (!(await currentUser())?.admin) throw new Error("Forbidden");
-}

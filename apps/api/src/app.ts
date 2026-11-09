@@ -1,11 +1,15 @@
+import type { Conversations } from "@orqestra/conversations";
 import { Elysia } from "elysia";
-import { adminOnly } from "./admin.ts";
+import { z } from "zod";
 import { agents } from "./agents.ts";
+import { download, upload } from "./files.ts";
 import type { User } from "./identity.ts";
 import { mcpServers } from "./mcp-servers.ts";
+import { memoryRoutes } from "./memories.ts";
 import { providers } from "./providers.ts";
 import { sandboxProvider } from "./sandbox-provider.ts";
 import { searchProviders } from "./search-providers.ts";
+import { skills } from "./skills.ts";
 
 export type { User };
 
@@ -21,8 +25,31 @@ export type Session = (
 /** Polaris' /auth/login, /auth/callback and /auth/logout. */
 export type Auth = (request: Request) => Response | Promise<Response>;
 
+/** `user` for the routes of whoever uses it; by its name, the session is read once per request however many do. */
+const signedIn = (session: Session) =>
+	new Elysia({ name: "signed-in" }).resolve(
+		{ as: "scoped" },
+		async ({ request, set }) => {
+			const { user, cookies } = await session(request);
+			if (cookies.length) set.headers["set-cookie"] = cookies;
+			return { user };
+		},
+	);
+export type SignedIn = ReturnType<typeof signedIn>;
+
+const unauthorized = { errors: { session: { code: "unauthorized" } } };
+
 /** The api; production passes Polaris (see polaris.ts), tests a fake. */
-export function createApp({ session, auth }: { session: Session; auth: Auth }) {
+export function createApp({
+	session,
+	auth,
+	conversations,
+}: {
+	session: Session;
+	auth: Auth;
+	conversations: Conversations;
+}) {
+	const user = signedIn(session);
 	return (
 		new Elysia()
 			// invalid input is 422 with an error per field, like a save's own field errors
@@ -42,28 +69,59 @@ export function createApp({ session, auth }: { session: Session; auth: Auth }) {
 			.all("/auth/*", ({ request }) => auth(request))
 			.group("/api", (api) =>
 				api
-					// once per request, so that only one read may refresh
-					.resolve(async ({ request, set }) => {
-						const { user, cookies } = await session(request);
-						if (cookies.length) set.headers["set-cookie"] = cookies;
-						return { user };
-					})
+					.use(user)
+					.use(skills(user))
+					.use(providers(user))
+					.use(searchProviders(user))
+					.use(mcpServers(user))
+					.use(sandboxProvider(user))
+					.use(agents(user))
 					.get(
 						"/session",
-						({ user, status }) =>
-							user ??
-							status(401, { errors: { session: { code: "unauthorized" } } }),
+						({ user, status }) => user ?? status(401, unauthorized),
 					)
-					// the console's, for Admins only
-					.guard({}, (admin) =>
-						admin
-							.onBeforeHandle(adminOnly)
-							.use(providers)
-							.use(searchProviders)
-							.use(mcpServers)
-							.use(sandboxProvider)
-							.use(agents),
-					),
+					// a Conversation's live events as server-sent events, until the client goes; see conversations.subscribe
+					.get(
+						"/conversations/:id/events",
+						async ({ user, params, request, set, status }) => {
+							if (!user) return status(401, unauthorized);
+							const id = z.uuid().safeParse(params.id);
+							const stream =
+								id.success &&
+								(await conversations.subscribe(
+									user.id,
+									id.data,
+									request.signal,
+								));
+							if (!stream)
+								return status(404, {
+									errors: { conversation: { code: "not_found" } },
+								});
+							set.headers["content-type"] = "text/event-stream";
+							set.headers["cache-control"] = "no-cache";
+							return new Response(stream);
+						},
+					)
+					.post(
+						"/conversations/:id/uploads",
+						({ user, status, params, request }) =>
+							user
+								? upload(conversations, user.id, params.id, request)
+								: status(401, unauthorized),
+						// the body is the file, streamed into the Sandbox as it arrives
+						{ parse: "none" },
+					)
+					.get(
+						"/conversations/:id/files",
+						({ user, status, params, request, set }) => {
+							// the file may change in the Sandbox, and is the User's alone
+							set.headers["cache-control"] = "private, no-store";
+							return user
+								? download(conversations, user.id, params.id, request)
+								: status(401, unauthorized);
+						},
+					)
+					.use(memoryRoutes(user)),
 			)
 	);
 }

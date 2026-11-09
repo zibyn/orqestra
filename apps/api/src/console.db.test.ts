@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { config } from "@orqestra/config/live";
+import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
@@ -13,6 +14,7 @@ const api = createApp({
 		cookies: [],
 	}),
 	auth: () => new Response(null, { status: 404 }),
+	conversations: {} as Conversations,
 });
 
 async function call(method: string, path: string, body?: unknown) {
@@ -45,10 +47,7 @@ describe.skipIf(!url)("the console through the api", () => {
 		});
 	};
 	beforeEach(reset);
-	afterAll(async () => {
-		await reset();
-		await config.close();
-	});
+	afterAll(reset);
 
 	it("saves a Provider, enables one of its Models and deletes it", async () => {
 		const { catalog } = (await call("GET", "/providers")).body;

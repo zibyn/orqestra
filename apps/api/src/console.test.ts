@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { Conversations } from "@orqestra/conversations";
 import { createApp, type User } from "./app.ts";
 
 const admin = { id: "a1", name: "Ada", admin: true };
@@ -8,6 +9,7 @@ const app = (user: User | null) => {
 	const api = createApp({
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(null, { status: 404 }),
+		conversations: {} as Conversations,
 	});
 	// handle needs its app as this
 	return (request: Request) => api.handle(request);

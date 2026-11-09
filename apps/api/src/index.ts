@@ -1,4 +1,5 @@
-import { config } from "@orqestra/config/live";
+import { config, skillFiles } from "@orqestra/config/live";
+import { createConversations } from "@orqestra/conversations";
 import { z } from "zod";
 import { createApp } from "./app.ts";
 import { polaris } from "./polaris.ts";
@@ -26,5 +27,8 @@ await config.current().catch((error) => {
 	process.exit(1);
 });
 
-createApp(polaris(env.data)).listen(3001);
+createApp({
+	...polaris(env.data),
+	conversations: createConversations({ config: config.current, skillFiles }),
+}).listen(3001);
 console.log("api listening on 3001");
