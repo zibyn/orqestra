@@ -465,7 +465,7 @@ export function createConversations({
 		},
 
 		/**
-		 * A file in the Sandbox of the user's Conversation, a Subagent's included, streamed from orrery as it arrives.
+		 * A file the Agent attached in the user's Conversation, a Subagent's included, streamed from its Sandbox by orrery as it arrives.
 		 * Starts the Sandbox if Idle Stop stopped it, but never creates one. `path` is absolute or relative to /workspace.
 		 */
 		async openFile(
@@ -487,6 +487,22 @@ export function createConversations({
 			if (!(await owned(userId, id))) return { error: "not_found" };
 			const relative = workspacePath(path);
 			if (!relative) return { error: "no_file" };
+			// only what the Agent attached here: the rest of the Sandbox is its working space
+			const attached = await db
+				.select({ id: message.id })
+				.from(message)
+				.where(
+					and(
+						eq(message.conversationId, id),
+						sql`${message.message} @> ${JSON.stringify({
+							role: "toolResult",
+							toolName: "attach",
+							details: { attachment: { path: `/workspace/${relative}` } },
+						})}::jsonb`,
+					),
+				)
+				.limit(1);
+			if (!attached.length) return { error: "no_file" };
 			const provider = (await config()).sandboxProvider;
 			if (!provider) return { error: "unavailable" };
 			const client = orrery(provider);

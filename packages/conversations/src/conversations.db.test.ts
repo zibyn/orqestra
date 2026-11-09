@@ -1451,7 +1451,25 @@ describe.skipIf(!url)(
 					.insert(schema.conversation)
 					.values({ userId, agentId: null, parentId: conv.id })
 					.returning();
-				// a Sandbox for each, holding a report, which Idle Stop has stopped
+				// what the Agent's attach Tool saves
+				const attach = (conversationId: string, path: string) =>
+					db.insert(schema.message).values({
+						conversationId,
+						model: "faux/faux",
+						thinkingLevel: "off",
+						message: {
+							role: "toolResult",
+							toolCallId: "t1",
+							toolName: "attach",
+							content: [{ type: "text", text: "Attached" }],
+							details: {
+								attachment: { path, name: path.split("/").at(-1), size: 1 },
+							},
+							isError: false,
+							timestamp: 0,
+						},
+					});
+				// a Sandbox for each, holding a report the Agent attached and a file it did not, which Idle Stop has stopped
 				for (const c of [conv, sub]) {
 					const { id } = await o.client.createSandbox(provider);
 					await o.client.getSandbox(id, { waitFor: "ready" });
@@ -1461,8 +1479,10 @@ describe.skipIf(!url)(
 						.update(schema.conversation)
 						.set({ sandboxId: id })
 						.where(sql`${schema.conversation.id} = ${c.id}`);
+					o.files(id).set("out/secret.txt", new TextEncoder().encode("s"));
+					await attach(c.id, "/workspace/out/report.pdf");
 				}
-				return { o, files, conv, sub };
+				return { o, files, conv, sub, attach };
 			};
 			const signal = new AbortController().signal;
 
@@ -1496,11 +1516,21 @@ describe.skipIf(!url)(
 				expect(
 					await files.openFile(userId, conv.id, "../etc/passwd", signal),
 				).toEqual({ error: "no_file" });
+				// only what the Agent attached in that Conversation, though the Sandbox holds more
+				expect(
+					await files.openFile(
+						userId,
+						conv.id,
+						"/workspace/out/secret.txt",
+						signal,
+					),
+				).toEqual({ error: "no_file" });
 				expect(o.calls.length).toBe(before);
 			});
 
 			it("says why when the file, the Sandbox or orrery is not there", async () => {
-				const { o, files, conv, sub } = await setup();
+				const { o, files, conv, sub, attach } = await setup();
+				await attach(conv.id, "/workspace/out/missing.pdf");
 				expect(
 					await files.openFile(userId, conv.id, "out/missing.pdf", signal),
 				).toEqual({ error: "no_file" });
