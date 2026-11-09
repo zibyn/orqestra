@@ -19,6 +19,7 @@ import { Route as ConsoleMcpRouteImport } from './routes/console/mcp'
 import { Route as ConsoleProvidersRouteImport } from './routes/console/providers'
 import { Route as ConsoleSandboxRouteImport } from './routes/console/sandbox'
 import { Route as ConsoleSearchRouteImport } from './routes/console/search'
+import { Route as ConsoleSkillsRouteImport } from './routes/console/skills'
 import { Route as AppCConversationIdRouteImport } from './routes/_app/c.$conversationId'
 import { Route as ApiConversationsIdEventsRouteImport } from './routes/api/conversations/$id/events'
 
@@ -71,6 +72,11 @@ const ConsoleSearchRoute = ConsoleSearchRouteImport.update({
   path: '/search',
   getParentRoute: () => ConsoleRoute,
 } as any)
+const ConsoleSkillsRoute = ConsoleSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
+  getParentRoute: () => ConsoleRoute,
+} as any)
 const AppCConversationIdRoute = AppCConversationIdRouteImport.update({
   id: '/c/$conversationId',
   path: '/c/$conversationId',
@@ -92,6 +98,7 @@ export interface FileRoutesByFullPath {
   '/console/providers': typeof ConsoleProvidersRoute
   '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
+  '/console/skills': typeof ConsoleSkillsRoute
   '/console/': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
   '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
@@ -103,6 +110,7 @@ export interface FileRoutesByTo {
   '/console/providers': typeof ConsoleProvidersRoute
   '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
+  '/console/skills': typeof ConsoleSkillsRoute
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
@@ -118,6 +126,7 @@ export interface FileRoutesById {
   '/console/providers': typeof ConsoleProvidersRoute
   '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
+  '/console/skills': typeof ConsoleSkillsRoute
   '/_app/': typeof AppIndexRoute
   '/console/': typeof ConsoleIndexRoute
   '/_app/c/$conversationId': typeof AppCConversationIdRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/console/providers'
     | '/console/sandbox'
     | '/console/search'
+    | '/console/skills'
     | '/console/'
     | '/c/$conversationId'
     | '/api/conversations/$id/events'
@@ -145,6 +155,7 @@ export interface FileRouteTypes {
     | '/console/providers'
     | '/console/sandbox'
     | '/console/search'
+    | '/console/skills'
     | '/'
     | '/console'
     | '/c/$conversationId'
@@ -159,6 +170,7 @@ export interface FileRouteTypes {
     | '/console/providers'
     | '/console/sandbox'
     | '/console/search'
+    | '/console/skills'
     | '/_app/'
     | '/console/'
     | '/_app/c/$conversationId'
@@ -244,6 +256,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleSearchRouteImport
       parentRoute: typeof ConsoleRoute
     }
+    '/console/skills': {
+      id: '/console/skills'
+      path: '/skills'
+      fullPath: '/console/skills'
+      preLoaderRoute: typeof ConsoleSkillsRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
     '/_app/c/$conversationId': {
       id: '/_app/c/$conversationId'
       path: '/c/$conversationId'
@@ -279,6 +298,7 @@ interface ConsoleRouteChildren {
   ConsoleProvidersRoute: typeof ConsoleProvidersRoute
   ConsoleSandboxRoute: typeof ConsoleSandboxRoute
   ConsoleSearchRoute: typeof ConsoleSearchRoute
+  ConsoleSkillsRoute: typeof ConsoleSkillsRoute
   ConsoleIndexRoute: typeof ConsoleIndexRoute
 }
 
@@ -288,6 +308,7 @@ const ConsoleRouteChildren: ConsoleRouteChildren = {
   ConsoleProvidersRoute: ConsoleProvidersRoute,
   ConsoleSandboxRoute: ConsoleSandboxRoute,
   ConsoleSearchRoute: ConsoleSearchRoute,
+  ConsoleSkillsRoute: ConsoleSkillsRoute,
   ConsoleIndexRoute: ConsoleIndexRoute,
 }
 

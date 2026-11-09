@@ -21,6 +21,18 @@ const texts: {
 		m.save_default_model_not_allowed({ model: e.model }),
 	thinking_default_not_allowed: (e) =>
 		m.save_thinking_default_not_allowed({ level: e.level }),
+	skill_zip_invalid: () => m.skill_zip_invalid(),
+	skill_md_missing: () => m.skill_md_missing(),
+	skill_frontmatter_invalid: () => m.skill_frontmatter_invalid(),
+	skill_name_invalid: () => m.skill_name_invalid(),
+	skill_name_mismatch: (e) =>
+		m.skill_name_mismatch({ name: e.name, folder: e.folder }),
+	skill_description_invalid: () => m.skill_description_invalid(),
+	skill_too_large: () => m.skill_too_large(),
+	skill_too_many_files: () => m.skill_too_many_files(),
+	skill_path_unsafe: (e) => m.skill_path_unsafe({ path: e.path }),
+	skill_symlink: (e) => m.skill_symlink({ path: e.path }),
+	skill_exists: () => m.skill_exists(),
 };
 
 /** A field error of a /console save, in the User's language. */

@@ -86,6 +86,22 @@ export interface Settings {
 		cpu: number;
 		memory: number;
 	};
+	/** Every Skill with its current version. */
+	skills: {
+		name: string;
+		enabled: boolean;
+		versionId: number;
+		description: string;
+		disableModelInvocation: boolean;
+	}[];
+}
+
+/** A Skill Runs can use; read its files with `skillFiles(versionId)`. */
+export interface SkillInfo {
+	/** The current version when the config was loaded. */
+	versionId: number;
+	description: string;
+	disableModelInvocation: boolean;
 }
 
 export interface OrqestraConfig {
@@ -99,6 +115,8 @@ export interface OrqestraConfig {
 	tools: Partial<Record<ToolName, ToolService>>;
 	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
 	mcpServers: Record<string, McpServer>;
+	/** Enabled Skills, by name; the others are unavailable. */
+	skills: Record<string, SkillInfo>;
 	/** Undefined when none is configured or its token cannot be decrypted: every Skill is then unavailable. */
 	sandboxProvider?: SandboxProvider;
 	/** pi's streamSimple with the Provider's configured API key. */
@@ -242,6 +260,9 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 			mcpServers[id] = { name, url, headers: Object.fromEntries(plain) };
 	}
 
+	const skills: OrqestraConfig["skills"] = {};
+	for (const { name, enabled, ...skill } of settings.skills)
+		if (enabled) skills[name] = skill;
 	const stored = settings.sandboxProvider;
 	const sandboxProvider = stored?.token
 		? { ...stored, token: stored.token, snapshot: stored.snapshot ?? undefined }
@@ -254,6 +275,7 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		defaultAgent: defaults[0],
 		tools,
 		mcpServers,
+		skills,
 		sandboxProvider,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);

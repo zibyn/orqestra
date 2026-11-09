@@ -6,9 +6,11 @@ import {
 	provider,
 	sandboxProvider,
 	searchProvider,
+	skill,
+	skillVersion,
 } from "@orqestra/db/schema";
 import { availableTools } from "@orqestra/tools";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { admin, servedBy } from "./admin.ts";
 import {
 	loadConfig,
@@ -33,6 +35,9 @@ export {
 	providerTestInput,
 	sandboxProviderInput,
 	searchProviderInput,
+	skillCurrentInput,
+	skillEnabledInput,
+	skillFiles,
 	toolServiceInput,
 } from "./admin.ts";
 
@@ -46,6 +51,7 @@ async function loadSettings(): Promise<Settings> {
 		served,
 		mcpServers,
 		agents,
+		skills,
 		[sandbox],
 	] = await Promise.all([
 		db.select().from(provider),
@@ -54,6 +60,17 @@ async function loadSettings(): Promise<Settings> {
 		servedBy(),
 		db.select().from(mcpServer).orderBy(mcpServer.createdAt),
 		db.select().from(agent).orderBy(agent.createdAt),
+		db
+			.select({
+				name: skill.name,
+				enabled: skill.enabled,
+				versionId: skillVersion.id,
+				description: skillVersion.description,
+				disableModelInvocation: skillVersion.disableModelInvocation,
+			})
+			.from(skill)
+			.innerJoin(skillVersion, eq(skill.currentVersionId, skillVersion.id))
+			.orderBy(skill.name),
 		db.select().from(sandboxProvider),
 	]);
 	return {
@@ -82,6 +99,7 @@ async function loadSettings(): Promise<Settings> {
 				value: decryptSecret(h.value, key),
 			})),
 		})),
+		skills,
 		sandboxProvider: sandbox && {
 			url: sandbox.url,
 			token: decryptSecret(sandbox.token, key),

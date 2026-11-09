@@ -38,6 +38,7 @@ const deepseek = (
 	searchProviders: [],
 	servedBy: { search: null, scrape: null },
 	mcpServers: [],
+	skills: [],
 });
 const withAgents = (agents: Record<string, unknown>, enabled?: string[]) =>
 	deepseek(enabled, {}, agents);

@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-router";
 import {
 	ArrowLeftIcon,
+	BookOpenIcon,
 	BotIcon,
 	BoxesIcon,
 	ContainerIcon,
@@ -58,6 +59,7 @@ type NavItem = {
 		| "/console/agents"
 		| "/console/search"
 		| "/console/mcp"
+		| "/console/skills"
 		| "/console/sandbox";
 	label: () => string;
 	icon: LucideIcon;
@@ -70,6 +72,7 @@ const nav: { label: () => string; items: NavItem[] }[] = [
 		items: [
 			{ to: "/console/providers", label: m.providers, icon: BoxesIcon },
 			{ to: "/console/agents", label: m.console_agents, icon: BotIcon },
+			{ to: "/console/skills", label: m.skills, icon: BookOpenIcon },
 		],
 	},
 	{
