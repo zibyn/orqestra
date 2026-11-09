@@ -167,6 +167,12 @@ export function skillBlock(name: string, body: string, args: string) {
 	return args ? `${block}\n\n${args}` : block;
 }
 
+/** The Skill a User's text invokes as `/skill:name args`, and the args; undefined when it invokes none. */
+export function invokedSkill(text: string) {
+	const match = text.match(/^\/skill:(\S+)\s*([\s\S]*)$/);
+	return match ? { name: match[1], args: match[2].trim() } : undefined;
+}
+
 /** The Skill a User's message invoked and what they wrote with it; undefined when it invokes none. */
 export function parseSkillBlock(text: string) {
 	// pi's parseSkillBlock pattern

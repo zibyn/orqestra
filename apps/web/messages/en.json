@@ -94,6 +94,7 @@
   "agent_skills_hint": "Disabled Skills are unavailable, and every Skill is while no Sandbox Provider is configured; they stay in the definition.",
   "skill_unavailable": "Warning: Skill {skill} is disabled or no Sandbox Provider is configured, so Agents run without it.",
   "skill_unavailable_label": "{name} (unavailable)",
+  "skill_not_usable": "/skill:{name} is not a Skill this Agent can use now: it may be disabled, deleted or not allowed for this Agent.",
   "mcp_server_tool": "{name} (MCP Server)",
   "search_providers": "Search Providers",
   "search_providers_hint": "External services that serve the Search and Scrape Tools.",

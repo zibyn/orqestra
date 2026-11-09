@@ -1,5 +1,6 @@
 import type { Message } from "@earendil-works/pi-ai";
 import {
+	invokedSkill,
 	modelRef,
 	type OrqestraConfig,
 	resolveThinking,
@@ -113,9 +114,9 @@ export function createConversations({
 		agent: Parameters<typeof turnSkills>[1],
 		text: string,
 	) {
-		const invoked = text.match(/^\/skill:(\S+)\s*([\s\S]*)$/);
+		const invoked = invokedSkill(text);
 		if (!invoked) return text;
-		const [, name, args] = invoked;
+		const { name, args } = invoked;
 		const skill = turnSkills(cfg, agent).find((s) => s.name === name);
 		const md = skill
 			? (await skillFiles(skill.versionId)).find((f) => f.path === "SKILL.md")
@@ -124,7 +125,7 @@ export function createConversations({
 		return skillBlock(
 			name,
 			skillInstructions(new TextDecoder().decode(md.content)),
-			args.trim(),
+			args,
 		);
 	}
 

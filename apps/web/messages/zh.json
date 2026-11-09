@@ -94,6 +94,7 @@
   "agent_skills_hint": "已停用的 Skill 不可用；没有配置 Sandbox Provider 时所有 Skill 都不可用。它们仍保留在定义里。",
   "skill_unavailable": "警告：Skill {skill} 已停用或没有配置 Sandbox Provider，Agent 将不带它运行。",
   "skill_unavailable_label": "{name}（不可用）",
+  "skill_not_usable": "/skill:{name} 不是此 Agent 当前可用的 Skill：它可能已停用、已删除，或此 Agent 不允许使用。",
   "search_providers": "Search Provider",
   "search_providers_hint": "为 Search 与 Scrape 这两个 Tool 提供服务的外部服务。",
   "search_provider": "Search Provider",
