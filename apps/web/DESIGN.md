@@ -94,6 +94,7 @@ Use the Tailwind names (`bg-background`, `text-muted-foreground`, `border-border
 - **Messages** are centered in a column of `max-w-3xl` (48rem) with `px-4` gutters.
   - User messages: right-aligned, `bg-muted` bubble, `rounded-2xl px-4 py-2.5`, max ~80% width.
   - Agent replies: no bubble; plain prose (`prose prose-neutral dark:prose-invert`) aligned to the left of the column.
+  - Built from the shadcn chat components: the thread is a `MessageScroller` (each turn a `MessageScrollerItem`, the User's turn its scroll anchor), turns are `Message`, the User's bubble is `Bubble variant="muted"`. Thinking, Tool calls and Subagents are `TraceLine`s, one `Trace` per run of them; Tool output is a `CodeBlock`; dividers (compaction, Notifications) are `Marker variant="separator"`; files are `Attachment`; the Composer is an `InputGroup`.
 - **Standalone pages** (login, setup): a single `Card` centered on the screen, `max-w-sm`.
 - **Console**: its own `Sidebar` (also `collapsible="icon"`), page padding `px-4 py-6`, `md:px-10 md:py-10`.
   - Sidebar header: Orqestra / Console. Content: nav groups (Models: Providers, Agents, Skills; Tools: Search Providers, MCP Servers, Sandbox Provider) and "Back to conversations" at the bottom. Footer: the same user menu as the app (`NavUser`).

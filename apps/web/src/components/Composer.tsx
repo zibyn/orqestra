@@ -1,21 +1,23 @@
 import { invokedSkill, MAX_UPLOAD_BYTES } from "@orqestra/config/shared";
-import { FileIcon, PaperclipIcon, XIcon } from "lucide-react";
+import { FileIcon, PlusIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import {
 	PromptInput,
 	PromptInputFooter,
+	PromptInputHeader,
+	PromptInputMenu,
 	PromptInputSubmit,
 	PromptInputTextarea,
 } from "#/components/ai-elements/prompt-input";
-import { Badge } from "#/components/ui/badge";
-import { Button } from "#/components/ui/button";
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "#/components/ui/select";
+	Attachment,
+	AttachmentAction,
+	AttachmentActions,
+	AttachmentContent,
+	AttachmentMedia,
+	AttachmentTitle,
+} from "#/components/ui/attachment";
+import { InputGroupButton } from "#/components/ui/input-group";
 import type { getAgentOptions } from "#/lib/conversation-fns";
 import { tooLarge, UploadError } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
@@ -112,11 +114,11 @@ export function Composer({
 				}}
 			>
 				{highlighted && (
-					<div
+					<PromptInputHeader
 						id="composer-skills"
 						role="listbox"
 						aria-label={m.composer_skills()}
-						className="flex flex-col p-1"
+						className="flex-col items-stretch gap-0 border-b px-1 py-1"
 					>
 						{matches.map((s) => (
 							<button
@@ -126,7 +128,7 @@ export function Composer({
 								role="option"
 								aria-selected={s === highlighted}
 								tabIndex={-1}
-								className="flex flex-col items-start rounded-md px-2 py-1.5 text-left text-sm aria-selected:bg-accent"
+								className="flex flex-col items-start rounded-md px-2 py-1.5 text-left font-normal text-foreground aria-selected:bg-accent"
 								onMouseDown={(e) => e.preventDefault()}
 								onClick={() => pick(s.name)}
 							>
@@ -136,7 +138,7 @@ export function Composer({
 								</span>
 							</button>
 						))}
-					</div>
+					</PromptInputHeader>
 				)}
 				<PromptInputTextarea
 					aria-label={m.composer_placeholder()}
@@ -167,29 +169,32 @@ export function Composer({
 					}}
 				/>
 				{attached.length > 0 && (
-					<ul
-						aria-label={m.attachments()}
-						className="flex flex-wrap gap-1 px-2"
-					>
+					<PromptInputHeader aria-label={m.attachments()} role="list">
 						{attached.map((file, i) => (
-							// biome-ignore lint/suspicious/noArrayIndexKey: two picks of one file share every other key
-							<li key={i}>
-								<Badge variant="secondary" className="h-6 pr-0.5">
+							<Attachment
+								// biome-ignore lint/suspicious/noArrayIndexKey: two picks of one file share every other key
+								key={i}
+								size="sm"
+								role="listitem"
+								className="max-w-56"
+							>
+								<AttachmentMedia>
 									<FileIcon />
-									<span className="max-w-48 truncate">{file.name}</span>
-									<Button
-										type="button"
-										variant="ghost"
-										size="icon-xs"
+								</AttachmentMedia>
+								<AttachmentContent>
+									<AttachmentTitle>{file.name}</AttachmentTitle>
+								</AttachmentContent>
+								<AttachmentActions>
+									<AttachmentAction
 										aria-label={m.remove_attachment({ name: file.name })}
 										onClick={() => setFiles(files.filter((f) => f !== file))}
 									>
 										<XIcon />
-									</Button>
-								</Badge>
-							</li>
+									</AttachmentAction>
+								</AttachmentActions>
+							</Attachment>
 						))}
-					</ul>
+					</PromptInputHeader>
 				)}
 				<PromptInputFooter>
 					{agent.attachments && (
@@ -210,86 +215,62 @@ export function Composer({
 									]);
 								}}
 							/>
-							<Button
-								type="button"
-								variant="ghost"
+							<InputGroupButton
 								size="icon-sm"
+								variant="outline"
+								className="rounded-full"
 								aria-label={m.attach_files()}
 								onClick={() => picker.current?.click()}
 							>
-								<PaperclipIcon />
-							</Button>
+								<PlusIcon />
+							</InputGroupButton>
 						</>
 					)}
 					{onAgentChange && agents.length > 1 && (
-						<Picker
+						<PromptInputMenu
 							label={m.agent()}
 							value={agent.id}
 							onChange={onAgentChange}
 							items={agents.map((a) => ({ value: a.id, label: a.name }))}
 						/>
 					)}
-					{agent.models.length > 1 && (
-						<Picker
-							label={m.agent_models()}
-							value={model.ref}
-							onChange={(ref) => setPicked({ ...picked, model: ref })}
-							items={agent.models.map((x) => ({ value: x.ref, label: x.name }))}
+					{/* the message's own picks sit by Send */}
+					<div className="ml-auto flex items-center gap-1">
+						{agent.models.length > 1 && (
+							<PromptInputMenu
+								label={m.agent_models()}
+								value={model.ref}
+								onChange={(ref) => setPicked({ ...picked, model: ref })}
+								items={agent.models.map((x) => ({
+									value: x.ref,
+									label: x.name,
+								}))}
+							/>
+						)}
+						{model.thinking.allowed.length > 1 && (
+							<PromptInputMenu
+								label={m.thinking_level()}
+								showLabel
+								value={thinking}
+								onChange={(level) =>
+									setPicked({ ...picked, thinking: level as Level })
+								}
+								items={model.thinking.allowed.map((l) => ({
+									value: l,
+									label: levelLabels[l](),
+								}))}
+							/>
+						)}
+						<PromptInputSubmit
+							running={running}
+							onStop={onStop}
+							disabled={!text.trim()}
+							busy={sending}
 						/>
-					)}
-					{model.thinking.allowed.length > 1 && (
-						<Picker
-							label={m.thinking_level()}
-							value={thinking}
-							onChange={(level) =>
-								setPicked({ ...picked, thinking: level as Level })
-							}
-							items={model.thinking.allowed.map((l) => ({
-								value: l,
-								label: levelLabels[l](),
-							}))}
-						/>
-					)}
-					<PromptInputSubmit
-						running={running}
-						onStop={onStop}
-						disabled={!text.trim()}
-						busy={sending}
-					/>
+					</div>
 				</PromptInputFooter>
 			</PromptInput>
 			{error && <p className="mt-2 text-sm text-destructive">{error}</p>}
 		</div>
-	);
-}
-
-function Picker({
-	label,
-	value,
-	onChange,
-	items,
-}: {
-	label: string;
-	value: string;
-	onChange: (value: string) => void;
-	items: { value: string; label: string }[];
-}) {
-	return (
-		<Select items={items} value={value} onValueChange={(v) => v && onChange(v)}>
-			<SelectTrigger
-				size="sm"
-				aria-label={label}
-				className="border-0 shadow-none"
-			>
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				{items.map((item) => (
-					<SelectItem key={item.value} value={item.value}>
-						{item.label}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
 	);
 }

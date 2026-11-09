@@ -14,6 +14,7 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import {
+	BotIcon,
 	BrainIcon,
 	ChevronRightIcon,
 	DownloadIcon,
@@ -22,25 +23,50 @@ import {
 	RotateCcwIcon,
 	SquareIcon,
 	Undo2Icon,
+	WrenchIcon,
 } from "lucide-react";
 import {
 	createContext,
-	Fragment,
+	type ReactNode,
 	useContext,
 	useEffect,
 	useRef,
 	useState,
 } from "react";
+import { MessageResponse } from "#/components/ai-elements/message";
+import { Reasoning } from "#/components/ai-elements/reasoning";
+import { type Choice, Composer } from "#/components/Composer";
+import {
+	Attachment,
+	AttachmentContent,
+	AttachmentDescription,
+	AttachmentGroup,
+	AttachmentMedia,
+	AttachmentTitle,
+	AttachmentTrigger,
+} from "#/components/ui/attachment";
+import { Badge } from "#/components/ui/badge";
+import { Bubble, BubbleContent } from "#/components/ui/bubble";
+import { Button } from "#/components/ui/button";
+import {
+	CodeBlock,
+	CodeBlockContent,
+	CodeBlockLine,
+} from "#/components/ui/code-block";
+import { Marker, MarkerContent } from "#/components/ui/marker";
 import {
 	Message,
 	MessageContent,
-	MessageResponse,
-} from "#/components/ai-elements/message";
-import { Reasoning } from "#/components/ai-elements/reasoning";
-import { type Choice, Composer } from "#/components/Composer";
-import { Badge } from "#/components/ui/badge";
-import { Button } from "#/components/ui/button";
-import { Separator } from "#/components/ui/separator";
+	MessageFooter,
+} from "#/components/ui/message";
+import {
+	MessageScroller,
+	MessageScrollerButton,
+	MessageScrollerContent,
+	MessageScrollerItem,
+	MessageScrollerProvider,
+	MessageScrollerViewport,
+} from "#/components/ui/message-scroller";
 import {
 	Sheet,
 	SheetContent,
@@ -48,6 +74,16 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "#/components/ui/sheet";
+import {
+	Trace,
+	TraceCollapsible,
+	TraceCollapsibleContent,
+	TraceCollapsibleTrigger,
+	TraceDescription,
+	TraceIcon,
+	TraceLine,
+	TraceTitle,
+} from "#/components/ui/trace";
 import {
 	getConversation,
 	getSubagentMessages,
@@ -57,7 +93,9 @@ import {
 	stopSubagent,
 	undoMemory,
 } from "#/lib/conversation-fns";
+import { groupSteps } from "#/lib/steps";
 import { uploadFiles } from "#/lib/uploads";
+import { cn } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
 
@@ -135,6 +173,40 @@ function useLiveReplies(conversationId: string) {
 	return live;
 }
 
+/** A Conversation's or a Subagent's thread: follows the reply while it streams, and opens on the last question. */
+function Thread({
+	busy,
+	className,
+	children,
+}: {
+	busy: boolean;
+	className?: string;
+	children: ReactNode;
+}) {
+	return (
+		<MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor">
+			<MessageScroller className="flex-1">
+				<MessageScrollerViewport>
+					<MessageScrollerContent aria-busy={busy} className={className}>
+						{children}
+					</MessageScrollerContent>
+				</MessageScrollerViewport>
+				<MessageScrollerButton />
+			</MessageScroller>
+		</MessageScrollerProvider>
+	);
+}
+
+/** A Run or Subagent working, before its reply streams. */
+const Working = () => (
+	<TraceLine status="running">
+		<TraceIcon>
+			<Loader2Icon className="animate-spin text-signal" />
+		</TraceIcon>
+		<TraceTitle>{m.generating()}</TraceTitle>
+	</TraceLine>
+);
+
 function ConversationView() {
 	const conversation = Route.useLoaderData();
 	const { agents } = app.useLoaderData();
@@ -153,7 +225,13 @@ function ConversationView() {
 		.filter((row) => row.message.role === "user")
 		.at(-1);
 	const results = toolResults(conversation.messages.map((row) => row.message));
-	const delivered = conversation.messages.filter((row) => !row.queued);
+	const delivered = conversation.messages.filter(
+		// Tool results show under their call; one keeps its row only for the divider before it
+		(row) =>
+			!row.queued &&
+			(row.message.role !== "toolResult" ||
+				conversation.compactedBefore.includes(row.id)),
+	);
 	// still in the inbox: shown after the reply that is generating, and after a failure that awaits Retry
 	const queued = conversation.messages.filter((row) => row.queued);
 
@@ -162,91 +240,97 @@ function ConversationView() {
 			value={{ replies, open: (run) => setPanel({ run, open: true }) }}
 		>
 			<div className="flex min-h-0 flex-1 flex-col">
-				<div className="flex-1 overflow-y-auto">
-					<div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
-						{delivered.map((row) => (
-							<Fragment key={row.id}>
-								{conversation.compactedBefore.includes(row.id) && (
-									<div className="flex items-center gap-3 text-xs text-muted-foreground">
-										<Separator className="flex-1" />
-										{m.compacted_divider()}
-										<Separator className="flex-1" />
-									</div>
-								)}
-								{
-									row.message.role === "user" && row.subagentId ? (
-										<NotificationLine
-											subagentId={row.subagentId}
-											text={messageText(row.message)}
-										/>
-									) : row.message.role === "user" ? (
-										<Message from="user">
-											<UserMessageContent message={row.message} />
-										</Message>
-									) : row.message.role === "assistant" ? (
-										<AgentReply
-											message={row.message}
-											results={results}
-											conversationId={conversation.id}
-										/>
-									) : null /* Tool results show under their call */
-								}
-							</Fragment>
-						))}
-						{live && <LiveReply parts={live} />}
-						{running && !live && (
-							<Loader2Icon
-								aria-label={m.generating()}
-								className="size-4 animate-spin text-signal"
-							/>
-						)}
-						{conversation.status === "failed" && (
-							<div className="flex items-center gap-2 text-sm text-destructive">
-								{m.run_failed()}
-								<Button
-									variant="outline"
-									size="sm"
-									disabled={retrying}
-									onClick={async () => {
-										setRetrying(true);
-										try {
-											await retryRun({ data: conversation.id });
-											await router.invalidate();
-										} finally {
-											setRetrying(false);
-										}
-									}}
-								>
-									{retrying ? (
-										<Loader2Icon className="animate-spin" />
-									) : (
-										<RotateCcwIcon />
-									)}
-									{m.retry()}
-								</Button>
-							</div>
-						)}
-						{queued.map((row) =>
-							row.subagentId ? (
+				<Thread
+					busy={running}
+					className="mx-auto w-full max-w-3xl gap-6 px-4 py-6"
+				>
+					{delivered.map((row) => (
+						<MessageScrollerItem
+							key={row.id}
+							messageId={String(row.id)}
+							// the User's turn settles near the top, and the reply streams in under it
+							scrollAnchor={row.message.role === "user" && !row.subagentId}
+							className="flex flex-col gap-6"
+						>
+							{conversation.compactedBefore.includes(row.id) && (
+								<Marker variant="separator" className="text-xs">
+									<MarkerContent>{m.compacted_divider()}</MarkerContent>
+								</Marker>
+							)}
+							{row.message.role === "user" && row.subagentId ? (
 								<NotificationLine
-									key={`queued-${row.id}`}
+									subagentId={row.subagentId}
+									text={messageText(row.message)}
+								/>
+							) : row.message.role === "user" ? (
+								<UserMessage message={row.message} />
+							) : row.message.role === "assistant" ? (
+								<AgentReply
+									message={row.message}
+									results={results}
+									conversationId={conversation.id}
+								/>
+							) : null}
+						</MessageScrollerItem>
+					))}
+					{live && (
+						<MessageScrollerItem messageId="live">
+							<LiveReply parts={live} />
+						</MessageScrollerItem>
+					)}
+					{running && !live && (
+						<MessageScrollerItem messageId="working">
+							<Working />
+						</MessageScrollerItem>
+					)}
+					{conversation.status === "failed" && (
+						<MessageScrollerItem
+							messageId="failed"
+							className="flex items-center gap-2 text-sm text-destructive"
+						>
+							{m.run_failed()}
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={retrying}
+								onClick={async () => {
+									setRetrying(true);
+									try {
+										await retryRun({ data: conversation.id });
+										await router.invalidate();
+									} finally {
+										setRetrying(false);
+									}
+								}}
+							>
+								{retrying ? (
+									<Loader2Icon
+										className="animate-spin"
+										data-icon="inline-start"
+									/>
+								) : (
+									<RotateCcwIcon data-icon="inline-start" />
+								)}
+								{m.retry()}
+							</Button>
+						</MessageScrollerItem>
+					)}
+					{queued.map((row) => (
+						<MessageScrollerItem
+							key={`queued-${row.id}`}
+							messageId={`queued-${row.id}`}
+						>
+							{row.subagentId ? (
+								<NotificationLine
 									subagentId={row.subagentId}
 									text={messageText(row.message)}
 								/>
 							) : (
-								<Message key={`queued-${row.id}`} from="user">
-									<UserMessageContent
-										message={row.message}
-										className="opacity-60"
-									/>
-									<span className="text-xs text-muted-foreground">
-										{m.queued()}
-									</span>
-								</Message>
-							),
-						)}
-					</div>
-				</div>
+								<UserMessage message={row.message} queued />
+							)}
+						</MessageScrollerItem>
+					))}
+				</Thread>
 				{conversation.readOnly ? (
 					<p className="mx-auto w-full max-w-3xl px-4 pb-6 text-center text-sm text-muted-foreground">
 						{m.agent_offline()}
@@ -345,12 +429,6 @@ function useSubagentName(run?: SubagentTranscript) {
 		: m.general_worker();
 }
 
-const collapsible =
-	"group rounded-md border text-sm [&_summary]:flex [&_summary]:cursor-pointer [&_summary]:items-center [&_summary]:gap-1.5 [&_summary]:px-3 [&_summary]:py-1.5 [&_summary]:text-muted-foreground";
-const chevron = (
-	<ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
-);
-
 const units = ["byte", "kilobyte", "megabyte", "gigabyte"];
 /** 12 B, 3.4 MB… in the User's locale. */
 function fileSize(bytes: number) {
@@ -366,7 +444,50 @@ function fileSize(bytes: number) {
 	}).format(bytes / 1000 ** power);
 }
 
-/** A Tool call folded into one line (name and arguments); open it for the result. */
+type FileAttachment = { path: string; name: string; size: number };
+/** The file an `attach` call put in the Sandbox, if it did. */
+const attachmentOf = (call: ToolCall, result?: ToolResultMessage) =>
+	call.name === "attach"
+		? (result?.details as { attachment?: FileAttachment } | undefined)
+				?.attachment
+		: undefined;
+
+/** A file the Agent attached, as a download; a tab of its own, so a download that fails shows why there. */
+function FileDownload({
+	attachment,
+	conversationId,
+}: {
+	attachment: FileAttachment;
+	conversationId: string;
+}) {
+	return (
+		<Attachment size="sm">
+			<AttachmentMedia>
+				<FileIcon />
+			</AttachmentMedia>
+			<AttachmentContent>
+				<AttachmentTitle>{attachment.name}</AttachmentTitle>
+				<AttachmentDescription>
+					{fileSize(attachment.size)}
+				</AttachmentDescription>
+			</AttachmentContent>
+			<DownloadIcon className="mr-1 size-4 text-muted-foreground" />
+			<AttachmentTrigger
+				render={
+					// biome-ignore lint/a11y/useAnchorContent: labelled by aria-label; the visible name sits beside it
+					<a
+						href={`/api/conversations/${conversationId}/files?${new URLSearchParams({ path: attachment.path })}`}
+						target="_blank"
+						rel="noopener"
+						aria-label={m.file_download({ name: attachment.name })}
+					/>
+				}
+			/>
+		</Attachment>
+	);
+}
+
+/** A Tool call as one Trace line (name and arguments); once its result is in, the line opens on it. */
 function ToolCallView({
 	call,
 	result,
@@ -377,29 +498,6 @@ function ToolCallView({
 	conversationId?: string;
 }) {
 	const { subagents } = Route.useLoaderData();
-	const attachment = (
-		result?.details as
-			| { attachment?: { path: string; name: string; size: number } }
-			| undefined
-	)?.attachment;
-	if (call.name === "attach" && attachment && conversationId)
-		return (
-			// a tab of its own: a download that fails shows why there
-			<a
-				href={`/api/conversations/${conversationId}/files?${new URLSearchParams({ path: attachment.path })}`}
-				target="_blank"
-				rel="noopener"
-				aria-label={m.file_download({ name: attachment.name })}
-				className="flex items-center gap-2 self-start rounded-md border px-3 py-2 text-sm hover:bg-muted/50"
-			>
-				<FileIcon className="size-4 shrink-0 text-muted-foreground" />
-				<span className="truncate font-medium">{attachment.name}</span>
-				<span className="shrink-0 text-xs text-muted-foreground">
-					{fileSize(attachment.size)}
-				</span>
-				<DownloadIcon className="size-4 shrink-0 text-muted-foreground" />
-			</a>
-		);
 	const runs =
 		(result?.details as { subagents?: SubagentTranscript[] } | undefined)
 			?.subagents ?? subagents.filter((s) => s.toolCallId === call.id);
@@ -421,26 +519,38 @@ function ToolCallView({
 				conversationId={conversationId}
 			/>
 		);
-	return (
-		<details className={collapsible}>
-			<summary>
-				{chevron}
-				<span className="truncate">
-					<span className="font-medium text-foreground">{call.name}</span>{" "}
-					{Object.values(call.arguments).map(String).join(" · ")}
-				</span>
-				{!result && (
-					<Loader2Icon className="size-3.5 animate-spin text-signal" />
+	const line = (
+		<TraceLine
+			status={!result ? "running" : result.isError ? "error" : undefined}
+		>
+			<TraceIcon>
+				{result ? (
+					<WrenchIcon />
+				) : (
+					<Loader2Icon className="animate-spin text-signal" />
 				)}
-			</summary>
-			{result && (
-				<pre
-					className={`max-h-80 overflow-auto whitespace-pre-wrap border-t px-3 py-2 text-xs ${result.isError ? "text-destructive" : ""}`}
+			</TraceIcon>
+			<TraceTitle>{call.name}</TraceTitle>
+			<TraceDescription className="min-w-0 shrink truncate">
+				{Object.values(call.arguments).map(String).join(" · ")}
+			</TraceDescription>
+		</TraceLine>
+	);
+	if (!result) return line;
+	return (
+		<TraceCollapsible>
+			<TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
+			<TraceCollapsibleContent>
+				<CodeBlock
+					size="sm"
+					variant={result.isError ? "destructive" : "default"}
 				>
-					{messageText(result)}
-				</pre>
-			)}
-		</details>
+					<CodeBlockContent wrap className="max-h-64">
+						{messageText(result)}
+					</CodeBlockContent>
+				</CodeBlock>
+			</TraceCollapsibleContent>
+		</TraceCollapsible>
 	);
 }
 
@@ -448,7 +558,7 @@ function ToolCallView({
 const MEMORY_CHANGES = ["memory_write", "memory_edit", "memory_delete"];
 type Note = { description: string; body: string };
 
-/** A Memory the Agent wrote, edited or deleted, as a tag in its reply; open it for the content and to undo it. */
+/** A Memory the Agent wrote, edited or deleted, as a Trace line in its reply; open it for the content and to undo it. */
 function MemoryChange({
 	call,
 	result,
@@ -477,31 +587,38 @@ function MemoryChange({
 				? m.memory_updated({ description })
 				: m.memory_forgotten({ description });
 	return (
-		<details className={`${collapsible} self-start`}>
-			<summary>
-				{chevron}
-				<BrainIcon className="size-3.5 shrink-0" />
-				<span className={`truncate ${change.undone ? "line-through" : ""}`}>
-					{label}
-				</span>
-				{change.undone && (
-					<span className="shrink-0 text-xs">{m.memory_undone()}</span>
-				)}
-			</summary>
-			<div className="flex flex-col gap-2 border-t px-3 py-2">
-				<span className="font-mono text-xs text-muted-foreground">
-					{change.path}
-				</span>
-				<pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs">
-					{call.name === "memory_edit"
-						? `- ${change.old}\n+ ${change.new}`
-						: (change.after ?? change.before)?.body}
-				</pre>
+		<TraceCollapsible>
+			<TraceCollapsibleTrigger>
+				<TraceLine>
+					<TraceIcon>
+						<BrainIcon />
+					</TraceIcon>
+					<TraceTitle className={cn(change.undone && "line-through")}>
+						{label}
+					</TraceTitle>
+					{change.undone && (
+						<TraceDescription>{m.memory_undone()}</TraceDescription>
+					)}
+				</TraceLine>
+			</TraceCollapsibleTrigger>
+			<TraceCollapsibleContent className="flex flex-col items-start gap-2">
+				<span className="font-mono text-xs">{change.path}</span>
+				<CodeBlock size="sm">
+					<CodeBlockContent wrap className="max-h-64">
+						{call.name === "memory_edit" ? (
+							<>
+								<CodeBlockLine variant="removed">{change.old}</CodeBlockLine>
+								<CodeBlockLine variant="added">{change.new}</CodeBlockLine>
+							</>
+						) : (
+							(change.after ?? change.before)?.body
+						)}
+					</CodeBlockContent>
+				</CodeBlock>
 				{!change.undone && (
 					<Button
 						variant="outline"
 						size="sm"
-						className="self-start"
 						disabled={undoing}
 						onClick={async () => {
 							setUndoing(true);
@@ -524,17 +641,21 @@ function MemoryChange({
 							}
 						}}
 					>
-						{undoing ? <Loader2Icon className="animate-spin" /> : <Undo2Icon />}
+						{undoing ? (
+							<Loader2Icon className="animate-spin" data-icon="inline-start" />
+						) : (
+							<Undo2Icon data-icon="inline-start" />
+						)}
 						{m.memory_undo()}
 					</Button>
 				)}
 				{error && <p className="text-xs text-destructive">{error}</p>}
-			</div>
-		</details>
+			</TraceCollapsibleContent>
+		</TraceCollapsible>
 	);
 }
 
-/** A Subagent as one line in its parent's reply, with what it is writing; open it for its own Conversation. */
+/** A Subagent as one Trace line in its parent's reply, with what it is writing; open it for its own Conversation. */
 function SubagentView({ run }: { run: SubagentTranscript }) {
 	const { replies, open } = useContext(PanelContext);
 	const name = useSubagentName(run);
@@ -543,36 +664,34 @@ function SubagentView({ run }: { run: SubagentTranscript }) {
 	const live = running && run.id ? replies[run.id] : undefined;
 	const preview = live?.at(-1)?.text.trim().split("\n").at(-1);
 	return (
-		<button
-			type="button"
-			onClick={() => open(run)}
-			className="flex flex-col gap-0.5 rounded-md border px-3 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted/50"
-		>
-			<span className="flex w-full items-center gap-1.5">
-				<span className="truncate">
-					<span className="font-medium text-foreground">{name}</span>{" "}
-					{run.brief}
-				</span>
-				{running ? (
-					<Loader2Icon
-						aria-label={m.generating()}
-						className="ml-auto size-3.5 shrink-0 animate-spin text-signal"
-					/>
-				) : (
-					<span
-						className={`ml-auto shrink-0 text-xs ${run.outcome === "failed" ? "text-destructive" : ""}`}
-					>
-						{outcomeLabel(run.outcome)}
-					</span>
-				)}
-				<ChevronRightIcon className="size-3.5 shrink-0" />
-			</span>
-			{preview && <span className="truncate text-xs">{preview}</span>}
+		<button type="button" onClick={() => open(run)}>
+			<TraceLine
+				status={
+					running ? "running" : run.outcome === "failed" ? "error" : undefined
+				}
+			>
+				<TraceIcon>
+					{running ? (
+						<Loader2Icon className="animate-spin text-signal" />
+					) : (
+						<BotIcon />
+					)}
+				</TraceIcon>
+				<TraceTitle>
+					{name} · {run.brief}
+				</TraceTitle>
+				<TraceDescription className="min-w-0 shrink truncate">
+					{running ? (preview ?? m.generating()) : outcomeLabel(run.outcome)}
+				</TraceDescription>
+				<TraceIcon>
+					<ChevronRightIcon />
+				</TraceIcon>
+			</TraceLine>
 		</button>
 	);
 }
 
-/** A Subagent's Notification to its parent, as one system line: which one, and how it ended. */
+/** A Subagent's Notification to its parent, as one divider: which one, and how it ended. */
 function NotificationLine({
 	subagentId,
 	text,
@@ -587,15 +706,15 @@ function NotificationLine({
 	const outcome = text.match(/^<task-notification [^>]*status="(\w+)"/)?.[1];
 	if (!run) return null;
 	return (
-		<button
-			type="button"
-			onClick={() => open(run)}
-			className="flex items-center gap-3 text-xs text-muted-foreground hover:text-foreground"
+		<Marker
+			variant="separator"
+			className="text-xs hover:text-foreground"
+			render={<button type="button" onClick={() => open(run)} />}
 		>
-			<Separator className="flex-1" />
-			{m.subagent_number({ number: run.number })} · {outcomeLabel(outcome)}
-			<Separator className="flex-1" />
-		</button>
+			<MarkerContent>
+				{m.subagent_number({ number: run.number })} · {outcomeLabel(outcome)}
+			</MarkerContent>
+		</Marker>
 	);
 }
 
@@ -659,86 +778,133 @@ function SubagentPanel({
 							}}
 						>
 							{stopping ? (
-								<Loader2Icon className="animate-spin" />
+								<Loader2Icon
+									className="animate-spin"
+									data-icon="inline-start"
+								/>
 							) : (
-								<SquareIcon />
+								<SquareIcon data-icon="inline-start" />
 							)}
 							{m.stop_subagent()}
 						</Button>
 					)}
 				</SheetHeader>
-				<div className="flex flex-1 flex-col gap-6 overflow-y-auto px-4 pb-6">
-					<Message from="user">
-						<MessageContent className="whitespace-pre-wrap">
-							{run?.brief}
-						</MessageContent>
-					</Message>
+				<Thread busy={active} className="gap-6 px-4 pb-6">
+					<MessageScrollerItem messageId="brief" scrollAnchor>
+						<Message align="end">
+							<MessageContent>
+								<UserBubble>{run?.brief}</UserBubble>
+							</MessageContent>
+						</Message>
+					</MessageScrollerItem>
 					{messages.map((message, i) =>
 						message.role === "assistant" ? (
-							<AgentReply
-								// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
-								key={i}
-								message={message}
-								results={results}
-								conversationId={id}
-							/>
+							// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
+							<MessageScrollerItem key={i} messageId={String(i)}>
+								<AgentReply
+									message={message}
+									results={results}
+									conversationId={id}
+								/>
+							</MessageScrollerItem>
 						) : message.role === "user" && i > 0 ? (
 							// messages the parent sent while it worked; the first is the brief, shown above
-							// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
-							<Message key={i} from="user">
-								<MessageContent>{messageText(message)}</MessageContent>
-							</Message>
+							<MessageScrollerItem
+								// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
+								key={i}
+								messageId={String(i)}
+								scrollAnchor
+							>
+								<Message align="end">
+									<MessageContent>
+										<UserBubble>{messageText(message)}</UserBubble>
+									</MessageContent>
+								</Message>
+							</MessageScrollerItem>
 						) : null,
 					)}
-					{live && <LiveReply parts={live} />}
+					{live && (
+						<MessageScrollerItem messageId="live">
+							<LiveReply parts={live} />
+						</MessageScrollerItem>
+					)}
 					{(run?.outcome === "queued" ||
 						(running && !live) ||
 						(loaded.isFetching && !loaded.data)) && (
-						<Loader2Icon
-							aria-label={m.generating()}
-							className="size-4 animate-spin text-signal"
-						/>
+						<MessageScrollerItem messageId="working">
+							<Working />
+						</MessageScrollerItem>
 					)}
-				</div>
+				</Thread>
 			</SheetContent>
 		</Sheet>
 	);
 }
 
-/** A User message: its text, and the names of its attachments, whose paths a second text gives the Agent. */
-function UserMessageContent({
-	message,
+/** The User's side of a turn, sized as DESIGN.md sets it. */
+function UserBubble({
 	className,
+	children,
+}: {
+	className?: string;
+	children: ReactNode;
+}) {
+	return (
+		<Bubble align="end" variant="muted">
+			<BubbleContent
+				className={cn(
+					"rounded-2xl px-4 py-2.5 text-base whitespace-pre-wrap",
+					className,
+				)}
+			>
+				{children}
+			</BubbleContent>
+		</Bubble>
+	);
+}
+
+/** A User message: its text, and the names of its attachments, whose paths a second text gives the Agent. */
+function UserMessage({
+	message,
+	queued,
 }: {
 	message: PiMessage;
-	className?: string;
+	/** Still in the inbox. */
+	queued?: boolean;
 }) {
 	const { attachments } = message as {
 		attachments?: { name: string; path: string }[];
 	};
 	const first = Array.isArray(message.content) ? message.content[0] : undefined;
 	return (
-		<MessageContent className={className}>
-			<UserText
-				text={
-					attachments && first?.type === "text"
-						? first.text
-						: messageText(message)
-				}
-			/>
-			{attachments && (
-				<ul aria-label={m.attachments()} className="mt-2 flex flex-wrap gap-1">
-					{attachments.map((a) => (
-						<li key={a.path}>
-							<Badge variant="outline" className="max-w-full">
-								<FileIcon />
-								<span className="truncate">{a.name}</span>
-							</Badge>
-						</li>
-					))}
-				</ul>
-			)}
-		</MessageContent>
+		<Message align="end">
+			<MessageContent>
+				<UserBubble className={queued ? "opacity-60" : undefined}>
+					<UserText
+						text={
+							attachments && first?.type === "text"
+								? first.text
+								: messageText(message)
+						}
+					/>
+				</UserBubble>
+				{attachments && (
+					<AttachmentGroup aria-label={m.attachments()} role="list">
+						{attachments.map((a) => (
+							<Attachment key={a.path} size="xs" role="listitem">
+								<AttachmentMedia>
+									<FileIcon />
+								</AttachmentMedia>
+								<AttachmentContent>
+									<AttachmentTitle>{a.name}</AttachmentTitle>
+								</AttachmentContent>
+							</Attachment>
+						))}
+					</AttachmentGroup>
+				)}
+				{queued && <MessageFooter>{m.queued()}</MessageFooter>}
+			</MessageContent>
+		</Message>
 	);
 }
 
@@ -752,25 +918,51 @@ function AgentReply({
 	/** Whose Sandbox the files it attached are in; older Subagents kept in a Tool result have none. */
 	conversationId?: string;
 }) {
+	const download = (part: AssistantMessage["content"][number]) =>
+		part.type === "toolCall" && conversationId
+			? attachmentOf(part, results.get(part.id))
+			: undefined;
 	return (
-		<Message from="assistant">
-			<MessageContent className="flex flex-col gap-3">
-				{message.content.map((part, i) =>
-					part.type === "thinking" ? (
+		<Message>
+			<MessageContent className="gap-3">
+				{groupSteps(
+					message.content,
+					(part) => part.type !== "text" && !download(part),
+				).map((run, i) => {
+					if (Array.isArray(run))
+						return (
+							// biome-ignore lint/suspicious/noArrayIndexKey: saved content never reorders
+							<Trace key={i}>
+								{run.map((part, j) =>
+									part.type === "thinking" ? (
+										// biome-ignore lint/suspicious/noArrayIndexKey: saved content never reorders
+										<Reasoning key={j} text={part.thinking} />
+									) : part.type === "toolCall" ? (
+										<ToolCallView
+											key={part.id}
+											call={part}
+											result={results.get(part.id)}
+											conversationId={conversationId}
+										/>
+									) : null,
+								)}
+							</Trace>
+						);
+					const attachment = download(run);
+					if (attachment && conversationId)
+						return (
+							<FileDownload
+								// biome-ignore lint/suspicious/noArrayIndexKey: saved content never reorders
+								key={i}
+								attachment={attachment}
+								conversationId={conversationId}
+							/>
+						);
+					return run.type === "text" ? (
 						// biome-ignore lint/suspicious/noArrayIndexKey: saved content never reorders
-						<Reasoning key={i} text={part.thinking} />
-					) : part.type === "text" ? (
-						// biome-ignore lint/suspicious/noArrayIndexKey: saved content never reorders
-						<MessageResponse key={i}>{part.text}</MessageResponse>
-					) : (
-						<ToolCallView
-							key={part.id}
-							call={part}
-							result={results.get(part.id)}
-							conversationId={conversationId}
-						/>
-					),
-				)}
+						<MessageResponse key={i}>{run.text}</MessageResponse>
+					) : null;
+				})}
 				{message.stopReason === "aborted" && (
 					<p className="text-xs text-muted-foreground">{m.stopped()}</p>
 				)}
@@ -787,18 +979,28 @@ function AgentReply({
 function LiveReply({ parts }: { parts: Part[] }) {
 	const last = parts.length - 1;
 	return (
-		<Message from="assistant">
-			<MessageContent className="flex flex-col gap-3">
-				{parts.map((part, i) =>
-					part?.kind === "thinking" ? (
-						// biome-ignore lint/suspicious/noArrayIndexKey: parts only grow
-						<Reasoning key={i} text={part.text} isStreaming={i === last} />
-					) : part ? (
-						// biome-ignore lint/suspicious/noArrayIndexKey: parts only grow
-						<MessageResponse key={i} isAnimating mode="streaming">
-							{part.text}
+		<Message>
+			<MessageContent className="gap-3">
+				{groupSteps(
+					// a delta can arrive for a later index first, leaving holes
+					parts.flatMap((part, i) => (part ? [{ ...part, i }] : [])),
+					(part) => part.kind === "thinking",
+				).map((run) =>
+					Array.isArray(run) ? (
+						<Trace key={run[0].i}>
+							{run.map((part) => (
+								<Reasoning
+									key={part.i}
+									text={part.text}
+									isStreaming={part.i === last}
+								/>
+							))}
+						</Trace>
+					) : (
+						<MessageResponse key={run.i} isAnimating mode="streaming">
+							{run.text}
 						</MessageResponse>
-					) : null,
+					),
 				)}
 			</MessageContent>
 		</Message>
