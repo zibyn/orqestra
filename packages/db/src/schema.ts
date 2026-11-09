@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
 	type AnyPgColumn,
 	bigint,
@@ -73,9 +74,15 @@ export const message = pgTable(
 		thinkingLevel: text("thinking_level").notNull(),
 		// a delivered Notification: the Subagent's Conversation it came from
 		subagentId: uuid("subagent_id"),
+		// what Recall searches: a user or assistant message's text, without thinking or Tool calls; null for other messages
+		text: text("text").generatedAlwaysAs(sql`message_text(message)`),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 	},
-	(table) => [index("message_conversationId_idx").on(table.conversationId)],
+	(table) => [
+		index("message_conversationId_idx").on(table.conversationId),
+		// ILIKE rather than tsvector, which does not segment Chinese
+		index("message_text_trgm_idx").using("gin", table.text.op("gin_trgm_ops")),
+	],
 );
 
 // Every input to a Conversation waits here until its Run delivers it into `message` between two steps

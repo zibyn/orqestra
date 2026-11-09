@@ -1,5 +1,5 @@
 {
-  "id": "fe496236-d17f-4df1-827a-525f7d5d1dd6",
+  "id": "a28c92ca-ee4b-4d77-ac44-c2062af241cc",
   "prevId": "f637f765-2d11-4c5e-85b7-12ade60ca0c8",
   "version": "7",
   "dialect": "postgresql",
@@ -527,31 +527,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.memory_setting": {
-      "name": "memory_setting",
-      "schema": "",
-      "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "enabled": {
-          "name": "enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.message": {
       "name": "message",
       "schema": "",
@@ -592,6 +567,16 @@
           "primaryKey": false,
           "notNull": false
         },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "message_text(message)",
+            "type": "stored"
+          }
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -614,6 +599,22 @@
           "isUnique": false,
           "concurrently": false,
           "method": "btree",
+          "with": {}
+        },
+        "message_text_trgm_idx": {
+          "name": "message_text_trgm_idx",
+          "columns": [
+            {
+              "expression": "text",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last",
+              "opclass": "gin_trgm_ops"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
           "with": {}
         }
       },
