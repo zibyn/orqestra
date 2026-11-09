@@ -5,6 +5,7 @@ import {
 	resolveThinking,
 	resolveTurn,
 	type ThinkingLevel,
+	turnSkills,
 } from "@orqestra/config";
 import { db } from "@orqestra/db";
 import {
@@ -14,6 +15,7 @@ import {
 	message,
 	subagent,
 } from "@orqestra/db/schema";
+import { orrery as orreryClient } from "@orqestra/tools";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import pg from "pg";
 import {
@@ -30,8 +32,11 @@ import {
 	stopSubagents,
 } from "./runs.ts";
 
+import { ensureSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
+import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
 
+export { MAX_UPLOAD_BYTES } from "@orqestra/config";
 export type { ConversationEvent, Ended } from "./runs.ts";
 export { MAX_SUBAGENTS } from "./runs.ts";
 export { ensureSandbox } from "./sandbox.ts";
@@ -49,6 +54,7 @@ export {
 	type TranscriptMessage,
 	type Turn,
 } from "./serve.ts";
+export { UploadTooLarge } from "./uploads.ts";
 
 // The only module that reads and writes Conversations, their Inbox, messages, Subagents and compactions.
 // The User's side takes the signed-in user's id everywhere: nobody else, Admins included, can see a Conversation.
@@ -75,11 +81,20 @@ const ownedSubagent = async (userId: string, id: string) => {
 	return row as { parentId: string; number: number } | undefined;
 };
 
+/** An Agent takes attachments when it has a Sandbox: a Sandbox Provider and a Skill it may use. */
+const takesAttachments = (
+	cfg: OrqestraConfig,
+	agent: Parameters<typeof turnSkills>[1],
+) => turnSkills(cfg, agent).length > 0;
+
 export function createConversations({
 	config,
+	orrery = orreryClient,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
+	/** The Sandbox Provider's client, for attachments; tests stand in for orrery. */
+	orrery?: typeof orreryClient;
 }) {
 	return {
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
@@ -98,6 +113,7 @@ export function createConversations({
 					description: a.description,
 					default: a.default,
 					pickable: a.pickable,
+					attachments: takesAttachments(cfg, a),
 					defaultModel: a.defaultModel,
 					models: a.models.map((ref) => {
 						const model = cfg.models.find((m) => modelRef(m) === ref);
@@ -193,6 +209,47 @@ export function createConversations({
 			};
 		},
 
+		/** Starts a Conversation with no messages yet, so attachments can be uploaded before the first one is sent. */
+		async start(userId: string, agentId: string) {
+			const cfg = await config();
+			const turn = resolveTurn(cfg, agentId);
+			if (!turn) throw new ConversationError("This Agent is offline");
+			if (!turn.agent.pickable)
+				throw new ConversationError("This Agent cannot be picked");
+			const [{ id }] = await db
+				.insert(conversation)
+				.values({ userId, agentId })
+				.returning({ id: conversation.id });
+			return id;
+		},
+
+		/**
+		 * Streams one attachment into the Conversation's Sandbox (creating or waking it) as `/workspace/uploads/<name>`,
+		 * renamed when the name is taken; returns its name and path. Undefined when the Conversation is not the user's.
+		 * Throws UploadTooLarge past MAX_UPLOAD_BYTES, and whatever the Sandbox Provider fails with.
+		 */
+		async upload(
+			userId: string,
+			id: string,
+			name: string,
+			body: ReadableStream<Uint8Array>,
+			{ signal }: { signal?: AbortSignal } = {},
+		) {
+			const conv = await owned(userId, id);
+			// a Subagent's Conversation is the Agent's to write to, not the User's
+			if (!conv || conv.parentId) return undefined;
+			const cfg = await config();
+			const turn = resolveTurn(cfg, conv.agentId);
+			if (!turn || !cfg.sandboxProvider || !takesAttachments(cfg, turn.agent))
+				throw new ConversationError("This Agent takes no attachments");
+			// orrery's 65-second request timeout is too short to stream 50 MB from a slow browser
+			const client = orrery({ ...cfg.sandboxProvider, timeoutMs: 10 * 60_000 });
+			const sandbox = await ensureSandbox(id, client, cfg.sandboxProvider, {
+				signal,
+			});
+			return writeUpload(client, sandbox.id, name, body, { signal });
+		},
+
 		/** Puts a user message in the inbox (starting a Conversation when there is no id) and has the Agent reply. */
 		async send(
 			userId: string,
@@ -202,8 +259,15 @@ export function createConversations({
 				text: string;
 				model?: string;
 				thinking?: ThinkingLevel;
+				/** Names `upload` returned; the message gives the Agent their paths. */
+				attachments?: string[];
 			},
 		) {
+			const attachments = (input.attachments ?? []).map((name) => {
+				if (safeFileName(name) !== name)
+					throw new ConversationError("Not an attachment's name");
+				return { name, path: uploadPath(name) };
+			});
 			const cfg = await config();
 			const existing = input.conversationId
 				? await owned(userId, input.conversationId)
@@ -237,7 +301,21 @@ export function createConversations({
 				}
 				await tx.insert(inbox).values({
 					conversationId: id,
-					message: { role: "user", content: input.text, timestamp: Date.now() },
+					message: attachments.length
+						? {
+								role: "user",
+								content: [
+									{ type: "text", text: input.text },
+									{
+										type: "text",
+										text: `\n\nAttached files, in your Sandbox:\n${attachments.map((a) => `- ${a.path}`).join("\n")}`,
+									},
+								],
+								// the User sees their names in place of the second text
+								attachments,
+								timestamp: Date.now(),
+							}
+						: { role: "user", content: input.text, timestamp: Date.now() },
 					model: modelRef(turn.model),
 					thinkingLevel: turn.thinking,
 					wake: true,

@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { MAX_UPLOAD_BYTES } from "@orqestra/config/shared";
+import { FileIcon, PaperclipIcon, XIcon } from "lucide-react";
+import { useRef, useState } from "react";
 import {
 	PromptInput,
 	PromptInputFooter,
 	PromptInputSubmit,
 	PromptInputTextarea,
 } from "#/components/ai-elements/prompt-input";
+import { Badge } from "#/components/ui/badge";
+import { Button } from "#/components/ui/button";
 import {
 	Select,
 	SelectContent,
@@ -13,6 +17,7 @@ import {
 	SelectValue,
 } from "#/components/ui/select";
 import type { getAgentOptions } from "#/lib/conversation-fns";
+import { tooLarge, UploadError } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
 
 export type AgentOption = Awaited<ReturnType<typeof getAgentOptions>>[number];
@@ -29,7 +34,10 @@ const levelLabels: Record<Level, () => string> = {
 	max: m.thinking_max,
 };
 
-/** Message input with the Agent (new Conversations only), Model and thinking pickers; a picker with one option is hidden. */
+/**
+ * Message input with the Agent (new Conversations only), Model and thinking pickers; a picker with one option is hidden.
+ * Agents with a Sandbox take attachments, which `onSend` uploads.
+ */
 export function Composer({
 	agents,
 	agentId,
@@ -45,10 +53,14 @@ export function Composer({
 	/** Last message's pick; one the Agent no longer allows falls back to its default. */
 	initial?: Choice;
 	running: boolean;
-	onSend: (message: Required<Choice> & { text: string }) => Promise<unknown>;
+	onSend: (
+		message: Required<Choice> & { text: string; files: File[] },
+	) => Promise<unknown>;
 	onStop: () => void;
 }) {
 	const [text, setText] = useState("");
+	const [files, setFiles] = useState<File[]>([]);
+	const picker = useRef<HTMLInputElement>(null);
 	const [picked, setPicked] = useState<Choice>(initial ?? {});
 	const [error, setError] = useState("");
 	const [sending, setSending] = useState(false);
@@ -61,6 +73,8 @@ export function Composer({
 		picked.thinking && model.thinking.allowed.includes(picked.thinking)
 			? picked.thinking
 			: model.thinking.default;
+	// picked for an Agent with a Sandbox, then another picked: they stay out of the message
+	const attached = agent.attachments ? files : [];
 
 	return (
 		<div className="mx-auto w-full max-w-3xl px-4 pb-4">
@@ -72,10 +86,11 @@ export function Composer({
 					setSending(true);
 					setError("");
 					try {
-						await onSend({ text, model: model.ref, thinking });
+						await onSend({ text, model: model.ref, thinking, files: attached });
 						setText("");
-					} catch {
-						setError(m.request_failed());
+						setFiles([]);
+					} catch (e) {
+						setError(e instanceof UploadError ? e.message : m.request_failed());
 					} finally {
 						setSending(false);
 					}
@@ -87,7 +102,61 @@ export function Composer({
 					value={text}
 					onChange={(e) => setText(e.target.value)}
 				/>
+				{attached.length > 0 && (
+					<ul
+						aria-label={m.attachments()}
+						className="flex flex-wrap gap-1 px-2"
+					>
+						{attached.map((file, i) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: two picks of one file share every other key
+							<li key={i}>
+								<Badge variant="secondary" className="h-6 pr-0.5">
+									<FileIcon />
+									<span className="max-w-48 truncate">{file.name}</span>
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon-xs"
+										aria-label={m.remove_attachment({ name: file.name })}
+										onClick={() => setFiles(files.filter((f) => f !== file))}
+									>
+										<XIcon />
+									</Button>
+								</Badge>
+							</li>
+						))}
+					</ul>
+				)}
 				<PromptInputFooter>
+					{agent.attachments && (
+						<>
+							<input
+								ref={picker}
+								type="file"
+								multiple
+								hidden
+								onChange={(e) => {
+									const picked = [...(e.target.files ?? [])];
+									e.target.value = "";
+									const big = picked.find((f) => f.size > MAX_UPLOAD_BYTES);
+									setError(big ? tooLarge(big) : "");
+									setFiles([
+										...files,
+										...picked.filter((f) => f.size <= MAX_UPLOAD_BYTES),
+									]);
+								}}
+							/>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								aria-label={m.attach_files()}
+								onClick={() => picker.current?.click()}
+							>
+								<PaperclipIcon />
+							</Button>
+						</>
+					)}
 					{onAgentChange && agents.length > 1 && (
 						<Picker
 							label={m.agent()}

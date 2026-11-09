@@ -164,6 +164,47 @@ describe("orrery client", () => {
 		]);
 	});
 
+	it("streams a file to orrery with Node's fetch, and lists a directory", async () => {
+		const { createServer } = await import("node:http");
+		const got: string[] = [];
+		const server = createServer(async (req, res) => {
+			let body = "";
+			for await (const chunk of req) body += chunk;
+			got.push(`${req.method} ${req.url} ${body}`);
+			if (req.method === "GET")
+				res
+					.setHeader("content-type", "application/json")
+					.end(JSON.stringify({ items: [{ name: "a.txt", type: "file" }] }));
+			else res.writeHead(204).end();
+		});
+		await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+		const { port } = server.address() as { port: number };
+		try {
+			const client = orrery({ url: `http://127.0.0.1:${port}`, token: "t" });
+			const chunks = ["he", "llo"].map((s) => new TextEncoder().encode(s));
+			await client.writeFile(
+				"sb1",
+				"uploads/a.txt",
+				new ReadableStream({
+					pull(c) {
+						const next = chunks.shift();
+						if (next) c.enqueue(next);
+						else c.close();
+					},
+				}),
+			);
+			expect(await client.listFiles("sb1", "uploads")).toEqual([
+				{ name: "a.txt", type: "file" },
+			]);
+			expect(got).toEqual([
+				"PUT /api/v1/sandboxes/sb1/files/content?path=uploads%2Fa.txt hello",
+				"GET /api/v1/sandboxes/sb1/files?path=uploads ",
+			]);
+		} finally {
+			server.close();
+		}
+	});
+
 	it("surfaces orrery's error code, status and detail", async () => {
 		const fake = fakeOrrery(() =>
 			problem(409, "conflict", "sandbox is not ready"),

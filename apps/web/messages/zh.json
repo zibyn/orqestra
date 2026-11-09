@@ -197,5 +197,10 @@
   "sandbox_test_auth": "已保存，但 orrery 拒绝了该 API Token：{detail}",
   "sandbox_test_unreachable": "已保存，但无法连接到 orrery，请检查地址：{detail}",
   "sandbox_test_timeout": "已保存，但 orrery 未在规定时间内响应。",
-  "sandbox_test_failed": "已保存，但连接测试失败：{detail}"
+  "sandbox_test_failed": "已保存，但连接测试失败：{detail}",
+  "attach_files": "添加附件",
+  "remove_attachment": "移除 {name}",
+  "attachments": "附件",
+  "attachment_too_large": "{name} 超过 {limit}。",
+  "attachment_failed": "{name} 上传失败。"
 }

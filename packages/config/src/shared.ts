@@ -23,6 +23,9 @@ export const thinkingLevel = z.enum([
 	"max",
 ]);
 
+/** The largest attachment a User can upload into a Sandbox. */
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
 /** A message's text, without thinking or tool calls. */
 export const messageText = (message: Message) =>
 	typeof message.content === "string"

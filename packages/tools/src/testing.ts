@@ -130,9 +130,26 @@ export function memoryOrrery({
 				throw new OrreryError(404, "not_found", `no such file: ${path}`);
 			return file;
 		},
+		listFiles: async (id, path) => {
+			call("listFiles", id, path);
+			const prefix = `${path}/`;
+			const names = [...ready(id).files.keys()]
+				.filter((p) => p.startsWith(prefix))
+				.map((p) => p.slice(prefix.length).split("/")[0]);
+			if (!names.length)
+				throw new OrreryError(404, "not_found", `no such directory: ${path}`);
+			return [...new Set(names)].map((name) => ({ name, type: "file" }));
+		},
 		writeFile: async (id, path, data) => {
 			call("writeFile", id, path);
-			ready(id).files.set(path, data);
+			const files = ready(id).files;
+			// a stream that fails midway writes nothing, as orrery's temporary file does
+			files.set(
+				path,
+				data instanceof ReadableStream
+					? new Uint8Array(await new Response(data).arrayBuffer())
+					: data,
+			);
 		},
 		uploadArchive: async (id, path, tar) => {
 			call("uploadArchive", id, path);

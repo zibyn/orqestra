@@ -15,6 +15,7 @@ import {
 } from "@tanstack/react-router";
 import {
 	ChevronRightIcon,
+	FileIcon,
 	Loader2Icon,
 	RotateCcwIcon,
 	SquareIcon,
@@ -34,6 +35,7 @@ import {
 } from "#/components/ai-elements/message";
 import { Reasoning } from "#/components/ai-elements/reasoning";
 import { type Choice, Composer } from "#/components/Composer";
+import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Separator } from "#/components/ui/separator";
 import {
@@ -51,6 +53,7 @@ import {
 	stopRun,
 	stopSubagent,
 } from "#/lib/conversation-fns";
+import { uploadFiles } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/_app/c/$conversationId")({
@@ -173,9 +176,7 @@ function ConversationView() {
 										/>
 									) : row.message.role === "user" ? (
 										<Message from="user">
-											<MessageContent>
-												{messageText(row.message)}
-											</MessageContent>
+											<UserMessageContent message={row.message} />
 										</Message>
 									) : row.message.role === "assistant" ? (
 										<AgentReply message={row.message} results={results} />
@@ -225,9 +226,10 @@ function ConversationView() {
 								/>
 							) : (
 								<Message key={`queued-${row.id}`} from="user">
-									<MessageContent className="opacity-60">
-										{messageText(row.message)}
-									</MessageContent>
+									<UserMessageContent
+										message={row.message}
+										className="opacity-60"
+									/>
 									<span className="text-xs text-muted-foreground">
 										{m.queued()}
 									</span>
@@ -255,9 +257,14 @@ function ConversationView() {
 						}
 						running={running}
 						onStop={() => void stopRun({ data: conversation.id })}
-						onSend={async (input) => {
+						onSend={async ({ files, ...input }) => {
+							const attachments = await uploadFiles(conversation.id, files);
 							await sendMessage({
-								data: { ...input, conversationId: conversation.id },
+								data: {
+									...input,
+									attachments,
+									conversationId: conversation.id,
+								},
 							});
 							await router.invalidate();
 						}}
@@ -524,6 +531,39 @@ function SubagentPanel({
 				</div>
 			</SheetContent>
 		</Sheet>
+	);
+}
+
+/** A User message: its text, and the names of its attachments, whose paths a second text gives the Agent. */
+function UserMessageContent({
+	message,
+	className,
+}: {
+	message: PiMessage;
+	className?: string;
+}) {
+	const { attachments } = message as {
+		attachments?: { name: string; path: string }[];
+	};
+	const first = Array.isArray(message.content) ? message.content[0] : undefined;
+	return (
+		<MessageContent className={className}>
+			{attachments && first?.type === "text"
+				? first.text
+				: messageText(message)}
+			{attachments && (
+				<ul aria-label={m.attachments()} className="mt-2 flex flex-wrap gap-1">
+					{attachments.map((a) => (
+						<li key={a.path}>
+							<Badge variant="outline" className="max-w-full">
+								<FileIcon />
+								<span className="truncate">{a.name}</span>
+							</Badge>
+						</li>
+					))}
+				</ul>
+			)}
+		</MessageContent>
 	);
 }
 
