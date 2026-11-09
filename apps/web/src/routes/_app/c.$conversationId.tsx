@@ -15,6 +15,7 @@ import {
 } from "@tanstack/react-router";
 import {
 	ChevronRightIcon,
+	FileIcon,
 	Loader2Icon,
 	RotateCcwIcon,
 	SquareIcon,
@@ -52,6 +53,7 @@ import {
 	stopRun,
 	stopSubagent,
 } from "#/lib/conversation-fns";
+import { uploadFiles } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/_app/c/$conversationId")({
@@ -174,9 +176,7 @@ function ConversationView() {
 										/>
 									) : row.message.role === "user" ? (
 										<Message from="user">
-											<MessageContent>
-												<UserText message={row.message} />
-											</MessageContent>
+											<UserMessageContent message={row.message} />
 										</Message>
 									) : row.message.role === "assistant" ? (
 										<AgentReply message={row.message} results={results} />
@@ -226,9 +226,10 @@ function ConversationView() {
 								/>
 							) : (
 								<Message key={`queued-${row.id}`} from="user">
-									<MessageContent className="opacity-60">
-										<UserText message={row.message} />
-									</MessageContent>
+									<UserMessageContent
+										message={row.message}
+										className="opacity-60"
+									/>
 									<span className="text-xs text-muted-foreground">
 										{m.queued()}
 									</span>
@@ -256,9 +257,14 @@ function ConversationView() {
 						}
 						running={running}
 						onStop={() => void stopRun({ data: conversation.id })}
-						onSend={async (input) => {
+						onSend={async ({ files, ...input }) => {
+							const attachments = await uploadFiles(conversation.id, files);
 							await sendMessage({
-								data: { ...input, conversationId: conversation.id },
+								data: {
+									...input,
+									attachments,
+									conversationId: conversation.id,
+								},
 							});
 							await router.invalidate();
 						}}
@@ -282,8 +288,7 @@ function ConversationView() {
 type Results = Map<string, ToolResultMessage>;
 
 /** A User's message; one that invoked a Skill shows its name, not the instructions put in for it. */
-function UserText({ message }: { message: PiMessage }) {
-	const text = messageText(message);
+function UserText({ text }: { text: string }) {
 	const skill = parseSkillBlock(text);
 	if (!skill) return text;
 	return (
@@ -538,6 +543,43 @@ function SubagentPanel({
 				</div>
 			</SheetContent>
 		</Sheet>
+	);
+}
+
+/** A User message: its text, and the names of its attachments, whose paths a second text gives the Agent. */
+function UserMessageContent({
+	message,
+	className,
+}: {
+	message: PiMessage;
+	className?: string;
+}) {
+	const { attachments } = message as {
+		attachments?: { name: string; path: string }[];
+	};
+	const first = Array.isArray(message.content) ? message.content[0] : undefined;
+	return (
+		<MessageContent className={className}>
+			<UserText
+				text={
+					attachments && first?.type === "text"
+						? first.text
+						: messageText(message)
+				}
+			/>
+			{attachments && (
+				<ul aria-label={m.attachments()} className="mt-2 flex flex-wrap gap-1">
+					{attachments.map((a) => (
+						<li key={a.path}>
+							<Badge variant="outline" className="max-w-full">
+								<FileIcon />
+								<span className="truncate">{a.name}</span>
+							</Badge>
+						</li>
+					))}
+				</ul>
+			)}
+		</MessageContent>
 	);
 }
 

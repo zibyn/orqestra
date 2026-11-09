@@ -6,9 +6,10 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import { MessageSquareIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Composer } from "#/components/Composer";
-import { sendMessage } from "#/lib/conversation-fns";
+import { sendMessage, startConversation } from "#/lib/conversation-fns";
+import { uploadFiles } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/_app/")({ component: NewConversation });
@@ -21,6 +22,7 @@ function NewConversation() {
 	const [agentId, setAgentId] = useState(
 		() => (agents.find((a) => a.default) ?? agents[0])?.id,
 	);
+	const started = useRef<{ agentId: string; id: string }>(undefined);
 	const navigate = useNavigate();
 	const router = useRouter();
 
@@ -50,8 +52,22 @@ function NewConversation() {
 					onAgentChange={setAgentId}
 					running={false}
 					onStop={() => {}}
-					onSend={async (input) => {
-						const id = await sendMessage({ data: { ...input, agentId } });
+					onSend={async ({ files, ...input }) => {
+						// attachments go into the Sandbox of a Conversation started for them; a failed upload reuses it
+						let conversationId =
+							started.current?.agentId === agentId
+								? started.current.id
+								: undefined;
+						if (files.length && !conversationId) {
+							conversationId = await startConversation({ data: agentId });
+							started.current = { agentId, id: conversationId };
+						}
+						const attachments = conversationId
+							? await uploadFiles(conversationId, files)
+							: [];
+						const id = await sendMessage({
+							data: { ...input, agentId, conversationId, attachments },
+						});
 						await router.invalidate();
 						await navigate({
 							to: "/c/$conversationId",

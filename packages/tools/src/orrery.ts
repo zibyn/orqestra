@@ -1,6 +1,8 @@
 // A thin client for orrery's REST API (orrery docs/spec/api.md §3–§5): the Sandbox Provider. orrery has no TS SDK.
 
 type Fetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
+/** A request body: bytes, or a stream sent as it is read. */
+type Body = Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array>;
 
 /** The configured Sandbox Provider: orrery's address and API Token, and what each Sandbox is created with. */
 export interface SandboxProvider {
@@ -119,7 +121,7 @@ export function orrery({
 		}: {
 			query?: Record<string, string | number | undefined>;
 			json?: unknown;
-			body?: Uint8Array<ArrayBuffer>;
+			body?: Body;
 			signal?: AbortSignal;
 		} = {},
 	) {
@@ -135,8 +137,10 @@ export function orrery({
 				...(json !== undefined && { "content-type": "application/json" }),
 			},
 			body: json !== undefined ? JSON.stringify(json) : body,
+			// fetch needs it for a streamed body; TS's RequestInit lacks it
+			...(body instanceof ReadableStream && { duplex: "half" }),
 			signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
-		});
+		} as RequestInit);
 		if (!response.ok) {
 			const text = await response.text().catch(() => "");
 			let problem: { code?: string; detail?: string } = {};
@@ -196,6 +200,15 @@ export function orrery({
 			}),
 
 		// Workspace files: `path` is relative to /workspace; the Sandbox must be `ready`
+		/** A directory's entries; `not_found` when it does not exist. */
+		listFiles: async (sandbox: string, path: string, o: Opts = {}) =>
+			(
+				await json<{ items: { name: string; type: string }[] }>(
+					"GET",
+					files(sandbox, ""),
+					{ query: { path }, ...o },
+				)
+			).items,
 		readFile: async (sandbox: string, path: string, o: Opts = {}) =>
 			new Uint8Array(
 				await (
@@ -205,11 +218,11 @@ export function orrery({
 					})
 				).arrayBuffer(),
 			),
-		/** Written to a temporary file, then renamed over `path`. */
+		/** Written to a temporary file, then renamed over `path`; one that fails midway leaves nothing. */
 		writeFile: async (
 			sandbox: string,
 			path: string,
-			data: Uint8Array<ArrayBuffer>,
+			data: Body,
 			o: Opts = {},
 		) => {
 			await send("PUT", files(sandbox, "/content"), {

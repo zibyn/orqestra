@@ -199,5 +199,10 @@
   "sandbox_test_auth": "Saved, but orrery refused the API Token: {detail}",
   "sandbox_test_unreachable": "Saved, but orrery cannot be reached; check the address: {detail}",
   "sandbox_test_timeout": "Saved, but orrery did not answer in time.",
-  "sandbox_test_failed": "Saved, but the connection test failed: {detail}"
+  "sandbox_test_failed": "Saved, but the connection test failed: {detail}",
+  "attach_files": "Attach files",
+  "remove_attachment": "Remove {name}",
+  "attachments": "Attachments",
+  "attachment_too_large": "{name} is larger than {limit}.",
+  "attachment_failed": "{name} could not be uploaded."
 }
