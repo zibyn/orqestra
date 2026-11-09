@@ -84,8 +84,16 @@ export { UploadTooLarge } from "./uploads.ts";
 // The only module that reads and writes Conversations, their Inbox, messages, Subagents and compactions.
 // The User's side takes the signed-in user's id everywhere: nobody else, Admins included, can see a Conversation.
 
+/** A request the User may not make as it stands; `field` and `code` say why, for the api's error body. */
 export class ConversationError extends Error {
 	override name = "ConversationError";
+	constructor(
+		message: string,
+		readonly field: string,
+		readonly code: string,
+	) {
+		super(message);
+	}
 }
 class AlreadyUndone extends Error {}
 
@@ -132,7 +140,12 @@ export function createConversations({
 		const md = skill
 			? (await skillFiles(skill.versionId)).find((f) => f.path === "SKILL.md")
 			: undefined;
-		if (!md) throw new ConversationError("This Skill is unavailable");
+		if (!md)
+			throw new ConversationError(
+				"This Skill is unavailable",
+				"text",
+				"skill_unavailable",
+			);
 		return skillBlock(
 			name,
 			skillInstructions(new TextDecoder().decode(md.content)),
@@ -286,9 +299,18 @@ export function createConversations({
 		) {
 			const cfg = await config();
 			const turn = resolveTurn(cfg, agentId);
-			if (!turn) throw new ConversationError("This Agent is offline");
+			if (!turn)
+				throw new ConversationError(
+					"This Agent is offline",
+					"agentId",
+					"agent_offline",
+				);
 			if (!turn.agent.pickable)
-				throw new ConversationError("This Agent cannot be picked");
+				throw new ConversationError(
+					"This Agent cannot be picked",
+					"agentId",
+					"agent_not_pickable",
+				);
 			const [{ id }] = await db
 				.insert(conversation)
 				.values({ userId, agentId, incognito })
@@ -314,7 +336,11 @@ export function createConversations({
 			const cfg = await config();
 			const turn = resolveTurn(cfg, conv.agentId);
 			if (!turn || !cfg.sandboxProvider)
-				throw new ConversationError("This Agent takes no attachments");
+				throw new ConversationError(
+					"This Agent takes no attachments",
+					"file",
+					"no_attachments",
+				);
 			// orrery's 65-second request timeout is too short to stream 50 MB from a slow browser
 			const client = orrery({ ...cfg.sandboxProvider, timeoutMs: 10 * 60_000 });
 			const sandbox = await ensureSandbox(id, client, cfg.sandboxProvider, {
@@ -340,7 +366,11 @@ export function createConversations({
 		) {
 			const attachments = (input.attachments ?? []).map((name) => {
 				if (safeFileName(name) !== name)
-					throw new ConversationError("Not an attachment's name");
+					throw new ConversationError(
+						"Not an attachment's name",
+						"attachments",
+						"not_attachment",
+					);
 				return { name, path: uploadPath(name) };
 			});
 			const cfg = await config();
@@ -349,14 +379,27 @@ export function createConversations({
 				: undefined;
 			// the User cannot write to a Subagent: only the Agent that started it can
 			if (input.conversationId && (!existing || existing.parentId))
-				throw new ConversationError("Conversation not found");
+				throw new ConversationError(
+					"Conversation not found",
+					"conversationId",
+					"not_found",
+				);
 			// the Agent is fixed once a Conversation has messages
 			const agentId = existing?.agentId ?? input.agentId ?? cfg.defaultAgent.id;
 			const turn = resolveTurn(cfg, agentId, input);
-			if (!turn) throw new ConversationError("This Agent is offline");
+			if (!turn)
+				throw new ConversationError(
+					"This Agent is offline",
+					"agentId",
+					"agent_offline",
+				);
 			// existing Conversations keep their Agent even after it stops being pickable
 			if (!existing && !turn.agent.pickable)
-				throw new ConversationError("This Agent cannot be picked");
+				throw new ConversationError(
+					"This Agent cannot be picked",
+					"agentId",
+					"agent_not_pickable",
+				);
 			const content = await expandSkill(cfg, turn.agent, input.text);
 
 			const conversationId = await db.transaction(async (tx) => {
@@ -402,12 +445,16 @@ export function createConversations({
 			return conversationId;
 		},
 
-		/** Re-runs a failed reply to the last user message. */
+		/** Re-runs a failed reply to the last user message; false when the Conversation is not the user's. */
 		async retry(userId: string, id: string) {
 			const conv = await owned(userId, id);
-			if (!conv) return;
+			if (!conv) return false;
 			if (!resolveTurn(await config(), conv.agentId))
-				throw new ConversationError("This Agent is offline");
+				throw new ConversationError(
+					"This Agent is offline",
+					"id",
+					"agent_offline",
+				);
 			const dropped = await db.transaction(async (tx) => {
 				const claimed = await tx
 					.update(conversation)
@@ -416,7 +463,12 @@ export function createConversations({
 						and(eq(conversation.id, id), eq(conversation.status, "failed")),
 					)
 					.returning({ id: conversation.id });
-				if (!claimed.length) throw new ConversationError("Nothing to retry");
+				if (!claimed.length)
+					throw new ConversationError(
+						"Nothing to retry",
+						"id",
+						"nothing_to_retry",
+					);
 				// drop the failed reply, if one was saved, with the Subagents it started
 				await tx.execute(
 					sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
@@ -431,15 +483,17 @@ export function createConversations({
 			await requestStop(dropped.map((d) => d.id));
 			await deleteSandboxes(dropped.map((d) => d.sandboxId));
 			await enqueue(id);
+			return true;
 		},
 
 		/**
 		 * Drops this Conversation's Run while it is still queued, or else asks whichever worker runs it to abort it.
 		 * Then its Subagents stop too, without waking it: after the Run, so it starts none past this.
+		 * False when the Conversation is not the user's.
 		 */
 		async stop(userId: string, id: string) {
 			const conv = await owned(userId, id);
-			if (!conv) return;
+			if (!conv) return false;
 			const job =
 				conv.status === "running" && conv.jobId
 					? await runQueue(AGENT_RUNS_QUEUE).getJob(conv.jobId)
@@ -459,17 +513,22 @@ export function createConversations({
 				await saved(id);
 			} else await requestStop([id]);
 			await stopSubagents(id);
+			return true;
 		},
 
+		/** False when the Conversation is not the user's. */
 		async rename(userId: string, id: string, title: string) {
-			await db
+			const renamed = await db
 				.update(conversation)
 				.set({ title, titleEdited: true })
-				.where(and(eq(conversation.id, id), eq(conversation.userId, userId)));
+				.where(and(eq(conversation.id, id), eq(conversation.userId, userId)))
+				.returning({ id: conversation.id });
+			return renamed.length > 0;
 		},
 
+		/** False when the Conversation is not the user's. */
 		async delete(userId: string, id: string) {
-			if (!(await owned(userId, id))) return;
+			if (!(await owned(userId, id))) return false;
 			const children = await db
 				.select({ id: conversation.id })
 				.from(conversation)
@@ -482,6 +541,7 @@ export function createConversations({
 				.where(or(eq(conversation.id, id), eq(conversation.parentId, id)))
 				.returning({ sandboxId: conversation.sandboxId });
 			await deleteSandboxes(deleted.map((d) => d.sandboxId));
+			return true;
 		},
 
 		/**
@@ -615,10 +675,12 @@ export function createConversations({
 			return rows.map((r) => r.message as Message);
 		},
 
-		/** Stops one Subagent at the User's request; like the Agent's subagent_stop, it does not wake the parent. */
+		/** Stops one Subagent at the User's request; like the Agent's subagent_stop, it does not wake the parent. False when it is not the user's. */
 		async stopSubagent(userId: string, id: string) {
 			const row = await ownedSubagent(userId, id);
-			if (row) await stopSubagents(row.parentId, [row.number]);
+			if (!row) return false;
+			await stopSubagents(row.parentId, [row.number]);
+			return true;
 		},
 
 		/**

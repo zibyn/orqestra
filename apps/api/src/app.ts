@@ -1,38 +1,50 @@
+import type { Conversations } from "@orqestra/conversations";
 import { Elysia } from "elysia";
+import { conversationRoutes } from "./conversations.ts";
 import type { User } from "./identity.ts";
+import { type Session, sessionPlugin, unauthorized } from "./session.ts";
 
-export type { User };
-
-/**
- * Reads the signed-in User from a request, refreshing the session when due. Every cookie in
- * cookies must reach the browser: a refresh rotates the refresh token, and the stale one reused
- * later ends the whole Polaris Session.
- */
-export type Session = (
-	request: Request,
-) => Promise<{ user: User | null; cookies: string[] }>;
+export type { Session, User };
 
 /** Polaris' /auth/login, /auth/callback and /auth/logout. */
 export type Auth = (request: Request) => Response | Promise<Response>;
 
-/** The api; production passes Polaris (see polaris.ts), tests a fake. */
-export function createApp({ session, auth }: { session: Session; auth: Auth }) {
+/** The api; production passes Polaris (see polaris.ts) and the real services, tests fakes. */
+export function createApp({
+	session,
+	auth,
+	conversations,
+}: {
+	session: Session;
+	auth: Auth;
+	conversations: Conversations;
+}) {
+	const user = sessionPlugin(session);
 	return new Elysia()
 		.all("/auth/*", ({ request }) => auth(request))
 		.group("/api", (api) =>
 			api
-				// once per request, so that only one read may refresh
-				.resolve(async ({ request, set }) => {
-					const { user, cookies } = await session(request);
-					if (cookies.length) set.headers["set-cookie"] = cookies;
-					return { user };
+				// invalid input: every field zod refused, with its message
+				.onError(({ code, error, status }) => {
+					if (code !== "VALIDATION") return;
+					return status(422, {
+						errors: Object.fromEntries(
+							error.all.map((issue) => [
+								// `/thinking/default` as `thinking.default`, the console's field names
+								"path" in issue
+									? String(issue.path).replace(/^\//, "").replaceAll("/", ".")
+									: "",
+								{ code: "invalid", detail: issue.summary ?? issue.message },
+							]),
+						),
+					});
 				})
+				.use(user)
 				.get(
 					"/session",
-					({ user, status }) =>
-						user ??
-						status(401, { errors: { session: { code: "unauthorized" } } }),
-				),
+					({ user, status }) => user ?? status(401, unauthorized),
+				)
+				.use(conversationRoutes(user, conversations)),
 		);
 }
 

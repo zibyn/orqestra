@@ -5,7 +5,7 @@ import {
 	SidebarProvider,
 	SidebarTrigger,
 } from "#/components/ui/sidebar";
-import { getAgentOptions, listConversations } from "#/lib/conversation-fns";
+import { api, ok } from "#/lib/api";
 import { signIn } from "#/lib/instance";
 import { m } from "#/paraglide/messages";
 
@@ -17,8 +17,8 @@ export const Route = createFileRoute("/_app")({
 	},
 	loader: async () => {
 		const [conversations, agents] = await Promise.all([
-			listConversations(),
-			getAgentOptions(),
+			ok(api().api.conversations.get()),
+			ok(api().api["agent-options"].get()),
 		]);
 		return { conversations, agents };
 	},

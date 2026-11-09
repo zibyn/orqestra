@@ -11,11 +11,15 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@orqestra/config": "workspace:*",
+    "@orqestra/conversations": "workspace:*",
     "@zibyn/polaris": "^0.1.3",
     "elysia": "1.4.30",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "1.4.0",
+    "@orqestra/db": "workspace:*",
     "@types/bun": "latest",
     "jose": "^6.2.15",
     "typescript": "^6.0.2"

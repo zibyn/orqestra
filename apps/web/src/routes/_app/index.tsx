@@ -8,7 +8,7 @@ import {
 import { useRef, useState } from "react";
 import { Composer } from "#/components/Composer";
 import { Switch } from "#/components/ui/switch";
-import { sendMessage, startConversation } from "#/lib/conversation-fns";
+import { api, ok } from "#/lib/api";
 import { uploadFiles } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
 
@@ -77,23 +77,23 @@ function NewConversation() {
 								? started.current.id
 								: undefined;
 						if (files.length && !conversationId) {
-							conversationId = await startConversation({
-								data: { agentId, incognito },
-							});
+							({ id: conversationId } = await ok(
+								api().api.conversations.post({ agentId, incognito }),
+							));
 							started.current = { agentId, incognito, id: conversationId };
 						}
 						const attachments = conversationId
 							? await uploadFiles(conversationId, files)
 							: [];
-						const id = await sendMessage({
-							data: {
+						const { conversationId: id } = await ok(
+							api().api.messages.post({
 								...input,
 								agentId,
 								conversationId,
 								attachments,
 								incognito,
-							},
-						});
+							}),
+						);
 						await router.invalidate();
 						await navigate({
 							to: "/c/$conversationId",

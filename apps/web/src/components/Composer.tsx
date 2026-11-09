@@ -18,11 +18,13 @@ import {
 	AttachmentTitle,
 } from "#/components/ui/attachment";
 import { InputGroupButton } from "#/components/ui/input-group";
-import type { getAgentOptions } from "#/lib/conversation-fns";
+import type { Api } from "#/lib/api";
 import { tooLarge, UploadError } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
 
-export type AgentOption = Awaited<ReturnType<typeof getAgentOptions>>[number];
+export type AgentOption = NonNullable<
+	Awaited<ReturnType<Api["api"]["agent-options"]["get"]>>["data"]
+>[number];
 type Level = AgentOption["models"][number]["thinking"]["default"];
 export type Choice = { model?: string; thinking?: Level };
 

@@ -89,15 +89,7 @@ import {
 	TraceLine,
 	TraceTitle,
 } from "#/components/ui/trace";
-import {
-	getConversation,
-	getSubagentMessages,
-	retryRun,
-	sendMessage,
-	stopRun,
-	stopSubagent,
-	undoMemory,
-} from "#/lib/conversation-fns";
+import { api, ok } from "#/lib/api";
 import { groupSteps } from "#/lib/steps";
 import { uploadFiles } from "#/lib/uploads";
 import { cn } from "#/lib/utils";
@@ -106,11 +98,13 @@ import { getLocale } from "#/paraglide/runtime";
 
 export const Route = createFileRoute("/_app/c/$conversationId")({
 	loader: async ({ params }) => {
-		const conversation = await getConversation({
-			data: params.conversationId,
-		});
-		if (!conversation) throw notFound();
-		return conversation;
+		const { data, error } = await api()
+			.api.conversations({ id: params.conversationId })
+			.get();
+		// another User's, or no Conversation's id at all
+		if (error?.status === 404 || error?.status === 422) throw notFound();
+		if (error) throw error;
+		return data;
 	},
 	component: ConversationView,
 });
@@ -309,7 +303,11 @@ function ConversationView() {
 								onClick={async () => {
 									setRetrying(true);
 									try {
-										await retryRun({ data: conversation.id });
+										await ok(
+											api()
+												.api.conversations({ id: conversation.id })
+												.retry.post(),
+										);
 										await router.invalidate();
 									} finally {
 										setRetrying(false);
@@ -362,16 +360,18 @@ function ConversationView() {
 							}
 						}
 						running={running}
-						onStop={() => void stopRun({ data: conversation.id })}
+						onStop={() =>
+							void api().api.conversations({ id: conversation.id }).stop.post()
+						}
 						onSend={async ({ files, ...input }) => {
 							const attachments = await uploadFiles(conversation.id, files);
-							await sendMessage({
-								data: {
+							await ok(
+								api().api.messages.post({
 									...input,
 									attachments,
 									conversationId: conversation.id,
-								},
-							});
+								}),
+							);
 							await router.invalidate();
 						}}
 					/>
@@ -635,14 +635,16 @@ function MemoryChange({
 							setUndoing(true);
 							setError(undefined);
 							try {
-								const { error } = await undoMemory({
-									data: { conversationId, toolCallId: call.id },
-								});
+								const { error } = await api()
+									.api.conversations({ id: conversationId })
+									["memory-undo"].post({ toolCallId: call.id });
+								const code =
+									error?.status === 422 && error.value.errors.toolCallId?.code;
 								if (error)
 									setError(
-										error === "changed"
+										code === "changed"
 											? m.memory_undo_changed()
-											: error === "full"
+											: code === "full"
 												? m.memory_undo_full()
 												: m.memory_undo_failed(),
 									);
@@ -748,7 +750,12 @@ function SubagentPanel({
 	const id = run?.id;
 	const loaded = useQuery({
 		queryKey: ["subagent", id],
-		queryFn: () => getSubagentMessages({ data: id as string }),
+		queryFn: () =>
+			ok(
+				api()
+					.api.subagents({ id: id as string })
+					.get(),
+			),
 		enabled: open && !!id && !run?.messages,
 	});
 	const messages = run?.messages ?? loaded.data ?? [];
@@ -781,7 +788,7 @@ function SubagentPanel({
 							onClick={async () => {
 								setStopping(true);
 								try {
-									await stopSubagent({ data: id });
+									await ok(api().api.subagents({ id }).stop.post());
 									await router.invalidate();
 								} finally {
 									setStopping(false);

@@ -15,6 +15,15 @@ export const api = createIsomorphicFn()
 		return browser;
 	});
 
+/** An api call's data; its error, with the status and body, thrown otherwise. */
+export async function ok<R extends { data: unknown; error: unknown }>(
+	call: Promise<R>,
+) {
+	const { data, error } = await call;
+	if (error) throw error;
+	return data as Exclude<R["data"], null>;
+}
+
 /** The signed-in User, or null. */
 export async function sessionUser(client: Api) {
 	const { data, error } = await client.api.session.get();

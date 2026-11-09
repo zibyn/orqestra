@@ -1,5 +1,6 @@
 // Polaris' SDK is written for Node: this runs it on Bun against a fake issuer, from sign-in through a refresh.
 import { afterAll, describe, expect, it } from "bun:test";
+import type { Conversations } from "@orqestra/conversations";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { createApp } from "./app.ts";
 import { ADMIN_ENTITLEMENT } from "./identity.ts";
@@ -65,8 +66,8 @@ const server = Bun.serve({
 const issuer = `http://localhost:${server.port}`;
 afterAll(() => server.stop(true));
 
-const app = createApp(
-	polaris({
+const app = createApp({
+	...polaris({
 		ORQESTRA_URL: "http://orqestra.test",
 		POLARIS_ISSUER: issuer,
 		POLARIS_CLIENT_ID: "orq",
@@ -74,7 +75,9 @@ const app = createApp(
 		POLARIS_AUDIENCE: "orqestra",
 		POLARIS_SECRET: "a".repeat(32),
 	}),
-);
+	// these tests reach no Conversation
+	conversations: {} as Conversations,
+});
 const handle = (request: Request) => app.handle(request);
 const cookieOf = (response: Response) =>
 	response.headers
