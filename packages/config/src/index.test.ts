@@ -78,6 +78,7 @@ describe("loadConfig", () => {
 			defaultModel: "deepseek/deepseek-flash",
 			unavailableModels: [],
 			pickable: true,
+			memory: false,
 			allModels: true,
 			tools: ["search", "scrape"],
 		});

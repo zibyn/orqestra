@@ -85,6 +85,8 @@ export const agentDefinition = z.strictObject({
 			keepRecentTokens: z.number().int().positive().optional(),
 		})
 		.optional(),
+	/** Its Runs read and write the User's Memories; Admins turn it on per Agent. */
+	memory: z.boolean().default(false),
 	/** Users can start Conversations with it; otherwise it only serves as a Subagent template. */
 	pickable: z.boolean().default(true),
 	default: z.boolean().default(false),

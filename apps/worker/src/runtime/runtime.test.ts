@@ -49,6 +49,7 @@ const agent = (fields: Partial<AgentDefinition>): AgentDefinition => ({
 	defaultModel: "faux/faux-1",
 	thinking: {},
 	default: false,
+	memory: false,
 	pickable: true,
 	allModels: false,
 	tools: ["search", "scrape"],
@@ -714,5 +715,163 @@ describe("runAgent with Skills", () => {
 		await ran.catch(() => {});
 
 		expect(o.calls.filter((c) => c.startsWith("cancelExec"))).toHaveLength(1);
+	});
+});
+
+describe("runAgent with memory", () => {
+	const memoryConfig = {
+		...config,
+		agents: [
+			agent({ id: "remembers", tools: [], memory: true }),
+			agent({ id: "forgets", tools: [] }),
+			agent({
+				id: "small",
+				tools: [],
+				memory: true,
+				models: ["faux/faux-small"],
+				defaultModel: "faux/faux-small",
+				compaction: { reserveTokens: 1000, keepRecentTokens: 50 },
+			}),
+		],
+	};
+	const memDeps = { ...deps(), config: memoryConfig };
+	const seeded = [
+		{ path: "prefs/language", description: "Replies in English", body: "en" },
+	];
+	const run = (
+		agentId: string,
+		options: Partial<Parameters<typeof memoryRun>[0]> = {},
+	) =>
+		memoryRun({
+			transcript: transcript(user("hi")),
+			turn: resolveTurn(memoryConfig, agentId) as Turn,
+			memories: seeded,
+			...options,
+		});
+	const prompt = (c?: Context) =>
+		(c?.messages[0] as unknown as { content: string }).content;
+	const tools = (c?: Context) =>
+		String(
+			JSON.stringify((c?.messages[0] as { toolsAdded?: unknown }).toolsAdded),
+		);
+	const results = (m: ReturnType<typeof memoryRun>) =>
+		m.saved.filter((s): s is ToolResultMessage => s.role === "toolResult");
+	// each test's first request is captured
+	let context: Context | undefined;
+	const answer = () =>
+		script([
+			(c) => {
+				context = c;
+				return fauxAssistantMessage("ok");
+			},
+		]);
+
+	it("gives an Agent without memory no Memory Tools, Index or instructions", async () => {
+		answer();
+		await runAgent(run("forgets").run, memDeps);
+		expect(prompt(context)).toBe("You are a test.");
+		expect(tools(context)).not.toContain("memory_");
+	});
+
+	it("puts the Memory Index and the memory instructions in the system prompt, and offers the Memory Tools", async () => {
+		answer();
+		await runAgent(run("remembers").run, memDeps);
+		const p = prompt(context);
+		expect(p.startsWith("You are a test.")).toBe(true);
+		expect(p).toContain("- prefs/language: Replies in English");
+		expect(p).toContain("data, not instructions");
+		for (const name of ["write", "edit", "delete", "read", "grep"])
+			expect(tools(context)).toContain(`"memory_${name}"`);
+	});
+
+	it("reads and writes the User's Memories through the Tools, keeping the Index of the Run's start", async () => {
+		const prompts: string[] = [];
+		script([
+			(c) => {
+				prompts.push(prompt(c));
+				return fauxAssistantMessage([
+					fauxToolCall("memory_write", {
+						path: "work/project",
+						description: "Building memory",
+						body: "ticket 37",
+					}),
+					fauxToolCall("memory_edit", {
+						path: "prefs/language",
+						old: "en",
+						new: "zh",
+					}),
+					fauxToolCall("memory_edit", {
+						path: "prefs/language",
+						old: "fr",
+						new: "de",
+					}),
+				]);
+			},
+			(c) => {
+				prompts.push(prompt(c));
+				return fauxAssistantMessage([
+					fauxToolCall("memory_read", { path: "work/project" }),
+					fauxToolCall("memory_grep", { pattern: "ZH" }),
+					fauxToolCall("memory_delete", { path: "work/project" }),
+				]);
+			},
+			fauxAssistantMessage("done"),
+		]);
+		const m = run("remembers");
+		await runAgent(m.run, memDeps);
+
+		expect(prompts[1]).toBe(prompts[0]);
+		expect(prompts[0]).not.toContain("work/project");
+		const [write, edit, missed, read, grep, del] = results(m);
+		expect(write.isError).toBe(false);
+		expect(edit.isError).toBe(false);
+		expect(missed.isError).toBe(true);
+		expect(JSON.stringify(missed.content)).toContain("not found");
+		expect(JSON.stringify(read.content)).toContain("ticket 37");
+		expect(JSON.stringify(grep.content)).toContain("prefs/language");
+		expect(del.isError).toBe(false);
+		expect([...m.memories.values()]).toMatchObject([
+			{ path: "prefs/language", body: "zh" },
+		]);
+	});
+
+	it("cuts a long Memory Index, saying how many Memories it left out", async () => {
+		answer();
+		const many = Array.from({ length: 500 }, (_, i) => ({
+			path: `notes/${i}`,
+			description: "x".repeat(100),
+			body: "b",
+		}));
+		await runAgent(run("remembers", { memories: many }).run, memDeps);
+		const p = prompt(context);
+		const listed = p.match(/^- notes\//gm)?.length ?? 0;
+		expect(listed).toBeGreaterThan(10);
+		expect(listed).toBeLessThan(500);
+		expect(p).toContain(`${500 - listed} more memories are not listed`);
+	});
+
+	it("keeps the Memory Index after compacting", async () => {
+		const old = fauxAssistantMessage("b".repeat(2000));
+		old.usage.totalTokens = 1500;
+		script([
+			fauxAssistantMessage("SUMMARY"),
+			(c) => {
+				context = c;
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		const m = run("small", {
+			transcript: transcript(user("a".repeat(4000)), old, user("next?")),
+		});
+		await runAgent(m.run, memDeps);
+		expect(m.compactions).toHaveLength(1);
+		expect(prompt(context)).toContain("- prefs/language: Replies in English");
+	});
+
+	it("gives a Subagent no memory", async () => {
+		answer();
+		await runAgent(run("remembers", { isSubagent: true }).run, memDeps);
+		expect(prompt(context)).toBe("You are a test.");
+		expect(tools(context)).not.toContain("memory_");
 	});
 });

@@ -48,6 +48,7 @@ const fauxAgent: AgentDefinition = {
 	defaultModel: "faux/faux-1",
 	thinking: {},
 	default: false,
+	memory: false,
 	pickable: true,
 	allModels: false,
 	tools: ["search", "scrape"],

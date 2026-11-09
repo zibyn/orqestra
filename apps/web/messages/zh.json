@@ -82,6 +82,8 @@
   "agent_thinking_allowed_hint": "不选表示 Model 支持的所有档位。",
   "agent_thinking_default": "默认思考档位",
   "agent_tools": "Tool",
+  "agent_memory": "记忆",
+  "agent_memory_hint": "跨对话记住每个用户：读写该用户的记忆。",
   "agent_pickable": "用户可选",
   "agent_pickable_hint": "关闭后只作为子智能体模板；已有对话可继续。",
   "agent_default": "默认 Agent",

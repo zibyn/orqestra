@@ -82,6 +82,8 @@
   "agent_thinking_allowed_hint": "None selected: every level the Model supports.",
   "agent_thinking_default": "Default thinking level",
   "agent_tools": "Tools",
+  "agent_memory": "Memory",
+  "agent_memory_hint": "Remembers each user across conversations: reads and writes their memories.",
   "agent_pickable": "Users can pick it",
   "agent_pickable_hint": "Off: only used as a Subagent template; existing conversations continue.",
   "agent_default": "Default Agent",

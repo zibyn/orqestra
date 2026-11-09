@@ -46,6 +46,14 @@ import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
 
 export { MAX_UPLOAD_BYTES } from "@orqestra/config";
+export {
+	MAX_MEMORIES,
+	MAX_MEMORY_BODY,
+	MAX_MEMORY_DESCRIPTION,
+	type Memories,
+	type Memory,
+	MemoryError,
+} from "./memories.ts";
 export type { ConversationEvent, Ended } from "./runs.ts";
 export { MAX_SUBAGENTS } from "./runs.ts";
 export { ensureSandbox } from "./sandbox.ts";

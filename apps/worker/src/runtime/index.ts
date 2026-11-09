@@ -4,6 +4,7 @@ import { messageText, type OrqestraConfig, turnSkills } from "@orqestra/config";
 import type { RunHandle } from "@orqestra/conversations";
 import { type openToolbox, orrery as orreryClient } from "@orqestra/tools";
 import { prepareContext } from "./compaction.ts";
+import { memoryPrompt, memoryTools } from "./memory.ts";
 import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
 import { generateTitle } from "./title.ts";
 import {
@@ -56,7 +57,10 @@ export async function runAgent(
 				skillFiles,
 			})
 		: [];
+	// Subagents get no memory yet; the Index is a snapshot, so writes during the Run leave the prompt (and its cache) alone
+	const memory = turn.agent.memory && !sub;
 	try {
+		const memoryBlock = memory ? memoryPrompt(await run.memories.index()) : "";
 		const { messages, compaction } = await prepareContext(
 			run.transcript,
 			turn.model,
@@ -74,12 +78,14 @@ export async function runAgent(
 		let steps = 0;
 		const agent = new Agent({
 			initialState: {
-				systemPrompt: turn.agent.instructions + skillsPrompt(skills),
+				systemPrompt:
+					turn.agent.instructions + skillsPrompt(skills) + memoryBlock,
 				model: turn.model,
 				thinkingLevel: turn.thinking,
 				tools: [
 					...toolbox.tools,
 					...sandbox,
+					...(memory ? memoryTools(run.memories) : []),
 					...(sub ? [] : subagentTools(config, run.subagents)),
 				],
 				messages,

@@ -473,6 +473,14 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 					idPrefix={fieldId("skill")}
 				/>
 				<SwitchField
+					id={fieldId("memory")}
+					label={m.agent_memory()}
+					hint={m.agent_memory_hint()}
+					error={fieldError("memory")}
+					checked={def.memory ?? false}
+					onChange={(memory) => update({ memory })}
+				/>
+				<SwitchField
 					id={fieldId("pickable")}
 					label={m.agent_pickable()}
 					hint={m.agent_pickable_hint()}

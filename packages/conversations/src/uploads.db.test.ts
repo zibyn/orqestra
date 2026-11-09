@@ -21,6 +21,7 @@ const agent = (id: string, skills: string[]): AgentDefinition => ({
 	defaultModel: "faux/faux-1",
 	thinking: {},
 	default: false,
+	memory: false,
 	pickable: true,
 	allModels: false,
 	tools: [],

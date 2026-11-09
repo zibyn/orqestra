@@ -139,6 +139,27 @@ export const subagent = pgTable("subagent", {
 	createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// A User's Memories (ADR 0005); like Conversations, visible only to their owner, Admins included
+export const memory = pgTable(
+	"memory",
+	{
+		id: serial("id").primaryKey(),
+		// the owner's Polaris `sub`
+		userId: text("user_id").notNull(),
+		// like a file path: prefs/language
+		path: text("path").notNull(),
+		description: text("description").notNull(),
+		// Markdown
+		body: text("body").notNull(),
+		// the Conversation that last wrote it; null once that is deleted, since Memories outlive it
+		conversationId: uuid("conversation_id").references(() => conversation.id, {
+			onDelete: "set null",
+		}),
+		updatedAt: timestamp("updated_at").defaultNow().notNull(),
+	},
+	(table) => [unique().on(table.userId, table.path)],
+);
+
 // Providers an Admin configured from the Catalog; at most one row per Catalog Provider
 export const provider = pgTable("provider", {
 	// the Catalog (pi) Provider id

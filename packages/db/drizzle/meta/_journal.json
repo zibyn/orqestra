@@ -43,6 +43,13 @@
       "when": 1794213659227,
       "tag": "0005_general_all_models",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794222681875,
+      "tag": "0006_memory",
+      "breakpoints": true
     }
   ]
 }

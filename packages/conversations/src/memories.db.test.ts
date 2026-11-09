@@ -1,0 +1,123 @@
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+
+// Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
+const url = process.env.TEST_DATABASE_URL;
+if (url) process.env.DATABASE_URL = url;
+const { db } = await import("@orqestra/db");
+const schema = await import("@orqestra/db/schema");
+const { sql } = await import("drizzle-orm");
+const { memoriesOf, MAX_MEMORIES, MemoryError } = await import("./memories.ts");
+
+const newConversation = async (userId: string) =>
+	(
+		await db
+			.insert(schema.conversation)
+			.values({ userId, agentId: "a" })
+			.returning()
+	)[0].id;
+
+describe.skipIf(!url)("Memories (Postgres)", () => {
+	let mine: ReturnType<typeof memoriesOf>;
+	let conversationId: string;
+	beforeEach(async () => {
+		await db.execute(sql`truncate conversation, memory cascade`);
+		conversationId = await newConversation("u1");
+		mine = memoriesOf("u1", conversationId);
+	});
+	afterAll(() => db.$client.end());
+
+	it("writes, reads, lists and deletes a User's Memories, recording the Conversation that wrote them", async () => {
+		expect(
+			await mine.write("prefs/language", "Replies in English", "Use English."),
+		).toEqual({ before: undefined });
+		await mine.write("work/orqestra", "Working on memory", "Ticket 37");
+		expect(await mine.read("prefs/language")).toMatchObject({
+			path: "prefs/language",
+			description: "Replies in English",
+			body: "Use English.",
+			conversationId,
+			updatedAt: expect.any(Date),
+		});
+		expect((await mine.index()).map((m) => m.path).sort()).toEqual([
+			"prefs/language",
+			"work/orqestra",
+		]);
+		expect(await mine.delete("work/orqestra")).toMatchObject({
+			before: { body: "Ticket 37" },
+		});
+		expect(await mine.read("work/orqestra")).toBeUndefined();
+		await expect(mine.delete("work/orqestra")).rejects.toThrow(MemoryError);
+	});
+
+	it("keeps one Memory per path: a later write replaces it", async () => {
+		await mine.write("p", "first", "one");
+		const { before } = await mine.write("p", "second", "two");
+		expect(before).toMatchObject({ description: "first", body: "one" });
+		await Promise.all([mine.write("q", "a", "a"), mine.write("q", "b", "b")]);
+		expect(await mine.index()).toHaveLength(2);
+		expect(await mine.read("p")).toMatchObject({
+			description: "second",
+			body: "two",
+		});
+	});
+
+	it("edits a Memory's body by replacing text that occurs once, and refuses otherwise", async () => {
+		await mine.write("p", "d", "likes tea, likes cake");
+		await mine.edit("p", "tea", "coffee");
+		expect((await mine.read("p"))?.body).toBe("likes coffee, likes cake");
+		await expect(mine.edit("p", "juice", "x")).rejects.toThrow(/not found/);
+		await expect(mine.edit("p", "likes", "x")).rejects.toThrow(/2 times/);
+		await expect(mine.edit("nope", "a", "b")).rejects.toThrow(MemoryError);
+	});
+
+	it("enforces the limits on description, body and count", async () => {
+		await expect(mine.write("p", "d".repeat(151), "b")).rejects.toThrow(/150/);
+		await expect(mine.write("p", "d", "b".repeat(4097))).rejects.toThrow(
+			/4096/,
+		);
+		await mine.write("p", "d", "b".repeat(4090));
+		await expect(mine.edit("p", "b", "")).rejects.toThrow(MemoryError); // occurs many times
+		await expect(
+			mine.edit("p", "b".repeat(4090), "长".repeat(2000)),
+		).rejects.toThrow(/4096/); // bytes, not characters
+		await db.insert(schema.memory).values(
+			Array.from({ length: MAX_MEMORIES - 1 }, (_, i) => ({
+				userId: "u1",
+				path: `bulk/${i}`,
+				description: "d",
+				body: "b",
+			})),
+		);
+		await expect(mine.write("one-more", "d", "b")).rejects.toThrow(/500/);
+		// replacing one is still allowed at the limit
+		await mine.write("p", "d", "short");
+	});
+
+	it("greps the path, description and body of the User's own Memories, case-insensitively", async () => {
+		await mine.write("prefs/language", "Reply language", "Use 简体中文 always");
+		await mine.write("work/x", "A project", "nothing here");
+		await memoriesOf("u2", await newConversation("u2")).write(
+			"prefs/language",
+			"other user",
+			"简体中文",
+		);
+		expect((await mine.grep("简体")).map((m) => m.path)).toEqual([
+			"prefs/language",
+		]);
+		expect((await mine.grep("^work/")).map((m) => m.path)).toEqual(["work/x"]);
+		expect((await mine.grep("a PROJECT")).map((m) => m.path)).toEqual([
+			"work/x",
+		]);
+		await expect(mine.grep("(")).rejects.toThrow(MemoryError);
+	});
+
+	it("keeps a Memory when the Conversation that wrote it is deleted", async () => {
+		await mine.write("p", "d", "b");
+		await db
+			.delete(schema.conversation)
+			.where(sql`${schema.conversation.id} = ${conversationId}`);
+		expect(await memoriesOf("u1", conversationId).read("p")).toMatchObject({
+			conversationId: null,
+		});
+	});
+});

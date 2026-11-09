@@ -58,6 +58,7 @@ const agent = (id: string, model: string): AgentDefinition => ({
 	defaultModel: model,
 	thinking: {},
 	default: false,
+	memory: false,
 	pickable: true,
 	allModels: false,
 	tools: ["search", "scrape"],

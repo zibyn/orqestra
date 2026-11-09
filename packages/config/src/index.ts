@@ -49,6 +49,8 @@ export interface AgentDefinition {
 	tools: ToolRef[];
 	/** Allowed Skills by name, as written; a Run gets the available ones from `turnSkills`. */
 	skills: string[];
+	/** Its Runs get the Memory Tools, the Memory Index and the memory instructions. */
+	memory: boolean;
 	/** Users can start Conversations with it; any Agent can be a Subagent template. */
 	pickable: boolean;
 	default: boolean;
@@ -373,6 +375,7 @@ const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
 	thinking: {},
 	tools: [...toolName.options],
 	skills: [],
+	memory: false,
 	pickable: false,
 	default: false,
 	unavailableModels: [],
