@@ -23,8 +23,6 @@ import { Route as ConsoleSearchRouteImport } from './routes/console/search'
 import { Route as ConsoleSkillsRouteImport } from './routes/console/skills'
 import { Route as AppCConversationIdRouteImport } from './routes/_app/c.$conversationId'
 import { Route as ApiConversationsIdEventsRouteImport } from './routes/api/conversations/$id/events'
-import { Route as ApiConversationsIdFilesRouteImport } from './routes/api/conversations/$id/files'
-import { Route as ApiConversationsIdUploadsRouteImport } from './routes/api/conversations/$id/uploads'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -96,17 +94,6 @@ const ApiConversationsIdEventsRoute =
     path: '/api/conversations/$id/events',
     getParentRoute: () => rootRouteImport,
   } as any)
-const ApiConversationsIdFilesRoute = ApiConversationsIdFilesRouteImport.update({
-  id: '/api/conversations/$id/files',
-  path: '/api/conversations/$id/files',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiConversationsIdUploadsRoute =
-  ApiConversationsIdUploadsRouteImport.update({
-    id: '/api/conversations/$id/uploads',
-    path: '/api/conversations/$id/uploads',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -122,8 +109,6 @@ export interface FileRoutesByFullPath {
   '/console/': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
   '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
-  '/api/conversations/$id/files': typeof ApiConversationsIdFilesRoute
-  '/api/conversations/$id/uploads': typeof ApiConversationsIdUploadsRoute
 }
 export interface FileRoutesByTo {
   '/memory': typeof AppMemoryRoute
@@ -138,8 +123,6 @@ export interface FileRoutesByTo {
   '/console': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
   '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
-  '/api/conversations/$id/files': typeof ApiConversationsIdFilesRoute
-  '/api/conversations/$id/uploads': typeof ApiConversationsIdUploadsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -157,8 +140,6 @@ export interface FileRoutesById {
   '/console/': typeof ConsoleIndexRoute
   '/_app/c/$conversationId': typeof AppCConversationIdRoute
   '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
-  '/api/conversations/$id/files': typeof ApiConversationsIdFilesRoute
-  '/api/conversations/$id/uploads': typeof ApiConversationsIdUploadsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -176,8 +157,6 @@ export interface FileRouteTypes {
     | '/console/'
     | '/c/$conversationId'
     | '/api/conversations/$id/events'
-    | '/api/conversations/$id/files'
-    | '/api/conversations/$id/uploads'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/memory'
@@ -192,8 +171,6 @@ export interface FileRouteTypes {
     | '/console'
     | '/c/$conversationId'
     | '/api/conversations/$id/events'
-    | '/api/conversations/$id/files'
-    | '/api/conversations/$id/uploads'
   id:
     | '__root__'
     | '/_app'
@@ -210,8 +187,6 @@ export interface FileRouteTypes {
     | '/console/'
     | '/_app/c/$conversationId'
     | '/api/conversations/$id/events'
-    | '/api/conversations/$id/files'
-    | '/api/conversations/$id/uploads'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -219,8 +194,6 @@ export interface RootRouteChildren {
   ConsoleRoute: typeof ConsoleRouteWithChildren
   ApiSkillsRoute: typeof ApiSkillsRoute
   ApiConversationsIdEventsRoute: typeof ApiConversationsIdEventsRoute
-  ApiConversationsIdFilesRoute: typeof ApiConversationsIdFilesRoute
-  ApiConversationsIdUploadsRoute: typeof ApiConversationsIdUploadsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -323,20 +296,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiConversationsIdEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/conversations/$id/files': {
-      id: '/api/conversations/$id/files'
-      path: '/api/conversations/$id/files'
-      fullPath: '/api/conversations/$id/files'
-      preLoaderRoute: typeof ApiConversationsIdFilesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/conversations/$id/uploads': {
-      id: '/api/conversations/$id/uploads'
-      path: '/api/conversations/$id/uploads'
-      fullPath: '/api/conversations/$id/uploads'
-      preLoaderRoute: typeof ApiConversationsIdUploadsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -382,8 +341,6 @@ const rootRouteChildren: RootRouteChildren = {
   ConsoleRoute: ConsoleRouteWithChildren,
   ApiSkillsRoute: ApiSkillsRoute,
   ApiConversationsIdEventsRoute: ApiConversationsIdEventsRoute,
-  ApiConversationsIdFilesRoute: ApiConversationsIdFilesRoute,
-  ApiConversationsIdUploadsRoute: ApiConversationsIdUploadsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

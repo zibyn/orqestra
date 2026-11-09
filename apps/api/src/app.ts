@@ -1,4 +1,6 @@
+import type { Conversations } from "@orqestra/conversations";
 import { Elysia } from "elysia";
+import { download, upload } from "./files.ts";
 import type { User } from "./identity.ts";
 
 export type { User };
@@ -15,8 +17,18 @@ export type Session = (
 /** Polaris' /auth/login, /auth/callback and /auth/logout. */
 export type Auth = (request: Request) => Response | Promise<Response>;
 
+const unauthorized = { errors: { session: { code: "unauthorized" } } };
+
 /** The api; production passes Polaris (see polaris.ts), tests a fake. */
-export function createApp({ session, auth }: { session: Session; auth: Auth }) {
+export function createApp({
+	session,
+	auth,
+	conversations,
+}: {
+	session: Session;
+	auth: Auth;
+	conversations: Conversations;
+}) {
 	return new Elysia()
 		.all("/auth/*", ({ request }) => auth(request))
 		.group("/api", (api) =>
@@ -29,9 +41,26 @@ export function createApp({ session, auth }: { session: Session; auth: Auth }) {
 				})
 				.get(
 					"/session",
-					({ user, status }) =>
-						user ??
-						status(401, { errors: { session: { code: "unauthorized" } } }),
+					({ user, status }) => user ?? status(401, unauthorized),
+				)
+				.post(
+					"/conversations/:id/uploads",
+					({ user, status, params, request }) =>
+						user
+							? upload(conversations, user.id, params.id, request)
+							: status(401, unauthorized),
+					// the body is the file, streamed into the Sandbox as it arrives
+					{ parse: "none" },
+				)
+				.get(
+					"/conversations/:id/files",
+					({ user, status, params, request, set }) => {
+						// the file may change in the Sandbox, and is the User's alone
+						set.headers["cache-control"] = "private, no-store";
+						return user
+							? download(conversations, user.id, params.id, request)
+							: status(401, unauthorized);
+					},
 				),
 		);
 }
