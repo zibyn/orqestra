@@ -17,6 +17,7 @@ import {
 	BrainIcon,
 	ChevronRightIcon,
 	DownloadIcon,
+	EyeOffIcon,
 	FileIcon,
 	Loader2Icon,
 	RotateCcwIcon,
@@ -164,6 +165,12 @@ function ConversationView() {
 			<div className="flex min-h-0 flex-1 flex-col">
 				<div className="flex-1 overflow-y-auto">
 					<div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
+						{conversation.incognito && (
+							<Badge variant="outline" className="self-center">
+								<EyeOffIcon />
+								{m.incognito()}
+							</Badge>
+						)}
 						{delivered.map((row) => (
 							<Fragment key={row.id}>
 								{conversation.compactedBefore.includes(row.id) && (

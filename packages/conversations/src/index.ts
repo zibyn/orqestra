@@ -200,6 +200,7 @@ export function createConversations({
 					id: conversation.id,
 					title: conversation.title,
 					status: conversation.status,
+					incognito: conversation.incognito,
 					// Subagents queued or at work, which the sidebar marks while the parent itself is idle
 					// (spelled out: drizzle leaves the columns of a select's fields unqualified)
 					background: sql<boolean>`exists (select 1 from subagent s join conversation child on child.id = s.conversation_id where child.parent_id = conversation.id and s.outcome in ('queued', 'running'))`,
@@ -264,6 +265,7 @@ export function createConversations({
 				agentId: conv.agentId,
 				title: conv.title,
 				status: conv.status,
+				incognito: conv.incognito,
 				// the Agent was removed from config or has no Model left
 				readOnly: !resolveTurn(await config(), conv.agentId),
 				messages: [...messages, ...pending].map((m) => ({
@@ -276,7 +278,11 @@ export function createConversations({
 		},
 
 		/** Starts a Conversation with no messages yet, so attachments can be uploaded before the first one is sent. */
-		async start(userId: string, agentId: string) {
+		async start(
+			userId: string,
+			agentId: string,
+			{ incognito = false }: { incognito?: boolean } = {},
+		) {
 			const cfg = await config();
 			const turn = resolveTurn(cfg, agentId);
 			if (!turn) throw new ConversationError("This Agent is offline");
@@ -284,7 +290,7 @@ export function createConversations({
 				throw new ConversationError("This Agent cannot be picked");
 			const [{ id }] = await db
 				.insert(conversation)
-				.values({ userId, agentId })
+				.values({ userId, agentId, incognito })
 				.returning({ id: conversation.id });
 			return id;
 		},
@@ -327,6 +333,8 @@ export function createConversations({
 				thinking?: ThinkingLevel;
 				/** Names `upload` returned; the message gives the Agent their paths. */
 				attachments?: string[];
+				/** Starts an Incognito Conversation; an existing one keeps what it started as. */
+				incognito?: boolean;
 			},
 		) {
 			const attachments = (input.attachments ?? []).map((name) => {
@@ -363,7 +371,7 @@ export function createConversations({
 				} else {
 					[{ id }] = await tx
 						.insert(conversation)
-						.values({ userId, agentId })
+						.values({ userId, agentId, incognito: input.incognito })
 						.returning({ id: conversation.id });
 				}
 				await tx.insert(inbox).values({

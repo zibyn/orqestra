@@ -29,6 +29,7 @@ export function memoryRun({
 	turn,
 	inbox = [],
 	isSubagent = false,
+	incognito = false,
 	renamed = false,
 	subagents = { start: unavailable, message: unavailable, stop: unavailable },
 	memories = [],
@@ -40,6 +41,7 @@ export function memoryRun({
 	/** Inputs that arrive once the Run has begun. */
 	inbox?: Message[];
 	isSubagent?: boolean;
+	incognito?: boolean;
 	renamed?: boolean;
 	subagents?: RunHandle["subagents"];
 	/** The User's Memories as the Run begins. */
@@ -66,6 +68,7 @@ export function memoryRun({
 	const run: RunHandle = {
 		conversationId: "memory",
 		isSubagent,
+		incognito,
 		turn,
 		transcript,
 		renamed,
@@ -99,7 +102,7 @@ export function memoryRun({
 				},
 				{ signal: stopper.signal },
 			),
-		memories: memoryOff ? undefined : userMemories,
+		memories: memoryOff || incognito ? undefined : userMemories,
 		recall,
 		subagents,
 	};

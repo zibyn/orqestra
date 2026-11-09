@@ -5,6 +5,7 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import {
+	EyeOffIcon,
 	Loader2Icon,
 	MoreHorizontalIcon,
 	PencilIcon,
@@ -42,7 +43,12 @@ export function AppSidebar({
 	conversations,
 }: {
 	user: User;
-	conversations: { id: string; title: string | null; background: boolean }[];
+	conversations: {
+		id: string;
+		title: string | null;
+		background: boolean;
+		incognito: boolean;
+	}[];
 }) {
 	return (
 		<Sidebar variant="inset">
@@ -77,7 +83,12 @@ export function AppSidebar({
 function ConversationItem({
 	conversation,
 }: {
-	conversation: { id: string; title: string | null; background: boolean };
+	conversation: {
+		id: string;
+		title: string | null;
+		background: boolean;
+		incognito: boolean;
+	};
 }) {
 	const router = useRouter();
 	const navigate = useNavigate();
@@ -120,6 +131,13 @@ function ConversationItem({
 					/>
 				}
 			>
+				{conversation.incognito && (
+					<EyeOffIcon
+						role="img"
+						aria-label={m.incognito()}
+						className="text-muted-foreground"
+					/>
+				)}
 				<span>{title}</span>
 				{conversation.background && (
 					<Loader2Icon

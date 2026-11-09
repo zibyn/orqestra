@@ -26,7 +26,7 @@ export type Recalled = {
 	snippet: string;
 };
 
-/** One User's past Conversations, as their Agent searches them: neither the current one nor Subagents'. */
+/** One User's past Conversations, as their Agent searches them: neither the current one, Subagents' nor Incognito ones. */
 export type Recall = {
 	/** Messages whose text contains `keyword`, ignoring case, latest first; `after` and `before` bound when they were sent. */
 	search(
@@ -66,6 +66,7 @@ export function recallOf(userId: string, conversationId: string): Recall {
 		eq(conversation.userId, userId),
 		isNull(conversation.parentId),
 		ne(conversation.id, conversationId),
+		eq(conversation.incognito, false),
 	);
 	return {
 		search: async (keyword, { after, before } = {}) => {

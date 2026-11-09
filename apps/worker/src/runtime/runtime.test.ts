@@ -925,6 +925,18 @@ describe("runAgent with memory", () => {
 		expect(tools(context)).not.toContain('"recall"');
 	});
 
+	for (const isSubagent of [false, true])
+		it(`gives an Incognito Conversation's ${isSubagent ? "Subagent" : "Agent"} no memory, though its Agent Definition has it`, async () => {
+			answer();
+			await runAgent(
+				run("remembers", { incognito: true, isSubagent }).run,
+				memDeps,
+			);
+			expect(prompt(context)).toBe("You are a test.");
+			expect(tools(context)).not.toContain("memory_");
+			expect(tools(context)).not.toContain('"recall"');
+		});
+
 	it("gives an Agent without memory no Recall", async () => {
 		answer();
 		await runAgent(run("forgets").run, memDeps);

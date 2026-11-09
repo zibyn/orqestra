@@ -1376,6 +1376,58 @@ describe.skipIf(!url)(
 			expect(options.find((a) => a.id === "faux")?.skills).toEqual([]);
 		});
 
+		it("keeps a Conversation Incognito from its start on, for its Runs and its Subagents', and marks it", async () => {
+			const seen: boolean[] = [];
+			const note: Step = ({ run }) => {
+				seen.push(run.incognito && !run.memories);
+				return "ok";
+			};
+			script({
+				parent: [
+					({ run }) => {
+						seen.push(run.incognito && !run.memories);
+						return [start("look")];
+					},
+					say("started"),
+					note,
+					note,
+				],
+				sub: [note],
+			});
+			const id = await conversations.send(userId, {
+				agentId: "faux",
+				text: "hi",
+				incognito: true,
+			});
+			await waitFor(
+				() => get(id),
+				(v) => v?.status === "idle" && seen.length === 3,
+			);
+			// a later message cannot turn it off
+			await conversations.send(userId, {
+				conversationId: id,
+				text: "again",
+				incognito: false,
+			});
+			await waitFor(
+				() => get(id),
+				(v) => v?.status === "idle" && seen.length === 4,
+			);
+			expect(seen).toEqual([true, true, true, true]);
+			expect((await get(id))?.incognito).toBe(true);
+			const started = await conversations.start(userId, "faux", {
+				incognito: true,
+			});
+			script({ parent: [say("plain")] });
+			const plain = await send("hi");
+			await waitFor(() => get(plain), idle(2));
+			expect(
+				Object.fromEntries(
+					(await conversations.list(userId)).map((c) => [c.id, c.incognito]),
+				),
+			).toEqual({ [id]: true, [started]: true, [plain]: false });
+		});
+
 		it("hides a Conversation from everyone but its owner", async () => {
 			script({ parent: [say("hi")] });
 			const id = await send("hi");

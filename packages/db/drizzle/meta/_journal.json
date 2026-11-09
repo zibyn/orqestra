@@ -64,6 +64,13 @@
       "when": 1794223767597,
       "tag": "0008_memory_setting",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794224139483,
+      "tag": "0009_incognito",
+      "breakpoints": true
     }
   ]
 }

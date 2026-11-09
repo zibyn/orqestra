@@ -46,15 +46,16 @@ export const sendMessage = createServerFn({ method: "POST" })
 			thinking: thinkingLevel.optional(),
 			// names the uploads route answered
 			attachments: z.array(z.string()).max(20).optional(),
+			incognito: z.boolean().optional(),
 		}),
 	)
 	.handler(async ({ data }) => conversations.send(await requireUserId(), data));
 
 /** An empty Conversation to upload attachments into before its first message. */
 export const startConversation = createServerFn({ method: "POST" })
-	.validator(z.string())
+	.validator(z.object({ agentId: z.string(), incognito: z.boolean() }))
 	.handler(async ({ data }) =>
-		conversations.start(await requireUserId(), data),
+		conversations.start(await requireUserId(), data.agentId, data),
 	);
 
 export const stopRun = createServerFn({ method: "POST" })
