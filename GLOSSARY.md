@@ -11,7 +11,7 @@ A person in Polaris' User pool who may use Orqestra, identified by their Polaris
 _Avoid_: Account, customer
 
 **Admin**:
-A User holding the `orqestra:admin` Entitlement at Orqestra's API in Polaris, allowed to configure Providers, Search Providers, MCP Servers and Agent Definitions in the console.
+A User holding the `orqestra:admin` Entitlement at Orqestra's API in Polaris, allowed to configure Providers, Search Providers, MCP Servers, the Sandbox Provider, Skills and Agent Definitions in the console.
 _Avoid_: Superuser, owner
 
 **Member**:
@@ -29,7 +29,7 @@ A role the user converses with, such as a general assistant or a translator, def
 _Avoid_: Bot, assistant, model, persona
 
 **Agent Definition**:
-The reusable description of an Agent, maintained by Admins: its name, description, instructions, allowed Models, thinking levels and Tools, and whether Users can pick it. Users start Conversations only with Agents they can pick; any definition can serve as the template for a Subagent.
+The reusable description of an Agent, maintained by Admins: its name, description, instructions, allowed Models, thinking levels, Tools and Skills, and whether Users can pick it. Users start Conversations only with Agents they can pick; any definition can serve as the template for a Subagent.
 _Avoid_: Profile, persona, preset
 
 **Subagent**:
@@ -59,6 +59,18 @@ _Avoid_: Function, plugin, skill
 **MCP Server**:
 An external service, configured by an Admin, that serves Tools to Agents over the Model Context Protocol. An Agent Definition allows an MCP Server as a whole, and only by naming it; one the Admin has disabled or that cannot be reached is unavailable until it is back, while deleting one removes it from every Agent Definition.
 _Avoid_: Connector, integration, plugin
+
+**Skill**:
+A folder of know-how in the Agent Skills format, added by an Admin by upload or written in the console: a `SKILL.md` with a name, a description and instructions, plus any reference files, scripts and assets it brings along. Its name identifies it. Every upload or edit makes a new version, and Agents use the current one, which an Admin can roll back to an earlier version. An Agent sees only the name and description of each Skill its Agent Definition allows, and reads the rest or runs its scripts in its Sandbox when a task calls for it; a User can also invoke one explicitly from the composer, the only way to use a Skill marked as not invoked by the Agent. A Skill is not a Tool: it tells an Agent how to do something, and is never a service the Agent calls. Without a Sandbox Provider every Skill is unavailable. Disabling one makes it unavailable until it is enabled again, and deleting one removes it from every Agent Definition.
+_Avoid_: Plugin, prompt, template, Tool
+
+**Sandbox**:
+The isolated machine where an Agent reads its Skills, runs their scripts and works on files, served by the Sandbox Provider. A Conversation gets one the first time its Agent needs it, only if its Agent Definition allows a Skill; it sleeps when idle and wakes with its files intact, until the Conversation is deleted. A Subagent gets a Sandbox of its own. Reading and running in it are Tools, served by the Sandbox Provider.
+_Avoid_: Container, VM, workspace, code interpreter
+
+**Sandbox Provider**:
+The external service that serves Sandboxes, configured by an Admin with its address, credentials and environment template; Orrery is the only one supported, and at most one is configured. All Users' Sandboxes run under its one credential.
+_Avoid_: Runtime, execution backend
 
 **Search**:
 The Tool that queries the web and returns matching pages.
