@@ -17,7 +17,7 @@ import {
 import type { Orrery, SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
-import { type Memories, memoriesOf } from "./memories.ts";
+import { type Memories, memoriesOf, memoryOn } from "./memories.ts";
 import {
 	AGENT_RUNS_QUEUE,
 	type ConversationEvent,
@@ -122,8 +122,8 @@ export type RunHandle = {
 		client: Orrery,
 		provider: SandboxProvider,
 	): Promise<{ id: string; woke: boolean }>;
-	/** The Memories of the Conversation's User; writes record this Conversation. */
-	memories: Memories;
+	/** The Memories of the Conversation's User; writes record this Conversation. None while the User has memory off. */
+	memories?: Memories;
 	/** The Run's Subagents; only a top-level Conversation's Agent has them. */
 	subagents: {
 		/** Starts a Subagent per task, numbered in order; throws NoSuchTemplate, TemplateOffline or BudgetExceeded. */
@@ -369,7 +369,9 @@ async function open(
 		},
 		sandbox: (client, provider) =>
 			ensureSandbox(conversationId, client, provider, { signal }),
-		memories: memoriesOf(conv.userId, conversationId),
+		memories: (await memoryOn(conv.userId))
+			? memoriesOf(conv.userId, conversationId)
+			: undefined,
 		subagents: subagentsOf(cfg, conv, turn, saved),
 	};
 }

@@ -57,10 +57,10 @@ export async function runAgent(
 				skillFiles,
 			})
 		: [];
-	// Subagents get no memory yet; the Index is a snapshot, so writes during the Run leave the prompt (and its cache) alone
-	const memory = turn.agent.memory && !sub;
+	// Subagents get no memory yet, nor a User who turned it off; the Index is a snapshot, so writes during the Run leave the prompt (and its cache) alone
+	const memory = turn.agent.memory && !sub ? run.memories : undefined;
 	try {
-		const memoryBlock = memory ? memoryPrompt(await run.memories.index()) : "";
+		const memoryBlock = memory ? memoryPrompt(await memory.index()) : "";
 		const { messages, compaction } = await prepareContext(
 			run.transcript,
 			turn.model,
@@ -85,7 +85,7 @@ export async function runAgent(
 				tools: [
 					...toolbox.tools,
 					...sandbox,
-					...(memory ? memoryTools(run.memories) : []),
+					...(memory ? memoryTools(memory) : []),
 					...(sub ? [] : subagentTools(config, run.subagents)),
 				],
 				messages,

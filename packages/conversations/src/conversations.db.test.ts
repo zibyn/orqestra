@@ -35,6 +35,7 @@ const {
 	createConversations,
 	MAX_SUBAGENTS,
 	MAX_SUBAGENTS_PER_USER_MESSAGE,
+	userMemories,
 } = await import("./index.ts");
 const runs = await import("./runs.ts");
 const { memoryRun } = await import("./testing.ts");
@@ -285,7 +286,7 @@ describe.skipIf(!url)(
 			await db.execute(
 				sql`select pg_notify(${runs.STOP_CHANNEL}, id::text) from conversation where status = 'running'`,
 			);
-			await db.execute(sql`truncate conversation cascade`);
+			await db.execute(sql`truncate conversation, memory_setting cascade`);
 		});
 
 		it("streams a Run's events to whoever subscribes", async () => {
@@ -1248,6 +1249,24 @@ describe.skipIf(!url)(
 			await send("again", id);
 			await waitFor(() => get(id), idle(4));
 			expect((await get(id))?.title).toBe("Renamed");
+		});
+
+		it("gives a Run no Memories from when its User turns memory off, and them again once it is back on", async () => {
+			const has = async ({ run }: Ctx) => String(!!run.memories);
+			script({ parent: [has, has, has] });
+			const id = await send("hi");
+			await waitFor(() => get(id), idle(2));
+			await userMemories(userId).setOn(false);
+			await send("again", id);
+			await waitFor(() => get(id), idle(4));
+			await userMemories(userId).setOn(true);
+			await send("back", id);
+			await waitFor(() => get(id), idle(6));
+			expect(
+				(await get(id))?.messages
+					.filter((m) => m.message.role === "assistant")
+					.map((m) => messageText(m.message)),
+			).toEqual(["true", "false", "true"]);
 		});
 
 		it("snapshots the SKILL.md body of a Skill the User invokes into the message, untouched by later versions", async () => {

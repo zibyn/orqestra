@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppMemoryRouteImport } from './routes/_app/memory'
 import { Route as ApiSkillsRouteImport } from './routes/api/skills'
 import { Route as AuthSplatRouteImport } from './routes/auth/$'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
@@ -38,6 +39,11 @@ const ConsoleRoute = ConsoleRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMemoryRoute = AppMemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
   getParentRoute: () => AppRoute,
 } as any)
 const ApiSkillsRoute = ApiSkillsRouteImport.update({
@@ -111,6 +117,7 @@ const ApiConversationsIdUploadsRoute =
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleRouteWithChildren
+  '/memory': typeof AppMemoryRoute
   '/api/skills': typeof ApiSkillsRoute
   '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByFullPath {
   '/api/conversations/$id/uploads': typeof ApiConversationsIdUploadsRoute
 }
 export interface FileRoutesByTo {
+  '/memory': typeof AppMemoryRoute
   '/api/skills': typeof ApiSkillsRoute
   '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
@@ -145,6 +153,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/console': typeof ConsoleRouteWithChildren
+  '/_app/memory': typeof AppMemoryRoute
   '/api/skills': typeof ApiSkillsRoute
   '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
@@ -165,6 +174,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/console'
+    | '/memory'
     | '/api/skills'
     | '/auth/$'
     | '/console/agents'
@@ -180,6 +190,7 @@ export interface FileRouteTypes {
     | '/api/conversations/$id/uploads'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/memory'
     | '/api/skills'
     | '/auth/$'
     | '/console/agents'
@@ -198,6 +209,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_app'
     | '/console'
+    | '/_app/memory'
     | '/api/skills'
     | '/auth/$'
     | '/console/agents'
@@ -245,6 +257,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/memory': {
+      id: '/_app/memory'
+      path: '/memory'
+      fullPath: '/memory'
+      preLoaderRoute: typeof AppMemoryRouteImport
       parentRoute: typeof AppRoute
     }
     '/api/skills': {
@@ -342,11 +361,13 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppMemoryRoute: typeof AppMemoryRoute
   AppIndexRoute: typeof AppIndexRoute
   AppCConversationIdRoute: typeof AppCConversationIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppMemoryRoute: AppMemoryRoute,
   AppIndexRoute: AppIndexRoute,
   AppCConversationIdRoute: AppCConversationIdRoute,
 }

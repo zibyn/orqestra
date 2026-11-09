@@ -53,6 +53,7 @@ export {
 	type Memories,
 	type Memory,
 	MemoryError,
+	userMemories,
 } from "./memories.ts";
 export type { ConversationEvent, Ended } from "./runs.ts";
 export { MAX_SUBAGENTS } from "./runs.ts";
