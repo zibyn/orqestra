@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm --parallel --filter @orqestra/web --filter @orqestra/worker dev",
+    "dev": "pnpm --parallel --filter @orqestra/web --filter @orqestra/api --filter @orqestra/worker dev",
     "web": "pnpm --filter @orqestra/web dev",
     "build": "pnpm --filter @orqestra/web build",
     "test": "pnpm -r --workspace-concurrency=1 --if-present test",

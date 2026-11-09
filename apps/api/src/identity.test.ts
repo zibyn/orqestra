@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { ADMIN_ENTITLEMENT, toUser } from "#/lib/identity";
+import { describe, expect, it } from "bun:test";
+import { ADMIN_ENTITLEMENT, toUser } from "./identity.ts";
 
 describe("signed-in User", () => {
 	it("is keyed by the Polaris sub", () => {

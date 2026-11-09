@@ -14,7 +14,6 @@ import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppMemoryRouteImport } from './routes/_app/memory'
 import { Route as ApiSkillsRouteImport } from './routes/api/skills'
-import { Route as AuthSplatRouteImport } from './routes/auth/$'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
 import { Route as ConsoleMcpRouteImport } from './routes/console/mcp'
@@ -49,11 +48,6 @@ const AppMemoryRoute = AppMemoryRouteImport.update({
 const ApiSkillsRoute = ApiSkillsRouteImport.update({
   id: '/api/skills',
   path: '/api/skills',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthSplatRoute = AuthSplatRouteImport.update({
-  id: '/auth/$',
-  path: '/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConsoleIndexRoute = ConsoleIndexRouteImport.update({
@@ -119,7 +113,6 @@ export interface FileRoutesByFullPath {
   '/console': typeof ConsoleRouteWithChildren
   '/memory': typeof AppMemoryRoute
   '/api/skills': typeof ApiSkillsRoute
-  '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -135,7 +128,6 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/memory': typeof AppMemoryRoute
   '/api/skills': typeof ApiSkillsRoute
-  '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -155,7 +147,6 @@ export interface FileRoutesById {
   '/console': typeof ConsoleRouteWithChildren
   '/_app/memory': typeof AppMemoryRoute
   '/api/skills': typeof ApiSkillsRoute
-  '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -176,7 +167,6 @@ export interface FileRouteTypes {
     | '/console'
     | '/memory'
     | '/api/skills'
-    | '/auth/$'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
@@ -192,7 +182,6 @@ export interface FileRouteTypes {
   to:
     | '/memory'
     | '/api/skills'
-    | '/auth/$'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
@@ -211,7 +200,6 @@ export interface FileRouteTypes {
     | '/console'
     | '/_app/memory'
     | '/api/skills'
-    | '/auth/$'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
@@ -230,7 +218,6 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   ConsoleRoute: typeof ConsoleRouteWithChildren
   ApiSkillsRoute: typeof ApiSkillsRoute
-  AuthSplatRoute: typeof AuthSplatRoute
   ApiConversationsIdEventsRoute: typeof ApiConversationsIdEventsRoute
   ApiConversationsIdFilesRoute: typeof ApiConversationsIdFilesRoute
   ApiConversationsIdUploadsRoute: typeof ApiConversationsIdUploadsRoute
@@ -271,13 +258,6 @@ declare module '@tanstack/react-router' {
       path: '/api/skills'
       fullPath: '/api/skills'
       preLoaderRoute: typeof ApiSkillsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/auth/$': {
-      id: '/auth/$'
-      path: '/auth/$'
-      fullPath: '/auth/$'
-      preLoaderRoute: typeof AuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/console/': {
@@ -401,7 +381,6 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   ConsoleRoute: ConsoleRouteWithChildren,
   ApiSkillsRoute: ApiSkillsRoute,
-  AuthSplatRoute: AuthSplatRoute,
   ApiConversationsIdEventsRoute: ApiConversationsIdEventsRoute,
   ApiConversationsIdFilesRoute: ApiConversationsIdFilesRoute,
   ApiConversationsIdUploadsRoute: ApiConversationsIdUploadsRoute,

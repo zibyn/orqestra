@@ -11,6 +11,8 @@ x-app: &app
   env_file: .env
   environment:
     DATABASE_URL: postgres://orqestra:${POSTGRES_PASSWORD:-orqestra}@postgres:5432/orqestra
+    # where web's SSR reaches the api
+    API_URL: http://api:3001
   restart: unless-stopped
 
 services:
@@ -32,7 +34,7 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # Applies database migrations once, before web and worker start
+  # Applies database migrations once, before the api, web and worker start
   migrate:
     <<: *app
     image: ghcr.io/zibyn/orqestra-migrate:${ORQESTRA_VERSION:-latest}
@@ -41,12 +43,28 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  # The one published port: /api/* and /auth/* go to the api, everything else to web
+  caddy:
+    <<: *logging
+    image: caddy:2-alpine
+    configs:
+      - { source: caddyfile, target: /etc/caddy/Caddyfile }
+    ports:
+      - "${PORT:-3000}:3000"
+    depends_on: [api, web]
+    restart: unless-stopped
+
+  api:
+    <<: *app
+    image: ghcr.io/zibyn/orqestra-api:${ORQESTRA_VERSION:-latest}
+    build: { context: ., target: api }
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
   web:
     <<: *app
     image: ghcr.io/zibyn/orqestra-web:${ORQESTRA_VERSION:-latest}
     build: { context: ., target: web }
-    ports:
-      - "${PORT:-3000}:3000"
     depends_on:
       migrate: { condition: service_completed_successfully }
 
@@ -61,3 +79,21 @@ services:
 
 volumes:
   postgres:
+
+configs:
+  caddyfile:
+    # shortcut: web still serves the routes in @web until they move to the api; drop each as it does
+    content: |
+      :3000 {
+      	@web path_regexp ^/api/(skills|conversations/[^/]+/(events|files|uploads))$$
+      	handle @web {
+      		reverse_proxy web:3000
+      	}
+      	@api path /api/* /auth/*
+      	handle @api {
+      		reverse_proxy api:3001
+      	}
+      	handle {
+      		reverse_proxy web:3000
+      	}
+      }

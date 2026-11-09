@@ -1,0 +1,23 @@
+{
+  "name": "@orqestra/api",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/app.ts"
+  },
+  "scripts": {
+    "dev": "bun --env-file=../../.env.local --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@zibyn/polaris": "^0.1.3",
+    "elysia": "1.4.30",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "jose": "^6.2.15",
+    "typescript": "^6.0.2"
+  }
+}

@@ -1,3 +1,4 @@
+import type { User } from "@orqestra/api";
 import {
 	Link,
 	useNavigate,
@@ -35,7 +36,6 @@ import {
 	SidebarMenuItem,
 } from "#/components/ui/sidebar";
 import { deleteConversation, renameConversation } from "#/lib/conversation-fns";
-import type { User } from "#/lib/identity";
 import { m } from "#/paraglide/messages";
 
 export function AppSidebar({

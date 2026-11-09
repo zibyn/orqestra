@@ -3,15 +3,8 @@ import { z } from "zod";
 
 export const env = createEnv({
 	server: {
-		// Where Orqestra is served; Polaris redirects back to {ORQESTRA_URL}/auth/callback
-		ORQESTRA_URL: z.url(),
-		POLARIS_ISSUER: z.url(),
-		POLARIS_CLIENT_ID: z.string().min(1),
-		POLARIS_CLIENT_SECRET: z.string().min(1),
-		// The access tokens' aud: identifier of the Application's default API at Polaris, where Roles grant `orqestra:admin`
-		POLARIS_AUDIENCE: z.string().min(1),
-		// Encrypts the session cookie; changing it signs everyone out. `openssl rand -base64 32`
-		POLARIS_SECRET: z.string().min(32),
+		// Where SSR reaches the api; the browser reaches it at this origin, through Caddy or Vite's proxy
+		API_URL: z.url().default("http://localhost:3001"),
 		// Encrypts Provider API keys in the database; `openssl rand -base64 32`
 		ORQESTRA_ENCRYPTION_KEY: z.base64().refine((s) => atob(s).length === 32, {
 			message: "must be 32 bytes of base64 (openssl rand -base64 32)",

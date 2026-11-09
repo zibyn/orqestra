@@ -1,49 +1,55 @@
+import { treaty } from "@elysiajs/eden";
+import type { App } from "@orqestra/api";
 import { appendResponseHeader, getRequest } from "@tanstack/react-start/server";
-import { toUser } from "#/lib/identity";
-import { polaris, verifyAccessToken } from "#/lib/polaris";
+import { env } from "#/env";
+import { type Api, sessionUser } from "#/lib/api";
+import { sessionFirst } from "#/lib/session-first";
 
-// Server-only guards for server function handlers. They live apart from the createServerFn files:
-// an exported plain function there keeps the Polaris SDK in the client bundle.
+// Server only: server function handlers, server routes and api()'s server side use it. It lives
+// apart from the createServerFn files, as an exported plain function there stays in the client bundle.
+
+const clients = new WeakMap<Request, Api>();
 
 /**
- * The signed-in User, or null. A refresh rotates the refresh token, so every cookie handed to
- * setCookie must reach the browser: a stale one reused later ends the whole Polaris Session.
+ * The api for one request web is serving, carrying its cookie. Every cookie handed to setCookie
+ * must reach the browser: it may come from a refresh (see sessionFirst).
  */
+export function serverApi(
+	request: Request,
+	setCookie: (cookie: string) => void,
+) {
+	let client = clients.get(request);
+	if (!client) {
+		client = treaty<App>(env.API_URL, {
+			fetcher: sessionFirst(
+				fetch,
+				request.headers.get("cookie") ?? "",
+				setCookie,
+			),
+		});
+		clients.set(request, client);
+	}
+	return client;
+}
+
+/** serverApi for the request being served, its cookies set on its response. */
+export function requestApi() {
+	return serverApi(getRequest(), (cookie) =>
+		appendResponseHeader("set-cookie", cookie),
+	);
+}
+
+/** The signed-in User, or null. */
 export function readUser(
 	request: Request,
 	setCookie: (cookie: string) => void,
 ) {
-	// An SSR render runs several server functions on one request, all carrying the cookie as it came in:
-	// only the first may refresh, or the others would present the refresh token it just used up
-	let user = readByRequest.get(request);
-	if (!user) {
-		user = read(request, setCookie);
-		readByRequest.set(request, user);
-	}
-	return user;
-}
-
-const readByRequest = new WeakMap<Request, ReturnType<typeof read>>();
-
-async function read(request: Request, setCookie: (cookie: string) => void) {
-	const { session, headers } = await polaris.getSession(request);
-	for (const cookie of headers.getSetCookie()) setCookie(cookie);
-	if (!session) return null;
-	const { entitlements } = await verifyAccessToken(session.accessToken).catch(
-		(err) => {
-			// The SDK's message hides which check failed (aud, iss, typ…); a misconfigured Application shows here
-			console.error("Polaris access token refused:", err.cause ?? err);
-			throw err;
-		},
-	);
-	return toUser(session.user, entitlements);
+	return sessionUser(serverApi(request, setCookie));
 }
 
 /** readUser for a server function's own request and response. */
 export function currentUser() {
-	return readUser(getRequest(), (cookie) =>
-		appendResponseHeader("set-cookie", cookie),
-	);
+	return sessionUser(requestApi());
 }
 
 export async function requireUserId() {

@@ -1,0 +1,3 @@
+[test]
+# test files share one module registry: @orqestra/db must see the test database however a file first imports it
+preload = ["./src/test-env.ts"]

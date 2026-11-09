@@ -1,3 +1,4 @@
+import type { User } from "@orqestra/api";
 import { Link } from "@tanstack/react-router";
 import {
 	BrainIcon,
@@ -21,7 +22,6 @@ import {
 	SidebarMenuButton,
 	SidebarMenuItem,
 } from "#/components/ui/sidebar";
-import type { User } from "#/lib/identity";
 import { m } from "#/paraglide/messages";
 
 // The SDK's logout is POST only, so another site cannot sign the User out with a link

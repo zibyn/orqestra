@@ -18,7 +18,8 @@ Orqestra 是一个自托管平台：登录的 User 与 AI Agent 对话，身份�
 
 | 组件 | 说明 |
 | --- | --- |
-| `apps/web` | TanStack Start 应用（Node，Nitro 构建），提供界面和 API |
+| `apps/web` | TanStack Start 应用（Node，Nitro 构建），渲染界面 |
+| `apps/api` | Elysia 服务（Bun），登录（`/auth/*`）与 `/api/*`，见 [ADR 0006](docs/adr/0006-api-owns-server-logic.md) |
 | `apps/worker` | BullMQ worker（Bun），执行 Agent 的 Run；队列存在 Postgres 的 `bullmq` schema |
 | `packages/db` | Drizzle schema、client 与迁移 |
 | `packages/conversations` | Conversation 生命周期（Run、Inbox、Subagent、Notification），唯一读写这些表的代码 |
@@ -37,9 +38,9 @@ cp .env.example .env   # 填写各项，密钥用 openssl rand -base64 32 生成
 docker compose up -d
 ```
 
-Compose 启动四个服务：`postgres`、`migrate`（执行数据库迁移后退出）、`web`（默认端口 3000，可用 `PORT` 修改）和 `worker`。默认拉取 `ghcr.io/zibyn/orqestra-web`、`ghcr.io/zibyn/orqestra-worker` 与 `ghcr.io/zibyn/orqestra-migrate` 的 `latest` 镜像；用 `ORQESTRA_VERSION=0.1.0` 固定版本，或用 `docker compose up -d --build` 从源码构建。
+Compose 启动六个服务：`postgres`、`migrate`（执行数据库迁移后退出）、`api`、`web`、`worker` 和 `caddy`（唯一对外端口，默认 3000，可用 `PORT` 修改；`/api/*`、`/auth/*` 转给 api，其余转给 web）。默认拉取 `ghcr.io/zibyn/orqestra-api`、`ghcr.io/zibyn/orqestra-web`、`ghcr.io/zibyn/orqestra-worker` 与 `ghcr.io/zibyn/orqestra-migrate` 的 `latest` 镜像；用 `ORQESTRA_VERSION=0.1.0` 固定版本，或用 `docker compose up -d --build` 从源码构建。
 
-升级：`docker compose pull && docker compose up -d`，迁移会在 web 和 worker 启动前自动执行。
+升级：`docker compose pull && docker compose up -d`，迁移会在 api、web 和 worker 启动前自动执行。
 
 ### 环境变量
 
@@ -63,7 +64,7 @@ Compose 启动四个服务：`postgres`、`migrate`（执行数据库迁移后�
 pnpm install
 cp .env.example .env.local   # 填写，并设置 DATABASE_URL
 pnpm db:migrate
-pnpm dev                     # 同时启动 web（http://localhost:3000）和 worker
+pnpm dev                     # 同时启动 web（http://localhost:3000，`/api/*`、`/auth/*` 代理到 api）、api（3001）和 worker
 ```
 
 | 命令 | 说明 |
@@ -136,7 +137,7 @@ Admin 在 `/console/agents` 新建、编辑、删除 Agent，保存后 web 和 w
 
 ## 发布
 
-推送 `v*` tag 会触发 [Release workflow](.github/workflows/release.yml)：构建并推送 web 与 worker 镜像到 GHCR，并创建 GitHub Release。
+推送 `v*` tag 会触发 [Release workflow](.github/workflows/release.yml)：构建并推送 api、web、worker 与 migrate 镜像到 GHCR，并创建 GitHub Release。
 
 ```bash
 git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
