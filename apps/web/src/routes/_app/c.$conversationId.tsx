@@ -6,6 +6,10 @@ import type {
 } from "@earendil-works/pi-ai";
 import { messageText, parseSkillBlock } from "@orqestra/config/shared";
 import type { ConversationEvent } from "@orqestra/conversations";
+import {
+	MEMORY_CHANGES,
+	type MemoryChange as MemoryChangeName,
+} from "@orqestra/conversations/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	createFileRoute,
@@ -18,6 +22,7 @@ import {
 	BrainIcon,
 	ChevronRightIcon,
 	DownloadIcon,
+	EyeOffIcon,
 	FileIcon,
 	Loader2Icon,
 	RotateCcwIcon,
@@ -244,6 +249,14 @@ function ConversationView() {
 					busy={running}
 					className="mx-auto w-full max-w-3xl gap-6 px-4 py-6"
 				>
+					{conversation.incognito && (
+						<MessageScrollerItem messageId="incognito" className="self-center">
+							<Badge variant="outline">
+								<EyeOffIcon />
+								{m.incognito()}
+							</Badge>
+						</MessageScrollerItem>
+					)}
 					{delivered.map((row) => (
 						<MessageScrollerItem
 							key={row.id}
@@ -507,7 +520,7 @@ function ToolCallView({
 			<SubagentView key={i} run={run} />
 		));
 	if (
-		MEMORY_CHANGES.includes(call.name) &&
+		MEMORY_CHANGES.includes(call.name as MemoryChangeName) &&
 		result?.details &&
 		!result.isError &&
 		conversationId
@@ -554,9 +567,12 @@ function ToolCallView({
 	);
 }
 
-// as in @orqestra/conversations, whose index this client bundle must not import
-const MEMORY_CHANGES = ["memory_write", "memory_edit", "memory_delete"];
-type Note = { description: string; body: string };
+type MemoryContent = { description: string; body: string };
+const memoryLabels = {
+	memory_write: m.memory_saved,
+	memory_edit: m.memory_updated,
+	memory_delete: m.memory_forgotten,
+} satisfies Record<MemoryChangeName, unknown>;
 
 /** A Memory the Agent wrote, edited or deleted, as a Trace line in its reply; open it for the content and to undo it. */
 function MemoryChange({
@@ -573,19 +589,14 @@ function MemoryChange({
 	const [error, setError] = useState<string>();
 	const change = result.details as {
 		path: string;
-		before?: Note;
-		after?: Note;
+		before?: MemoryContent;
+		after?: MemoryContent;
 		old?: string;
 		new?: string;
 		undone?: boolean;
 	};
 	const description = (change.after ?? change.before)?.description ?? "";
-	const label =
-		call.name === "memory_write"
-			? m.memory_saved({ description })
-			: call.name === "memory_edit"
-				? m.memory_updated({ description })
-				: m.memory_forgotten({ description });
+	const label = memoryLabels[call.name as MemoryChangeName]({ description });
 	return (
 		<TraceCollapsible>
 			<TraceCollapsibleTrigger>

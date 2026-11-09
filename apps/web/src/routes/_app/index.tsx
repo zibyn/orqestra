@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { Composer } from "#/components/Composer";
+import { Switch } from "#/components/ui/switch";
 import { sendMessage, startConversation } from "#/lib/conversation-fns";
 import { uploadFiles } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
@@ -21,7 +22,10 @@ function NewConversation() {
 	const [agentId, setAgentId] = useState(
 		() => (agents.find((a) => a.default) ?? agents[0])?.id,
 	);
-	const started = useRef<{ agentId: string; id: string }>(undefined);
+	const [incognito, setIncognito] = useState(false);
+	const started = useRef<{ agentId: string; incognito: boolean; id: string }>(
+		undefined,
+	);
 	const navigate = useNavigate();
 	const router = useRouter();
 
@@ -43,6 +47,20 @@ function NewConversation() {
 						)}
 					</p>
 				)}
+				{agentId && (
+					// chosen here only: a started Conversation keeps it
+					<div className="flex items-center gap-2 text-sm text-muted-foreground">
+						<Switch
+							id="incognito"
+							checked={incognito}
+							onCheckedChange={setIncognito}
+						/>
+						<label htmlFor="incognito">
+							{m.incognito()}
+							{incognito && ` · ${m.incognito_hint()}`}
+						</label>
+					</div>
+				)}
 			</div>
 			{agentId && (
 				<Composer
@@ -54,18 +72,27 @@ function NewConversation() {
 					onSend={async ({ files, ...input }) => {
 						// attachments go into the Sandbox of a Conversation started for them; a failed upload reuses it
 						let conversationId =
-							started.current?.agentId === agentId
+							started.current?.agentId === agentId &&
+							started.current.incognito === incognito
 								? started.current.id
 								: undefined;
 						if (files.length && !conversationId) {
-							conversationId = await startConversation({ data: agentId });
-							started.current = { agentId, id: conversationId };
+							conversationId = await startConversation({
+								data: { agentId, incognito },
+							});
+							started.current = { agentId, incognito, id: conversationId };
 						}
 						const attachments = conversationId
 							? await uploadFiles(conversationId, files)
 							: [];
 						const id = await sendMessage({
-							data: { ...input, agentId, conversationId, attachments },
+							data: {
+								...input,
+								agentId,
+								conversationId,
+								attachments,
+								incognito,
+							},
 						});
 						await router.invalidate();
 						await navigate({

@@ -868,6 +868,19 @@ describe("runAgent with memory", () => {
 		expect(p).toContain(`${500 - listed} more memories are not listed`);
 	});
 
+	it("cuts a Memory Index in Chinese at about 2k tokens too, a token about a character", async () => {
+		answer();
+		const many = Array.from({ length: 500 }, (_, i) => ({
+			path: `notes/${i}`,
+			description: "长".repeat(100),
+			body: "b",
+		}));
+		await runAgent(run("remembers", { memories: many }).run, memDeps);
+		const listed = prompt(context).match(/^- notes\//gm)?.length ?? 0;
+		expect(listed).toBeGreaterThan(10);
+		expect(listed).toBeLessThanOrEqual(20);
+	});
+
 	it("keeps the Memory Index after compacting", async () => {
 		const old = fauxAssistantMessage("b".repeat(2000));
 		old.usage.totalTokens = 1500;
@@ -924,6 +937,18 @@ describe("runAgent with memory", () => {
 		expect(tools(context)).not.toContain("memory_");
 		expect(tools(context)).not.toContain('"recall"');
 	});
+
+	for (const isSubagent of [false, true])
+		it(`gives an Incognito Conversation's ${isSubagent ? "Subagent" : "Agent"} no memory, though its Agent Definition has it`, async () => {
+			answer();
+			await runAgent(
+				run("remembers", { incognito: true, isSubagent }).run,
+				memDeps,
+			);
+			expect(prompt(context)).toBe("You are a test.");
+			expect(tools(context)).not.toContain("memory_");
+			expect(tools(context)).not.toContain('"recall"');
+		});
 
 	it("gives an Agent without memory no Recall", async () => {
 		answer();

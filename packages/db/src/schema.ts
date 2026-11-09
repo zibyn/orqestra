@@ -50,6 +50,8 @@ export const conversation = pgTable(
 		subagentsSinceUser: integer("subagents_since_user").default(0).notNull(),
 		// its orrery Sandbox, created the first time its Agent needs one; null until then
 		sandboxId: text("sandbox_id"),
+		// an Incognito Conversation, chosen when it starts: no memory, and Recall never finds it; false for Subagents, which go by their parent's
+		incognito: boolean("incognito").default(false).notNull(),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()

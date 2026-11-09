@@ -123,7 +123,7 @@ export type RunHandle = {
 		client: Orrery,
 		provider: SandboxProvider,
 	): Promise<{ id: string; woke: boolean }>;
-	/** The Memories of the Conversation's User; writes record this Conversation. None while the User has memory off, and no Recall then either. */
+	/** The Memories of the Conversation's User; writes record this Conversation. None while the User has memory off or the Conversation is Incognito, and no Recall then either. */
 	memories?: Memories;
 	/** The User's past Conversations, for Recall. */
 	recall: Recall;
@@ -294,6 +294,15 @@ async function open(
 		orderBy: desc(compaction.id),
 	});
 	const saved = () => emit({ type: "saved" });
+	// a Subagent goes by its parent: Subagents start no Subagents, so that is the top-level Conversation
+	const incognito = conv.parentId
+		? !!(
+				await db.query.conversation.findFirst({
+					columns: { incognito: true },
+					where: eq(conversation.id, conv.parentId),
+				})
+			)?.incognito
+		: conv.incognito;
 
 	return {
 		conversationId,
@@ -372,9 +381,11 @@ async function open(
 		},
 		sandbox: (client, provider) =>
 			ensureSandbox(conversationId, client, provider, { signal }),
-		memories: (await memoryOn(conv.userId))
-			? memoriesOf(conv.userId, conversationId)
-			: undefined,
+		// an Incognito Conversation's Runs, its Subagents' too, have no memory
+		memories:
+			!incognito && (await memoryOn(conv.userId))
+				? memoriesOf(conv.userId, conversationId)
+				: undefined,
 		// a Subagent works within its parent's Conversation, so that is not a past one either
 		recall: recallOf(conv.userId, conv.parentId ?? conversationId),
 		subagents: subagentsOf(cfg, conv, turn, saved),

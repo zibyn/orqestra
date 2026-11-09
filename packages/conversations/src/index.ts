@@ -43,6 +43,7 @@ import {
 } from "./runs.ts";
 import { ensureSandbox, SandboxGone, wakeSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
+import type { MemoryChange } from "./shared.ts";
 import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
 
 export { MAX_UPLOAD_BYTES } from "@orqestra/config";
@@ -200,6 +201,7 @@ export function createConversations({
 					id: conversation.id,
 					title: conversation.title,
 					status: conversation.status,
+					incognito: conversation.incognito,
 					// Subagents queued or at work, which the sidebar marks while the parent itself is idle
 					// (spelled out: drizzle leaves the columns of a select's fields unqualified)
 					background: sql<boolean>`exists (select 1 from subagent s join conversation child on child.id = s.conversation_id where child.parent_id = conversation.id and s.outcome in ('queued', 'running'))`,
@@ -264,6 +266,7 @@ export function createConversations({
 				agentId: conv.agentId,
 				title: conv.title,
 				status: conv.status,
+				incognito: conv.incognito,
 				// the Agent was removed from config or has no Model left
 				readOnly: !resolveTurn(await config(), conv.agentId),
 				messages: [...messages, ...pending].map((m) => ({
@@ -276,7 +279,11 @@ export function createConversations({
 		},
 
 		/** Starts a Conversation with no messages yet, so attachments can be uploaded before the first one is sent. */
-		async start(userId: string, agentId: string) {
+		async start(
+			userId: string,
+			agentId: string,
+			{ incognito = false }: { incognito?: boolean } = {},
+		) {
 			const cfg = await config();
 			const turn = resolveTurn(cfg, agentId);
 			if (!turn) throw new ConversationError("This Agent is offline");
@@ -284,7 +291,7 @@ export function createConversations({
 				throw new ConversationError("This Agent cannot be picked");
 			const [{ id }] = await db
 				.insert(conversation)
-				.values({ userId, agentId })
+				.values({ userId, agentId, incognito })
 				.returning({ id: conversation.id });
 			return id;
 		},
@@ -327,6 +334,8 @@ export function createConversations({
 				thinking?: ThinkingLevel;
 				/** Names `upload` returned; the message gives the Agent their paths. */
 				attachments?: string[];
+				/** Starts an Incognito Conversation; an existing one keeps what it started as. */
+				incognito?: boolean;
 			},
 		) {
 			const attachments = (input.attachments ?? []).map((name) => {
@@ -363,7 +372,7 @@ export function createConversations({
 				} else {
 					[{ id }] = await tx
 						.insert(conversation)
-						.values({ userId, agentId })
+						.values({ userId, agentId, incognito: input.incognito })
 						.returning({ id: conversation.id });
 				}
 				await tx.insert(inbox).values({
@@ -558,14 +567,16 @@ export function createConversations({
 					),
 				);
 			const result = row?.message as
-				| { toolName: string; details?: { undone?: boolean; path: string } }
+				| {
+						toolName: MemoryChange;
+						details?: { undone?: boolean; path: string };
+				  }
 				| undefined;
 			if (!result?.details || !MEMORY_CHANGES.includes(result.toolName))
 				return { error: "not_found" };
 			if (result.details.undone) return { error: "undone" };
 			const error = await undoChange(
 				userId,
-				id,
 				result.toolName,
 				result.details,
 				async (tx) => {
@@ -588,7 +599,9 @@ export function createConversations({
 				if (e instanceof AlreadyUndone) return "undone" as const;
 				throw e;
 			});
-			return error ? { error } : {};
+			if (error) return { error };
+			await saved(id);
+			return {};
 		},
 
 		/** A Subagent's transcript, loaded when its panel opens; undefined when it is not the user's. */

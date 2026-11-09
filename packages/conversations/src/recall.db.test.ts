@@ -12,7 +12,7 @@ const { recallOf, MAX_RECALL_RESULTS, MAX_SNIPPET } = await import(
 
 const newConversation = async (
 	userId: string,
-	values: { title?: string; parentId?: string } = {},
+	values: { title?: string; parentId?: string; incognito?: boolean } = {},
 ) =>
 	(
 		await db
@@ -89,6 +89,14 @@ describe.skipIf(!url)("Recall (Postgres)", () => {
 		expect(await mine.search("kiwi")).toEqual([]);
 		expect(await mine.search("hidden")).toEqual([]);
 		expect(await mine.search("text")).toEqual([]);
+	});
+
+	it("never finds or opens an Incognito Conversation", async () => {
+		const incognito = await newConversation("u1", { incognito: true });
+		await say(incognito, user("kiwi in secret"));
+		const mine = recallOf("u1", current);
+		expect(await mine.search("kiwi")).toEqual([]);
+		expect(await mine.open(incognito)).toBeUndefined();
 	});
 
 	it("treats % and _ in the keyword as text", async () => {

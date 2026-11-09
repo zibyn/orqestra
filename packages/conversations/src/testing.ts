@@ -29,6 +29,7 @@ export function memoryRun({
 	turn,
 	inbox = [],
 	isSubagent = false,
+	incognito = false,
 	renamed = false,
 	subagents = { start: unavailable, message: unavailable, stop: unavailable },
 	memories = [],
@@ -40,6 +41,8 @@ export function memoryRun({
 	/** Inputs that arrive once the Run has begun. */
 	inbox?: Message[];
 	isSubagent?: boolean;
+	/** The Run's top-level Conversation is Incognito: the Run gets no Memories. */
+	incognito?: boolean;
 	renamed?: boolean;
 	subagents?: RunHandle["subagents"];
 	/** The User's Memories as the Run begins. */
@@ -49,7 +52,7 @@ export function memoryRun({
 	/** The User's past Conversations; none by default. */
 	recall?: Recall;
 }) {
-	const { memories: userMemories, store } = memoryMemories(memories);
+	const { memories: userMemories, store } = inMemoryMemories(memories);
 	const pending = [...inbox];
 	const stopper = new AbortController();
 	const saved: Message[] = [];
@@ -99,7 +102,7 @@ export function memoryRun({
 				},
 				{ signal: stopper.signal },
 			),
-		memories: memoryOff ? undefined : userMemories,
+		memories: memoryOff || incognito ? undefined : userMemories,
 		recall,
 		subagents,
 	};
@@ -128,10 +131,10 @@ export function memoryRun({
 }
 
 /**
- * A User's Memories kept in memory, by path, with the same limits and errors as `memoriesOf`;
+ * A User's Memories kept in memory, by path, with the same limits and errors as `memoriesOf` (a contract test runs both through the same scenarios);
  * `grep` uses JavaScript's regular expressions rather than Postgres's.
  */
-function memoryMemories(
+export function inMemoryMemories(
 	seed: Pick<Memory, "path" | "description" | "body">[] = [],
 	conversationId = "memory",
 ) {
