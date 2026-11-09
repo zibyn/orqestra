@@ -4,6 +4,7 @@ import {
 	enabledModel,
 	mcpServer,
 	provider,
+	sandboxProvider,
 	searchProvider,
 	skill,
 	skillFile,
@@ -13,7 +14,9 @@ import {
 import {
 	availableTools,
 	type McpTestResult,
+	type SandboxTestResult,
 	testMcpServer,
+	testSandboxProvider,
 } from "@orqestra/tools";
 import { and, desc, eq, max, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -98,6 +101,16 @@ export const skillEnabledInput = z.object({
 export const skillCurrentInput = z.object({
 	name: z.string(),
 	versionId: z.number().int(),
+});
+export const sandboxProviderInput = z.object({
+	url: httpUrl,
+	// blank keeps the stored token
+	token: z.string().trim().optional(),
+	// blank: orrery's default Platform Snapshot
+	snapshot: z.string().trim(),
+	cpu: z.number().positive(),
+	/** Bytes. */
+	memory: z.number().int().positive(),
 });
 export const agentInput = z.object({
 	id: agentId,
@@ -490,6 +503,57 @@ const skills = ({ write }: Deps) => ({
 		}),
 });
 
+// Orrery is the only Sandbox Provider, so its one row has a fixed id
+const ORRERY = "orrery";
+
+const sandboxProviders = ({ write }: Deps) => ({
+	/** The configured one, or null; the token only goes in. */
+	async get() {
+		const row = await db.query.sandboxProvider.findFirst();
+		return row
+			? {
+					url: row.url,
+					tokenReadable: secretReadable(row.token),
+					snapshot: row.snapshot,
+					cpu: row.cpu,
+					memory: row.memory,
+				}
+			: null;
+	},
+
+	/** Once saved, also the connection test's result. */
+	async save(
+		input: z.infer<typeof sandboxProviderInput>,
+	): Promise<{ errors: SaveErrors; test?: SandboxTestResult }> {
+		const stored = await db.query.sandboxProvider.findFirst();
+		const token = sealSecret(input.token, stored?.token);
+		const plain = input.token || (stored && decryptSecret(stored.token));
+		if (!token || !plain)
+			return { errors: { token: { code: "token_required" } } };
+		const values = {
+			url: input.url,
+			token,
+			snapshot: input.snapshot || null,
+			cpu: input.cpu,
+			memory: input.memory,
+		};
+		await write((tx) =>
+			tx
+				.insert(sandboxProvider)
+				.values({ id: ORRERY, ...values })
+				.onConflictDoUpdate({ target: sandboxProvider.id, set: values }),
+		);
+		// saved either way, so the Admin can fix the address or token later
+		return {
+			errors: {},
+			test: await testSandboxProvider({ url: input.url, token: plain }),
+		};
+	},
+
+	/** Every Skill becomes unavailable; Sandboxes already in orrery are left there. */
+	delete: () => write((tx) => tx.delete(sandboxProvider)),
+});
+
 const isDefault = (stored: { definition: unknown } | undefined) =>
 	!!stored && agentDefinition.parse(stored.definition).default;
 
@@ -580,6 +644,7 @@ export const admin = (deps: Deps) => ({
 	providers: providers(deps),
 	searchProviders: searchProviders(deps),
 	mcpServers: mcpServers(deps),
+	sandboxProvider: sandboxProviders(deps),
 	agents: agents(deps),
 	skills: skills(deps),
 });

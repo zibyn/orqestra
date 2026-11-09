@@ -243,6 +243,49 @@ describe("loadConfig", () => {
 			expect(config.mcpServers).toEqual({});
 		});
 
+		it("offers the Sandbox Provider with its token decrypted, on orrery's default Snapshot when none is set", async () => {
+			const stored = {
+				url: "http://orrery.internal",
+				token: "orr_1_s",
+				snapshot: null,
+				cpu: 2,
+				memory: 2147483648,
+			};
+			expect((await loadConfig(deepseek())).sandboxProvider).toBeUndefined();
+			expect(
+				(await loadConfig({ ...deepseek(), sandboxProvider: stored }))
+					.sandboxProvider,
+			).toEqual({
+				url: "http://orrery.internal",
+				token: "orr_1_s",
+				snapshot: undefined,
+				cpu: 2,
+				memory: 2147483648,
+			});
+			expect(
+				(
+					await loadConfig({
+						...deepseek(),
+						sandboxProvider: { ...stored, snapshot: "skills" },
+					})
+				).sandboxProvider?.snapshot,
+			).toBe("skills");
+		});
+
+		it("leaves the Sandbox Provider unavailable when its token cannot be decrypted", async () => {
+			const config = await loadConfig({
+				...deepseek(),
+				sandboxProvider: {
+					url: "http://orrery.internal",
+					token: undefined,
+					snapshot: null,
+					cpu: 2,
+					memory: 2147483648,
+				},
+			});
+			expect(config.sandboxProvider).toBeUndefined();
+		});
+
 		it("keeps an Agent's `tools` as written", async () => {
 			const config = await loadConfig(
 				withAgents({ general: agentWith({ tools: ["scrape"] }) }),

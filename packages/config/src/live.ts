@@ -4,6 +4,7 @@ import {
 	enabledModel,
 	mcpServer,
 	provider,
+	sandboxProvider,
 	searchProvider,
 	skill,
 	skillVersion,
@@ -24,7 +25,7 @@ import { decryptSecret, encryptionKey } from "./secret.ts";
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
 
-export type { McpTestResult } from "@orqestra/tools";
+export type { McpTestResult, SandboxTestResult } from "@orqestra/tools";
 export {
 	agentInput,
 	mcpServerEnabledInput,
@@ -32,6 +33,7 @@ export {
 	modelEnabledInput,
 	providerInput,
 	providerTestInput,
+	sandboxProviderInput,
 	searchProviderInput,
 	skillCurrentInput,
 	skillEnabledInput,
@@ -50,6 +52,7 @@ async function loadSettings(): Promise<Settings> {
 		mcpServers,
 		agents,
 		skills,
+		[sandbox],
 	] = await Promise.all([
 		db.select().from(provider),
 		db.select().from(enabledModel),
@@ -68,6 +71,7 @@ async function loadSettings(): Promise<Settings> {
 			.from(skill)
 			.innerJoin(skillVersion, eq(skill.currentVersionId, skillVersion.id))
 			.orderBy(skill.name),
+		db.select().from(sandboxProvider),
 	]);
 	return {
 		providers: providers.map((p) => ({
@@ -96,6 +100,13 @@ async function loadSettings(): Promise<Settings> {
 			})),
 		})),
 		skills,
+		sandboxProvider: sandbox && {
+			url: sandbox.url,
+			token: decryptSecret(sandbox.token, key),
+			snapshot: sandbox.snapshot,
+			cpu: sandbox.cpu,
+			memory: sandbox.memory,
+		},
 	};
 }
 

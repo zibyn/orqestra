@@ -90,6 +90,7 @@ export type SaveError =
 	| {
 			code:
 				| "api_key_required"
+				| "token_required"
 				| "not_in_catalog"
 				| "not_found"
 				| "id_invalid"

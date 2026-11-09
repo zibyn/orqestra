@@ -1,7 +1,9 @@
 import {
 	type AnyPgColumn,
+	bigint,
 	boolean,
 	customType,
+	doublePrecision,
 	index,
 	integer,
 	jsonb,
@@ -197,6 +199,21 @@ export const mcpServer = pgTable("mcp_server", {
 		.defaultNow()
 		.$onUpdate(() => new Date())
 		.notNull(),
+});
+
+// The Sandbox Provider (orrery) an Admin configured; at most one row, id "orrery"
+export const sandboxProvider = pgTable("sandbox_provider", {
+	id: text("id").primaryKey(),
+	// orrery's API address, without /api/v1
+	url: text("url").notNull(),
+	// orrery API Token, encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
+	token: text("token").notNull(),
+	// Snapshot name or SnapshotVersion id; null: orrery's default Platform Snapshot
+	snapshot: text("snapshot"),
+	cpu: doublePrecision("cpu").notNull(),
+	// bytes
+	memory: bigint("memory", { mode: "number" }).notNull(),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // Agent Definitions edited by Admins in /console/agents; `conversation.agent_id` refers to the id, so it never changes

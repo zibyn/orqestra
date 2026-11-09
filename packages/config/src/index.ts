@@ -10,7 +10,7 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { McpServer, ToolService } from "@orqestra/tools";
+import type { McpServer, SandboxProvider, ToolService } from "@orqestra/tools";
 import type { z } from "zod";
 import {
 	agentDefinition,
@@ -78,6 +78,14 @@ export interface Settings {
 		enabled: boolean;
 		headers: { name: string; value: string | undefined }[];
 	}[];
+	/** Omitted when none is configured; `token` is undefined when it cannot be decrypted, `snapshot` null means orrery's default. */
+	sandboxProvider?: {
+		url: string;
+		token: string | undefined;
+		snapshot: string | null;
+		cpu: number;
+		memory: number;
+	};
 	/** Every Skill with its current version. */
 	skills: {
 		name: string;
@@ -109,6 +117,8 @@ export interface OrqestraConfig {
 	mcpServers: Record<string, McpServer>;
 	/** Enabled Skills, by name; the others are unavailable. */
 	skills: Record<string, SkillInfo>;
+	/** Undefined when none is configured or its token cannot be decrypted: every Skill is then unavailable. */
+	sandboxProvider?: SandboxProvider;
 	/** pi's streamSimple with the Provider's configured API key. */
 	streamSimple: StreamSimple;
 }
@@ -253,6 +263,10 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 	const skills: OrqestraConfig["skills"] = {};
 	for (const { name, enabled, ...skill } of settings.skills)
 		if (enabled) skills[name] = skill;
+	const stored = settings.sandboxProvider;
+	const sandboxProvider = stored?.token
+		? { ...stored, token: stored.token, snapshot: stored.snapshot ?? undefined }
+		: undefined;
 
 	return {
 		registry,
@@ -262,6 +276,7 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		tools,
 		mcpServers,
 		skills,
+		sandboxProvider,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);
 			if (provider && provider.apiKey === undefined)
