@@ -14,12 +14,14 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import {
+	BrainIcon,
 	ChevronRightIcon,
 	DownloadIcon,
 	FileIcon,
 	Loader2Icon,
 	RotateCcwIcon,
 	SquareIcon,
+	Undo2Icon,
 } from "lucide-react";
 import {
 	createContext,
@@ -53,6 +55,7 @@ import {
 	sendMessage,
 	stopRun,
 	stopSubagent,
+	undoMemory,
 } from "#/lib/conversation-fns";
 import { uploadFiles } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
@@ -405,6 +408,19 @@ function ToolCallView({
 			// biome-ignore lint/suspicious/noArrayIndexKey: saved runs never reorder
 			<SubagentView key={i} run={run} />
 		));
+	if (
+		MEMORY_CHANGES.includes(call.name) &&
+		result?.details &&
+		!result.isError &&
+		conversationId
+	)
+		return (
+			<MemoryChange
+				call={call}
+				result={result}
+				conversationId={conversationId}
+			/>
+		);
 	return (
 		<details className={collapsible}>
 			<summary>
@@ -424,6 +440,96 @@ function ToolCallView({
 					{messageText(result)}
 				</pre>
 			)}
+		</details>
+	);
+}
+
+// as in @orqestra/conversations, whose index this client bundle must not import
+const MEMORY_CHANGES = ["memory_write", "memory_edit", "memory_delete"];
+type Note = { description: string; body: string };
+
+/** A Memory the Agent wrote, edited or deleted, as a tag in its reply; open it for the content and to undo it. */
+function MemoryChange({
+	call,
+	result,
+	conversationId,
+}: {
+	call: ToolCall;
+	result: ToolResultMessage;
+	conversationId: string;
+}) {
+	const router = useRouter();
+	const [undoing, setUndoing] = useState(false);
+	const [error, setError] = useState<string>();
+	const change = result.details as {
+		path: string;
+		before?: Note;
+		after?: Note;
+		old?: string;
+		new?: string;
+		undone?: boolean;
+	};
+	const description = (change.after ?? change.before)?.description ?? "";
+	const label =
+		call.name === "memory_write"
+			? m.memory_saved({ description })
+			: call.name === "memory_edit"
+				? m.memory_updated({ description })
+				: m.memory_forgotten({ description });
+	return (
+		<details className={`${collapsible} self-start`}>
+			<summary>
+				{chevron}
+				<BrainIcon className="size-3.5 shrink-0" />
+				<span className={`truncate ${change.undone ? "line-through" : ""}`}>
+					{label}
+				</span>
+				{change.undone && (
+					<span className="shrink-0 text-xs">{m.memory_undone()}</span>
+				)}
+			</summary>
+			<div className="flex flex-col gap-2 border-t px-3 py-2">
+				<span className="font-mono text-xs text-muted-foreground">
+					{change.path}
+				</span>
+				<pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs">
+					{call.name === "memory_edit"
+						? `- ${change.old}\n+ ${change.new}`
+						: (change.after ?? change.before)?.body}
+				</pre>
+				{!change.undone && (
+					<Button
+						variant="outline"
+						size="sm"
+						className="self-start"
+						disabled={undoing}
+						onClick={async () => {
+							setUndoing(true);
+							setError(undefined);
+							try {
+								const { error } = await undoMemory({
+									data: { conversationId, toolCallId: call.id },
+								});
+								if (error)
+									setError(
+										error === "changed"
+											? m.memory_undo_changed()
+											: error === "full"
+												? m.memory_undo_full()
+												: m.memory_undo_failed(),
+									);
+								await router.invalidate();
+							} finally {
+								setUndoing(false);
+							}
+						}}
+					>
+						{undoing ? <Loader2Icon className="animate-spin" /> : <Undo2Icon />}
+						{m.memory_undo()}
+					</Button>
+				)}
+				{error && <p className="text-xs text-destructive">{error}</p>}
+			</div>
 		</details>
 	);
 }

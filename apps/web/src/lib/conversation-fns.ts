@@ -67,6 +67,17 @@ export const retryRun = createServerFn({ method: "POST" })
 		conversations.retry(await requireUserId(), data),
 	);
 
+/** Reverses the Memory change of one of the Agent's Tool calls in the Conversation. */
+export const undoMemory = createServerFn({ method: "POST" })
+	.validator(z.object({ conversationId: id, toolCallId: z.string().min(1) }))
+	.handler(async ({ data }) =>
+		conversations.undoMemory(
+			await requireUserId(),
+			data.conversationId,
+			data.toolCallId,
+		),
+	);
+
 export const renameConversation = createServerFn({ method: "POST" })
 	.validator(z.object({ id, title: z.string().trim().min(1).max(100) }))
 	.handler(async ({ data }) =>
