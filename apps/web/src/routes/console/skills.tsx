@@ -1,6 +1,6 @@
 import type { SaveErrors } from "@orqestra/config/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { Loader2Icon, PlusIcon, UploadIcon } from "lucide-react";
+import { BookOpenIcon, Loader2Icon, PlusIcon, UploadIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ConsolePage } from "#/components/ConsolePage";
 import { Badge } from "#/components/ui/badge";
@@ -127,12 +127,21 @@ function Skills() {
 		>
 			<FieldError>{error}</FieldError>
 			{!skills.length && (
-				<p className="text-sm text-muted-foreground">{m.no_skills()}</p>
+				<div className="flex flex-col items-center gap-2 py-8 text-center">
+					<BookOpenIcon className="size-8 text-muted-foreground" />
+					<p className="text-lg font-medium">{m.no_skills_title()}</p>
+					<p className="text-sm text-muted-foreground">{m.no_skills()}</p>
+				</div>
 			)}
 			{skills.map((s) => (
 				<Card key={s.name}>
 					<CardHeader>
-						<CardTitle className="font-mono">{s.name}</CardTitle>
+						<CardTitle className="flex items-center gap-2">
+							<span className="font-mono">{s.name}</span>
+							<Badge variant="outline" className="font-mono">
+								v{s.versions.find((v) => v.id === s.currentVersionId)?.number}
+							</Badge>
+						</CardTitle>
 						<CardDescription>{s.description}</CardDescription>
 						<CardAction className="flex items-center gap-4">
 							<Button

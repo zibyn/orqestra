@@ -3,6 +3,7 @@ import { CheckCircle2Icon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 import { ConsolePage } from "#/components/ConsolePage";
 import { Alert, AlertDescription } from "#/components/ui/alert";
+import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import {
 	Card,
@@ -89,8 +90,13 @@ function SandboxProvider() {
 		>
 			<Card>
 				<CardHeader>
-					<CardTitle>
-						{existing ? "Orrery" : m.add_sandbox_provider()}
+					<CardTitle className="flex items-center gap-2">
+						{existing ? m.orrery() : m.add_sandbox_provider()}
+						{existing && (
+							<Badge variant="outline" className="font-mono">
+								{existing.url}
+							</Badge>
+						)}
 					</CardTitle>
 					{existing && (
 						<CardAction>
