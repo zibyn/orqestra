@@ -305,6 +305,110 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 			).rejects.toThrow(/not found/);
 		});
 
+		it("creates a Skill with a SKILL.md carrying its name and description", async () => {
+			expect(await config.skills.create("pdf", 'Fills PDFs: "forms"')).toEqual({
+				errors: {},
+			});
+			expect(await currentFiles("pdf")).toEqual({
+				"SKILL.md":
+					'---\nname: pdf\ndescription: "Fills PDFs: \\"forms\\""\n---\n\n',
+			});
+			expect((await config.current()).skills.pdf.description).toBe(
+				'Fills PDFs: "forms"',
+			);
+			expect(await config.skills.create("pdf", "again")).toEqual({
+				errors: { name: { code: "skill_exists" } },
+			});
+			expect(await config.skills.create("Bad Name", "d")).toEqual({
+				errors: { name: { code: "skill_name_invalid" } },
+			});
+			expect(await config.skills.create("doc", " ")).toEqual({
+				errors: { description: { code: "skill_description_invalid" } },
+			});
+			expect((await config.skills.list()).map((s) => s.name)).toEqual(["pdf"]);
+		});
+
+		it("saves edited files as a new version, keeping binary files untouched", async () => {
+			const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+			await config.skills.upload(
+				zip([
+					{
+						path: "SKILL.md",
+						content: "---\nname: pdf\ndescription: v1\n---\n",
+					},
+					{ path: "scripts/a.py", content: "print(1)" },
+					{ path: "assets/logo.png", content: png },
+				]),
+				false,
+			);
+			const [{ currentVersionId }] = await config.skills.list();
+			const base = currentVersionId ?? 0;
+			expect(await config.skills.files(base)).toEqual([
+				{
+					path: "SKILL.md",
+					size: 34,
+					text: "---\nname: pdf\ndescription: v1\n---\n",
+				},
+				{ path: "assets/logo.png", size: 6 },
+				{ path: "scripts/a.py", size: 8, text: "print(1)" },
+			]);
+			expect(
+				await config.skills.edit("pdf", base, [
+					{ path: "SKILL.md", text: "---\nname: pdf\ndescription: v2\n---\n" },
+					{ path: "scripts/b.py", text: "print(2)" },
+					{ path: "assets/logo.png" },
+				]),
+			).toEqual({ errors: {} });
+			expect((await config.current()).skills.pdf.description).toBe("v2");
+			const files = await currentFiles("pdf");
+			expect(Object.keys(files).sort()).toEqual([
+				"SKILL.md",
+				"assets/logo.png",
+				"scripts/b.py",
+			]);
+			const version = (await config.current()).skills.pdf.versionId;
+			const logo = (await skillFiles(version)).find(
+				(f) => f.path === "assets/logo.png",
+			);
+			expect(Buffer.from(logo?.content ?? [])).toEqual(png);
+			expect((await config.skills.list())[0].versions).toHaveLength(2);
+		});
+
+		it("refuses an edit the standard or the Skill's name does not allow", async () => {
+			await config.skills.create("pdf", "d");
+			const [{ currentVersionId }] = await config.skills.list();
+			const base = currentVersionId ?? 0;
+			const md = (name: string) => ({
+				path: "SKILL.md",
+				text: `---\nname: ${name}\ndescription: d\n---\n`,
+			});
+			expect(await config.skills.edit("pdf", base, [md("doc")])).toEqual({
+				errors: {
+					file: { code: "skill_name_mismatch", name: "doc", folder: "pdf" },
+				},
+			});
+			expect(
+				await config.skills.edit("pdf", base, [
+					md("pdf"),
+					{ path: "../x", text: "" },
+				]),
+			).toEqual({
+				errors: { file: { code: "skill_path_unsafe", path: "../x" } },
+			});
+			// a kept file must be one of the version's
+			expect(
+				await config.skills.edit("pdf", base, [
+					md("pdf"),
+					{ path: "gone.png" },
+				]),
+			).toEqual({ errors: { file: { code: "not_found" } } });
+			await config.skills.create("doc", "d");
+			await expect(
+				config.skills.edit("doc", base, [md("doc")]),
+			).rejects.toThrow(/not found/);
+			expect((await config.skills.list())[1].versions).toHaveLength(1);
+		});
+
 		it("is unavailable while disabled", async () => {
 			await config.skills.upload(skillZip("pdf", "d"), false);
 			await config.skills.setEnabled("pdf", false);

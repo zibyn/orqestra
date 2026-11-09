@@ -137,6 +137,9 @@ export function checkSkill(
 	files: SkillFiles["files"],
 	folder?: string,
 ): { skill: SkillFiles } | Fail {
+	const unsafe = files.find((f) => !safePath(f.path));
+	if (unsafe)
+		return { error: { code: "skill_path_unsafe", path: unsafe.path } };
 	if (files.length > SKILL_MAX_FILES)
 		return { error: { code: "skill_too_many_files" } };
 	if (files.reduce((n, f) => n + f.content.length, 0) > SKILL_MAX_BYTES)
