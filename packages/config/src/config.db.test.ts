@@ -335,6 +335,24 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 			]);
 			expect((await config.skills.list()).map((s) => s.name)).toEqual(["doc"]);
 		});
+
+		it("lists every Skill for the Agent form, available once enabled with a Sandbox Provider", async () => {
+			await config.skills.upload(skillZip("pdf", "d"), false);
+			await config.skills.upload(skillZip("doc", "d"), false);
+			await config.skills.setEnabled("doc", false);
+			expect(await config.agents.list()).toMatchObject({
+				skills: ["doc", "pdf"],
+				availableSkills: [],
+			});
+			await config.sandboxProvider.save({
+				url: "http://127.0.0.1:9",
+				token: "orr_1_s",
+				snapshot: "",
+				cpu: 2,
+				memory: 2147483648,
+			});
+			expect((await config.agents.list()).availableSkills).toEqual(["pdf"]);
+		});
 	});
 
 	describe("Sandbox Provider", () => {

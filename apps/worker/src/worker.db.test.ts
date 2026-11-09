@@ -47,6 +47,7 @@ const fauxAgent: AgentDefinition = {
 	pickable: true,
 	allModels: false,
 	tools: ["search", "scrape"],
+	skills: [],
 	unavailableModels: [],
 };
 const userId = "u1";

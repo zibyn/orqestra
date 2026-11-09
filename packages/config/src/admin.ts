@@ -36,6 +36,7 @@ import {
 	type ToolName,
 	testConnection,
 	toolName,
+	turnSkills,
 } from "./index.ts";
 import { decryptSecret, sealSecret, secretReadable } from "./secret.ts";
 import { parseSkillZip } from "./skill-zip.ts";
@@ -560,14 +561,16 @@ const isDefault = (stored: { definition: unknown } | undefined) =>
 const agents = ({ current, write }: Deps) => ({
 	/** Agent Definitions as stored and as resolved, with what an Admin can pick from when editing one. */
 	async list() {
-		const [rows, loaded, servers] = await Promise.all([
+		const [rows, loaded, servers, skills] = await Promise.all([
 			db.select().from(agent).orderBy(agent.createdAt),
 			current(),
 			db
 				.select({ id: mcpServer.id, name: mcpServer.name })
 				.from(mcpServer)
 				.orderBy(mcpServer.createdAt),
+			db.select({ name: skill.name }).from(skill).orderBy(skill.name),
 		]);
+		const skillNames = skills.map((s) => s.name);
 		return {
 			agents: rows.map((r) => {
 				const resolved = loaded.agents.find((a) => a.id === r.id);
@@ -587,6 +590,12 @@ const agents = ({ current, write }: Deps) => ({
 			mcpServers: servers,
 			/** Tools with a usable Search Provider, and `mcp:<id>` of available MCP Servers. */
 			availableTools: availableTools(loaded),
+			/** Every Skill's name, enabled or not. */
+			skills: skillNames,
+			/** Skills a Run can use: enabled, with a Sandbox Provider configured. */
+			availableSkills: turnSkills(loaded, { skills: skillNames }).map(
+				(s) => s.name,
+			),
 		};
 	},
 

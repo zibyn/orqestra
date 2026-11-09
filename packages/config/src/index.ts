@@ -43,6 +43,8 @@ export interface AgentDefinition {
 	compaction?: { reserveTokens?: number; keepRecentTokens?: number };
 	/** As written; only built-in Tools with a Search Provider and available MCP Servers are offered in a Run. */
 	tools: ToolRef[];
+	/** Allowed Skills by name, as written; a Run gets the available ones from `turnSkills`. */
+	skills: string[];
 	/** Users can start Conversations with it; any Agent can be a Subagent template. */
 	pickable: boolean;
 	default: boolean;
@@ -205,7 +207,14 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		}
 		const def = parsed.data;
 		for (const issue of definitionIssues(def)) fail(issue.field, issue.message);
-		const { models: named, defaultModel, thinking, tools, ...rest } = def;
+		const {
+			models: named,
+			defaultModel,
+			thinking,
+			tools,
+			skills,
+			...rest
+		} = def;
 		const available = named
 			? named.filter((ref) => known.includes(ref))
 			: [...known];
@@ -221,6 +230,7 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 				: (available[0] ?? ""),
 			thinking: thinking ?? {},
 			tools: tools ?? [...toolName.options],
+			skills: skills ?? [],
 			unavailableModels: (named ?? []).filter((ref) => !known.includes(ref)),
 		});
 	}
@@ -347,7 +357,7 @@ export function resolveThinking(
 export const GENERAL_WORKER =
 	"You carry out one task for another agent, starting without any prior context. Work through it with the tools you have, then reply with a complete, self-contained answer: it is all the other agent will see.";
 
-/** The built-in Agent a Subagent without a template runs as: any enabled Model, Search and Scrape, no MCP Server. */
+/** The built-in Agent a Subagent without a template runs as: any enabled Model, Search and Scrape, no MCP Server, no Skill. */
 const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
 	id: "",
 	name: "General worker",
@@ -358,6 +368,7 @@ const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
 	defaultModel: models[0] ? modelRef(models[0]) : "",
 	thinking: {},
 	tools: [...toolName.options],
+	skills: [],
 	pickable: false,
 	default: false,
 	unavailableModels: [],
@@ -396,3 +407,15 @@ export function resolveTurn(
 			: levels.default;
 	return { agent, model, defaultModel, thinking };
 }
+
+/** The Skills a Run of `agent` offers: those it allows that are enabled, none without a Sandbox Provider. */
+export const turnSkills = (
+	config: Pick<OrqestraConfig, "skills" | "sandboxProvider">,
+	agent: Pick<AgentDefinition, "skills">,
+) =>
+	config.sandboxProvider
+		? agent.skills.flatMap((name) => {
+				const skill = config.skills[name];
+				return skill ? [{ name, ...skill }] : [];
+			})
+		: [];
