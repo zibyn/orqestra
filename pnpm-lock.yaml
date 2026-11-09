@@ -17,6 +17,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@orqestra/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@zibyn/polaris':
         specifier: ^0.1.3
         version: 0.1.3

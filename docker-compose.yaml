@@ -85,7 +85,7 @@ configs:
     # shortcut: web still serves the routes in @web until they move to the api; drop each as it does
     content: |
       :3000 {
-      	@web path_regexp ^/api/(skills|conversations/[^/]+/(events|files|uploads))$$
+      	@web path_regexp ^/api/(conversations/[^/]+/(events|files|uploads))$$
       	handle @web {
       		reverse_proxy web:3000
       	}
