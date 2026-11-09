@@ -38,6 +38,8 @@ const {
 } = await import("./index.ts");
 const runs = await import("./runs.ts");
 const { memoryRun } = await import("./testing.ts");
+const { memoryOrrery } = await import("@orqestra/tools/testing");
+const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 };
 
 // Models only for the Turn: the scripted handler below replies in their place
 const faux = fauxProvider({
@@ -59,16 +61,49 @@ const agent = (id: string, model: string): AgentDefinition => ({
 	pickable: true,
 	allModels: false,
 	tools: ["search", "scrape"],
+	skills: [],
 	unavailableModels: [],
 });
 const fauxAgent = agent("faux", "faux/faux-1");
+const skilled = {
+	...agent("skilled", "faux/faux-1"),
+	skills: ["pdf", "manual", "gone"],
+};
 const config = {
-	agents: [fauxAgent, agent("small", "faux/faux-small")],
+	agents: [fauxAgent, agent("small", "faux/faux-small"), skilled],
 	models: faux.models,
 	defaultAgent: fauxAgent,
+	// `gone` is listed by `skilled` but disabled or deleted, so it is missing here
+	skills: {
+		pdf: { versionId: 1, description: "PDFs", disableModelInvocation: false },
+		manual: {
+			versionId: 2,
+			description: "By hand",
+			disableModelInvocation: true,
+		},
+	},
+	sandboxProvider: provider,
 } as unknown as OrqestraConfig;
-const conversations = createConversations({ config: async () => config });
+/** Each Skill version's SKILL.md, as the test has it now. */
+const skillMds = new Map<number, string>();
+const conversations = createConversations({
+	config: async () => config,
+	skillFiles: async (versionId) => [
+		{ path: "scripts/run.py", content: new TextEncoder().encode("print()") },
+		{
+			path: "SKILL.md",
+			content: new TextEncoder().encode(skillMds.get(versionId) ?? ""),
+		},
+	],
+});
 const userId = "u1";
+// one that deletes Sandboxes in `o`
+const sandboxed = (o: ReturnType<typeof memoryOrrery>) =>
+	createConversations({
+		config: async () => ({ ...config, sandboxProvider: provider }),
+		skillFiles: async () => [],
+		orrery: () => o.client,
+	});
 
 // Reads SSE events from a stream until `until` returns true
 async function collect(
@@ -1133,7 +1168,15 @@ describe.skipIf(!url)(
 				() => get(id),
 				(v) => v?.status === "failed" && v.subagents[0]?.outcome === "running",
 			);
-			await conversations.retry(userId, id);
+			const { ensureSandbox } = await import("./index.ts");
+			const o = memoryOrrery();
+			const [sub] = await db
+				.select({ id: schema.conversation.id })
+				.from(schema.conversation)
+				.where(sql`${schema.conversation.parentId} = ${id}`);
+			await ensureSandbox(sub.id, o.client, provider);
+			await sandboxed(o).retry(userId, id);
+			expect(o.state("sb1")).toBe("deleted");
 			const view = await waitFor(
 				() => get(id),
 				(v) => v?.status === "idle",
@@ -1197,6 +1240,58 @@ describe.skipIf(!url)(
 			expect((await get(id))?.title).toBe("Renamed");
 		});
 
+		it("snapshots the SKILL.md body of a Skill the User invokes into the message, untouched by later versions", async () => {
+			skillMds.set(
+				1,
+				"---\nname: pdf\ndescription: PDFs\n---\n\n# PDF\n\nUse pypdf.\n",
+			);
+			script({ parent: [say("ok")] });
+			const id = await conversations.send(userId, {
+				agentId: "skilled",
+				text: "/skill:pdf merge a.pdf and b.pdf",
+			});
+			await waitFor(() => get(id), idle(2));
+			skillMds.set(1, "---\nname: pdf\ndescription: PDFs\n---\nChanged.");
+			const [question] = (await get(id))?.messages ?? [];
+			expect(messageText(question.message)).toBe(
+				'<skill name="pdf" location="/workspace/.skills/pdf/SKILL.md">\nReferences are relative to /workspace/.skills/pdf.\n\n# PDF\n\nUse pypdf.\n</skill>\n\nmerge a.pdf and b.pdf',
+			);
+		});
+
+		it("lets the User invoke a Skill the Agent may not invoke itself, without further text", async () => {
+			skillMds.set(2, "---\nname: manual\n---\nBy hand.");
+			script({ parent: [say("ok")] });
+			const id = await conversations.send(userId, {
+				agentId: "skilled",
+				text: "/skill:manual",
+			});
+			await waitFor(() => get(id), idle(2));
+			const [question] = (await get(id))?.messages ?? [];
+			expect(messageText(question.message)).toBe(
+				'<skill name="manual" location="/workspace/.skills/manual/SKILL.md">\nReferences are relative to /workspace/.skills/manual.\n\nBy hand.\n</skill>',
+			);
+		});
+
+		it("refuses a Skill the Agent does not allow or that is unavailable", async () => {
+			for (const [agentId, text] of [
+				["skilled", "/skill:gone do it"],
+				["faux", "/skill:pdf do it"],
+			])
+				await expect(
+					conversations.send(userId, { agentId, text }),
+				).rejects.toThrow("This Skill is unavailable");
+			expect(await conversations.list(userId)).toEqual([]);
+		});
+
+		it("offers each Agent's available Skills for the User to invoke, those the Agent may not invoke included", async () => {
+			const options = await conversations.agentOptions();
+			expect(options.find((a) => a.id === "skilled")?.skills).toEqual([
+				{ name: "pdf", description: "PDFs" },
+				{ name: "manual", description: "By hand" },
+			]);
+			expect(options.find((a) => a.id === "faux")?.skills).toEqual([]);
+		});
+
 		it("hides a Conversation from everyone but its owner", async () => {
 			script({ parent: [say("hi")] });
 			const id = await send("hi");
@@ -1258,6 +1353,30 @@ describe.skipIf(!url)(
 					},
 					[["again"], []],
 				],
+				[
+					"keeps the Conversation's one Sandbox, starting it once stopped",
+					async (run) => {
+						const o = memoryOrrery();
+						const first = await run.sandbox(o.client, provider);
+						const again = await run.sandbox(o.client, provider);
+						o.stop(first.id);
+						const woken = await run.sandbox(o.client, provider);
+						await reply(run);
+						await run.finish();
+						return [
+							first,
+							again,
+							woken,
+							o.calls.filter((c) => c.startsWith("createSandbox")).length,
+						];
+					},
+					[
+						{ id: "sb1", woke: true },
+						{ id: "sb1", woke: false },
+						{ id: "sb1", woke: true },
+						1,
+					],
+				],
 			];
 
 			for (const [name, scenario, expected] of scenarios) {
@@ -1296,6 +1415,189 @@ describe.skipIf(!url)(
 					expect(memory.over).toBe(true);
 				});
 			}
+		});
+
+		it("creates one Sandbox for a Conversation asked for it twice at once, and keeps its id", async () => {
+			const { ensureSandbox } = await import("./index.ts");
+			const [conv] = await db
+				.insert(schema.conversation)
+				.values({ userId, agentId: "faux" })
+				.returning();
+			const o = memoryOrrery();
+			const both = await Promise.all([
+				ensureSandbox(conv.id, o.client, provider),
+				ensureSandbox(conv.id, o.client, provider),
+			]);
+			expect(both.map((s) => s.id)).toEqual(["sb1", "sb1"]);
+			expect(o.calls.filter((c) => c.startsWith("createSandbox"))).toHaveLength(
+				1,
+			);
+			const [row] = await db
+				.select({ sandboxId: schema.conversation.sandboxId })
+				.from(schema.conversation)
+				.where(sql`${schema.conversation.id} = ${conv.id}`);
+			expect(row.sandboxId).toBe("sb1");
+		});
+
+		describe("downloading a file from a Conversation's Sandbox", () => {
+			const setup = async () => {
+				const o = memoryOrrery();
+				const files = sandboxed(o);
+				const [conv] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: "faux" })
+					.returning();
+				const [sub] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: null, parentId: conv.id })
+					.returning();
+				// what the Agent's attach Tool saves
+				const attach = (conversationId: string, path: string) =>
+					db.insert(schema.message).values({
+						conversationId,
+						model: "faux/faux",
+						thinkingLevel: "off",
+						message: {
+							role: "toolResult",
+							toolCallId: "t1",
+							toolName: "attach",
+							content: [{ type: "text", text: "Attached" }],
+							details: {
+								attachment: { path, name: path.split("/").at(-1), size: 1 },
+							},
+							isError: false,
+							timestamp: 0,
+						},
+					});
+				// a Sandbox for each, holding a report the Agent attached and a file it did not, which Idle Stop has stopped
+				for (const c of [conv, sub]) {
+					const { id } = await o.client.createSandbox(provider);
+					await o.client.getSandbox(id, { waitFor: "ready" });
+					o.files(id).set("out/report.pdf", new TextEncoder().encode(c.id));
+					o.stop(id);
+					await db
+						.update(schema.conversation)
+						.set({ sandboxId: id })
+						.where(sql`${schema.conversation.id} = ${c.id}`);
+					o.files(id).set("out/secret.txt", new TextEncoder().encode("s"));
+					await attach(c.id, "/workspace/out/report.pdf");
+				}
+				return { o, files, conv, sub, attach };
+			};
+			const signal = new AbortController().signal;
+
+			it("streams it to the Conversation's owner, a Subagent's too, starting its stopped Sandbox", async () => {
+				const { o, files, conv, sub } = await setup();
+				for (const c of [conv, sub]) {
+					const got = await files.openFile(
+						userId,
+						c.id,
+						"/workspace/out/report.pdf",
+						signal,
+					);
+					if (!("file" in got)) throw new Error(got.error);
+					expect(got.file.name).toBe("report.pdf");
+					expect(got.file.size).toBe(c.id.length);
+					expect(await new Response(got.file.body).text()).toBe(c.id);
+				}
+				expect(
+					o.calls.filter((c) => c.startsWith("startSandbox")),
+				).toHaveLength(2);
+				expect(o.calls.filter((c) => c.startsWith("readFile"))).toEqual([]);
+			});
+
+			it("refuses anyone but the owner, and paths outside /workspace, without reaching the Sandbox", async () => {
+				const { o, files, conv, sub } = await setup();
+				const before = o.calls.length;
+				for (const c of [conv, sub])
+					expect(
+						await files.openFile("u2", c.id, "out/report.pdf", signal),
+					).toEqual({ error: "not_found" });
+				expect(
+					await files.openFile(userId, conv.id, "../etc/passwd", signal),
+				).toEqual({ error: "no_file" });
+				// only what the Agent attached in that Conversation, though the Sandbox holds more
+				expect(
+					await files.openFile(
+						userId,
+						conv.id,
+						"/workspace/out/secret.txt",
+						signal,
+					),
+				).toEqual({ error: "no_file" });
+				expect(o.calls.length).toBe(before);
+			});
+
+			it("says why when the file, the Sandbox or orrery is not there", async () => {
+				const { o, files, conv, sub, attach } = await setup();
+				await attach(conv.id, "/workspace/out/missing.pdf");
+				expect(
+					await files.openFile(userId, conv.id, "out/missing.pdf", signal),
+				).toEqual({ error: "no_file" });
+				const [row] = await db
+					.select({ sandboxId: schema.conversation.sandboxId })
+					.from(schema.conversation)
+					.where(sql`${schema.conversation.id} = ${sub.id}`);
+				await o.client.deleteSandbox(row.sandboxId as string);
+				expect(
+					await files.openFile(userId, sub.id, "out/report.pdf", signal),
+				).toEqual({ error: "gone" });
+				// a gone Sandbox is not replaced by a download
+				expect(
+					o.calls.filter((c) => c.startsWith("createSandbox")),
+				).toHaveLength(2);
+				o.down = true;
+				expect(
+					await files.openFile(userId, conv.id, "out/report.pdf", signal),
+				).toEqual({ error: "unavailable" });
+			});
+		});
+
+		describe("Sandboxes go with their Conversation", () => {
+			const setup = async () => {
+				const { ensureSandbox } = await import("./index.ts");
+				const o = memoryOrrery();
+				const withSandboxes = sandboxed(o);
+				const [parent] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: "faux" })
+					.returning();
+				const [child] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: "faux", parentId: parent.id })
+					.returning();
+				const sandboxes = [
+					(await ensureSandbox(parent.id, o.client, provider)).id,
+					(await ensureSandbox(child.id, o.client, provider)).id,
+				];
+				return { o, withSandboxes, parent, child, sandboxes };
+			};
+			const rows = () =>
+				db.select({ id: schema.conversation.id }).from(schema.conversation);
+
+			it("gives a Subagent's Conversation a Sandbox of its own, and deletes both with the Conversation", async () => {
+				const { o, withSandboxes, parent, sandboxes } = await setup();
+				expect(sandboxes).toEqual(["sb1", "sb2"]);
+				await withSandboxes.delete(userId, parent.id);
+				expect(await rows()).toEqual([]);
+				expect(sandboxes.map(o.state)).toEqual(["deleted", "deleted"]);
+			});
+
+			it("deletes the Conversation when orrery cannot be reached, and logs the Sandboxes left behind", async () => {
+				const { o, withSandboxes, parent } = await setup();
+				o.down = true;
+				const log = vi.spyOn(console, "error").mockImplementation(() => {});
+				try {
+					await withSandboxes.delete(userId, parent.id);
+					expect(await rows()).toEqual([]);
+					expect(log.mock.calls.map((c) => c[0])).toEqual([
+						expect.stringContaining("sb1"),
+						expect.stringContaining("sb2"),
+					]);
+				} finally {
+					log.mockRestore();
+				}
+			});
 		});
 
 		// last: these swap the worker

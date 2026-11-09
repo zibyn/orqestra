@@ -1,6 +1,9 @@
 import {
 	type AnyPgColumn,
+	bigint,
 	boolean,
+	customType,
+	doublePrecision,
 	index,
 	integer,
 	jsonb,
@@ -9,8 +12,15 @@ import {
 	serial,
 	text,
 	timestamp,
+	unique,
 	uuid,
 } from "drizzle-orm/pg-core";
+
+// drizzle 0.45 has no bytea column; node-postgres reads it as a Buffer
+const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
+	dataType: () => "bytea",
+	toDriver: (value) => Buffer.from(value),
+});
 
 // Visible only to its owner: every query filters on userId, Admins included
 export const conversation = pgTable(
@@ -37,6 +47,8 @@ export const conversation = pgTable(
 		jobId: text("job_id"),
 		// Subagents this Conversation's Agent started or continued since the User's last message
 		subagentsSinceUser: integer("subagents_since_user").default(0).notNull(),
+		// its orrery Sandbox, created the first time its Agent needs one; null until then
+		sandboxId: text("sandbox_id"),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()
@@ -191,6 +203,21 @@ export const mcpServer = pgTable("mcp_server", {
 		.notNull(),
 });
 
+// The Sandbox Provider (orrery) an Admin configured; at most one row, id "orrery"
+export const sandboxProvider = pgTable("sandbox_provider", {
+	id: text("id").primaryKey(),
+	// orrery's API address, without /api/v1
+	url: text("url").notNull(),
+	// orrery API Token, encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
+	token: text("token").notNull(),
+	// Snapshot name or SnapshotVersion id; null: orrery's default Platform Snapshot
+	snapshot: text("snapshot"),
+	cpu: doublePrecision("cpu").notNull(),
+	// bytes
+	memory: bigint("memory", { mode: "number" }).notNull(),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Agent Definitions edited by Admins in /console/agents; `conversation.agent_id` refers to the id, so it never changes
 export const agent = pgTable("agent", {
 	id: text("id").primaryKey(),
@@ -198,3 +225,49 @@ export const agent = pgTable("agent", {
 	definition: jsonb("definition").notNull(),
 	createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// Skills an Admin uploaded; `name` is the Skill's frontmatter name, which Agent Definitions refer to
+export const skill = pgTable("skill", {
+	name: text("name").primaryKey(),
+	// the version Agents use; set in the transaction that adds the first one
+	currentVersionId: integer("current_version_id").references(
+		(): AnyPgColumn => skillVersion.id,
+	),
+	enabled: boolean("enabled").default(true).notNull(),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+	updatedAt: timestamp("updated_at")
+		.defaultNow()
+		.$onUpdate(() => new Date())
+		.notNull(),
+});
+
+// A full snapshot of a Skill per upload or edit, never changed afterwards (ADR 0004)
+export const skillVersion = pgTable(
+	"skill_version",
+	{
+		id: serial("id").primaryKey(),
+		skillName: text("skill_name")
+			.notNull()
+			.references(() => skill.name, { onDelete: "cascade" }),
+		// 1, 2, ... within the Skill
+		number: integer("number").notNull(),
+		// from SKILL.md's frontmatter
+		description: text("description").notNull(),
+		disableModelInvocation: boolean("disable_model_invocation").notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [unique().on(table.skillName, table.number)],
+);
+
+export const skillFile = pgTable(
+	"skill_file",
+	{
+		versionId: integer("version_id")
+			.notNull()
+			.references(() => skillVersion.id, { onDelete: "cascade" }),
+		// relative to the Skill's folder: SKILL.md, scripts/…
+		path: text("path").notNull(),
+		content: bytea("content").notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.versionId, table.path] })],
+);

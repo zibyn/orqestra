@@ -1,7 +1,8 @@
 import type { OrqestraConfig } from "@orqestra/config";
+import { skillFiles } from "@orqestra/config/live";
 import { createConversations } from "@orqestra/conversations";
 import { openToolbox } from "@orqestra/tools";
-import { runAgent } from "./runtime/index.ts";
+import { type RuntimeDeps, runAgent } from "./runtime/index.ts";
 
 /** Runs at most `max` functions at once, the rest in call order; one aborted while waiting leaves the queue and rejects. */
 export function limiter(max: number) {
@@ -64,21 +65,26 @@ export function startAgentWorker(
 	{
 		providerConcurrency = 8,
 		toolbox = openToolbox,
+		orrery,
 		...options
 	}: Parameters<ReturnType<typeof createConversations>["serveRuns"]>[1] & {
 		/** Model requests to one Provider at once, across this worker's Runs. */
 		providerConcurrency?: number;
 		/** Opens each Run's Tools; tests stand in for the services behind them. */
 		toolbox?: typeof openToolbox;
+		/** The Sandbox Provider's client; tests stand in for orrery. */
+		orrery?: RuntimeDeps["orrery"];
 	} = {},
 ) {
 	const limitProviders = providerLimiter(providerConcurrency);
-	return createConversations({ config: getConfig }).serveRuns(
+	return createConversations({ config: getConfig, skillFiles }).serveRuns(
 		(run, config) =>
 			runAgent(run, {
 				config,
 				streamSimple: limitProviders(config.streamSimple),
 				openToolbox: toolbox,
+				skillFiles,
+				orrery,
 			}),
 		options,
 	);

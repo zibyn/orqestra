@@ -100,6 +100,10 @@ _Avoid_: Preset, registry, template
 An ordered series of messages between one User and the Agent, owned by and visible only to that User. A Subagent's Conversation is nested under the one that started it and is seen only through it.
 _Avoid_: Session, thread, chat
 
+**Attachment**:
+A file in a Conversation's Sandbox that goes with a message: one the User uploads into the Sandbox with their message, or one the Agent attaches to its reply for the User to download. Orqestra stores only its name and path; the file itself stays in the Sandbox and goes with it.
+_Avoid_: Upload, artifact, document
+
 **Turn**:
 One input, a user message or a Notification, and the Agent's reply to it, with the Model and thinking level picked for that input. Compaction never splits a Turn.
 _Avoid_: Exchange, round

@@ -9,8 +9,12 @@ import {
 	type ModelThinkingLevel,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { McpServer, ToolService } from "@orqestra/tools";
+import {
+	ModelRegistry,
+	ModelRuntime,
+	stripFrontmatter,
+} from "@earendil-works/pi-coding-agent";
+import type { McpServer, SandboxProvider, ToolService } from "@orqestra/tools";
 import type { z } from "zod";
 import {
 	agentDefinition,
@@ -43,6 +47,8 @@ export interface AgentDefinition {
 	compaction?: { reserveTokens?: number; keepRecentTokens?: number };
 	/** As written; only built-in Tools with a Search Provider and available MCP Servers are offered in a Run. */
 	tools: ToolRef[];
+	/** Allowed Skills by name, as written; a Run gets the available ones from `turnSkills`. */
+	skills: string[];
 	/** Users can start Conversations with it; any Agent can be a Subagent template. */
 	pickable: boolean;
 	default: boolean;
@@ -78,6 +84,30 @@ export interface Settings {
 		enabled: boolean;
 		headers: { name: string; value: string | undefined }[];
 	}[];
+	/** Omitted when none is configured; `token` is undefined when it cannot be decrypted, `snapshot` null means orrery's default. */
+	sandboxProvider?: {
+		url: string;
+		token: string | undefined;
+		snapshot: string | null;
+		cpu: number;
+		memory: number;
+	};
+	/** Every Skill with its current version. */
+	skills: {
+		name: string;
+		enabled: boolean;
+		versionId: number;
+		description: string;
+		disableModelInvocation: boolean;
+	}[];
+}
+
+/** A Skill Runs can use; read its files with `skillFiles(versionId)`. */
+export interface SkillInfo {
+	/** The current version when the config was loaded. */
+	versionId: number;
+	description: string;
+	disableModelInvocation: boolean;
 }
 
 export interface OrqestraConfig {
@@ -91,6 +121,10 @@ export interface OrqestraConfig {
 	tools: Partial<Record<ToolName, ToolService>>;
 	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
 	mcpServers: Record<string, McpServer>;
+	/** Enabled Skills, by name; the others are unavailable. */
+	skills: Record<string, SkillInfo>;
+	/** Undefined when none is configured or its token cannot be decrypted: every Skill is then unavailable. */
+	sandboxProvider?: SandboxProvider;
 	/** pi's streamSimple with the Provider's configured API key. */
 	streamSimple: StreamSimple;
 }
@@ -177,7 +211,14 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		}
 		const def = parsed.data;
 		for (const issue of definitionIssues(def)) fail(issue.field, issue.message);
-		const { models: named, defaultModel, thinking, tools, ...rest } = def;
+		const {
+			models: named,
+			defaultModel,
+			thinking,
+			tools,
+			skills,
+			...rest
+		} = def;
 		const available = named
 			? named.filter((ref) => known.includes(ref))
 			: [...known];
@@ -193,6 +234,7 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 				: (available[0] ?? ""),
 			thinking: thinking ?? {},
 			tools: tools ?? [...toolName.options],
+			skills: skills ?? [],
 			unavailableModels: (named ?? []).filter((ref) => !known.includes(ref)),
 		});
 	}
@@ -232,6 +274,14 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 			mcpServers[id] = { name, url, headers: Object.fromEntries(plain) };
 	}
 
+	const skills: OrqestraConfig["skills"] = {};
+	for (const { name, enabled, ...skill } of settings.skills)
+		if (enabled) skills[name] = skill;
+	const stored = settings.sandboxProvider;
+	const sandboxProvider = stored?.token
+		? { ...stored, token: stored.token, snapshot: stored.snapshot ?? undefined }
+		: undefined;
+
 	return {
 		registry,
 		models,
@@ -239,6 +289,8 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		defaultAgent: defaults[0],
 		tools,
 		mcpServers,
+		skills,
+		sandboxProvider,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);
 			if (provider && provider.apiKey === undefined)
@@ -309,7 +361,7 @@ export function resolveThinking(
 export const GENERAL_WORKER =
 	"You carry out one task for another agent, starting without any prior context. Work through it with the tools you have, then reply with a complete, self-contained answer: it is all the other agent will see.";
 
-/** The built-in Agent a Subagent without a template runs as: any enabled Model, Search and Scrape, no MCP Server. */
+/** The built-in Agent a Subagent without a template runs as: any enabled Model, Search and Scrape, no MCP Server, no Skill. */
 const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
 	id: "",
 	name: "General worker",
@@ -320,6 +372,7 @@ const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
 	defaultModel: models[0] ? modelRef(models[0]) : "",
 	thinking: {},
 	tools: [...toolName.options],
+	skills: [],
 	pickable: false,
 	default: false,
 	unavailableModels: [],
@@ -358,3 +411,19 @@ export function resolveTurn(
 			: levels.default;
 	return { agent, model, defaultModel, thinking };
 }
+
+/** The Skills a Run of `agent` offers: those it allows that are enabled, none without a Sandbox Provider. */
+export const turnSkills = (
+	config: Pick<OrqestraConfig, "skills" | "sandboxProvider">,
+	agent: Pick<AgentDefinition, "skills">,
+) =>
+	config.sandboxProvider
+		? agent.skills.flatMap((name) => {
+				const skill = config.skills[name];
+				return skill ? [{ name, ...skill }] : [];
+			})
+		: [];
+
+/** A SKILL.md's instructions, without its frontmatter. */
+export const skillInstructions = (skillMd: string) =>
+	stripFrontmatter(skillMd).trim();

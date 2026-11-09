@@ -4,7 +4,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import { messageText } from "@orqestra/config/shared";
+import { messageText, parseSkillBlock } from "@orqestra/config/shared";
 import type { ConversationEvent } from "@orqestra/conversations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -15,6 +15,8 @@ import {
 } from "@tanstack/react-router";
 import {
 	ChevronRightIcon,
+	DownloadIcon,
+	FileIcon,
 	Loader2Icon,
 	RotateCcwIcon,
 	SquareIcon,
@@ -34,6 +36,7 @@ import {
 } from "#/components/ai-elements/message";
 import { Reasoning } from "#/components/ai-elements/reasoning";
 import { type Choice, Composer } from "#/components/Composer";
+import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Separator } from "#/components/ui/separator";
 import {
@@ -51,7 +54,9 @@ import {
 	stopRun,
 	stopSubagent,
 } from "#/lib/conversation-fns";
+import { uploadFiles } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
+import { getLocale } from "#/paraglide/runtime";
 
 export const Route = createFileRoute("/_app/c/$conversationId")({
 	loader: async ({ params }) => {
@@ -173,12 +178,14 @@ function ConversationView() {
 										/>
 									) : row.message.role === "user" ? (
 										<Message from="user">
-											<MessageContent>
-												{messageText(row.message)}
-											</MessageContent>
+											<UserMessageContent message={row.message} />
 										</Message>
 									) : row.message.role === "assistant" ? (
-										<AgentReply message={row.message} results={results} />
+										<AgentReply
+											message={row.message}
+											results={results}
+											conversationId={conversation.id}
+										/>
 									) : null /* Tool results show under their call */
 								}
 							</Fragment>
@@ -225,9 +232,10 @@ function ConversationView() {
 								/>
 							) : (
 								<Message key={`queued-${row.id}`} from="user">
-									<MessageContent className="opacity-60">
-										{messageText(row.message)}
-									</MessageContent>
+									<UserMessageContent
+										message={row.message}
+										className="opacity-60"
+									/>
 									<span className="text-xs text-muted-foreground">
 										{m.queued()}
 									</span>
@@ -255,9 +263,14 @@ function ConversationView() {
 						}
 						running={running}
 						onStop={() => void stopRun({ data: conversation.id })}
-						onSend={async (input) => {
+						onSend={async ({ files, ...input }) => {
+							const attachments = await uploadFiles(conversation.id, files);
 							await sendMessage({
-								data: { ...input, conversationId: conversation.id },
+								data: {
+									...input,
+									attachments,
+									conversationId: conversation.id,
+								},
 							});
 							await router.invalidate();
 						}}
@@ -279,6 +292,18 @@ function ConversationView() {
 }
 
 type Results = Map<string, ToolResultMessage>;
+
+/** A User's message; one that invoked a Skill shows its name, not the instructions put in for it. */
+function UserText({ text }: { text: string }) {
+	const skill = parseSkillBlock(text);
+	if (!skill) return text;
+	return (
+		<div className="flex flex-col items-start gap-1.5">
+			<Badge variant="outline">{m.skill_used({ name: skill.name })}</Badge>
+			{skill.text}
+		</div>
+	);
+}
 
 const toolResults = (messages: PiMessage[]): Results =>
 	new Map(
@@ -323,15 +348,55 @@ const chevron = (
 	<ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-open:rotate-90" />
 );
 
+const units = ["byte", "kilobyte", "megabyte", "gigabyte"];
+/** 12 B, 3.4 MB… in the User's locale. */
+function fileSize(bytes: number) {
+	const power = Math.min(
+		Math.floor(Math.log10(Math.max(bytes, 1)) / 3),
+		units.length - 1,
+	);
+	return new Intl.NumberFormat(getLocale(), {
+		style: "unit",
+		unit: units[power],
+		unitDisplay: "short",
+		maximumFractionDigits: 1,
+	}).format(bytes / 1000 ** power);
+}
+
 /** A Tool call folded into one line (name and arguments); open it for the result. */
 function ToolCallView({
 	call,
 	result,
+	conversationId,
 }: {
 	call: ToolCall;
 	result?: ToolResultMessage;
+	conversationId?: string;
 }) {
 	const { subagents } = Route.useLoaderData();
+	const attachment = (
+		result?.details as
+			| { attachment?: { path: string; name: string; size: number } }
+			| undefined
+	)?.attachment;
+	if (call.name === "attach" && attachment && conversationId)
+		return (
+			// a tab of its own: a download that fails shows why there
+			<a
+				href={`/api/conversations/${conversationId}/files?${new URLSearchParams({ path: attachment.path })}`}
+				target="_blank"
+				rel="noopener"
+				aria-label={m.file_download({ name: attachment.name })}
+				className="flex items-center gap-2 self-start rounded-md border px-3 py-2 text-sm hover:bg-muted/50"
+			>
+				<FileIcon className="size-4 shrink-0 text-muted-foreground" />
+				<span className="truncate font-medium">{attachment.name}</span>
+				<span className="shrink-0 text-xs text-muted-foreground">
+					{fileSize(attachment.size)}
+				</span>
+				<DownloadIcon className="size-4 shrink-0 text-muted-foreground" />
+			</a>
+		);
 	const runs =
 		(result?.details as { subagents?: SubagentTranscript[] } | undefined)
 			?.subagents ?? subagents.filter((s) => s.toolCallId === call.id);
@@ -502,8 +567,13 @@ function SubagentPanel({
 					</Message>
 					{messages.map((message, i) =>
 						message.role === "assistant" ? (
-							// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
-							<AgentReply key={i} message={message} results={results} />
+							<AgentReply
+								// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
+								key={i}
+								message={message}
+								results={results}
+								conversationId={id}
+							/>
 						) : message.role === "user" && i > 0 ? (
 							// messages the parent sent while it worked; the first is the brief, shown above
 							// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
@@ -527,12 +597,52 @@ function SubagentPanel({
 	);
 }
 
+/** A User message: its text, and the names of its attachments, whose paths a second text gives the Agent. */
+function UserMessageContent({
+	message,
+	className,
+}: {
+	message: PiMessage;
+	className?: string;
+}) {
+	const { attachments } = message as {
+		attachments?: { name: string; path: string }[];
+	};
+	const first = Array.isArray(message.content) ? message.content[0] : undefined;
+	return (
+		<MessageContent className={className}>
+			<UserText
+				text={
+					attachments && first?.type === "text"
+						? first.text
+						: messageText(message)
+				}
+			/>
+			{attachments && (
+				<ul aria-label={m.attachments()} className="mt-2 flex flex-wrap gap-1">
+					{attachments.map((a) => (
+						<li key={a.path}>
+							<Badge variant="outline" className="max-w-full">
+								<FileIcon />
+								<span className="truncate">{a.name}</span>
+							</Badge>
+						</li>
+					))}
+				</ul>
+			)}
+		</MessageContent>
+	);
+}
+
 function AgentReply({
 	message,
 	results,
+	conversationId,
 }: {
 	message: AssistantMessage;
 	results: Results;
+	/** Whose Sandbox the files it attached are in; older Subagents kept in a Tool result have none. */
+	conversationId?: string;
 }) {
 	return (
 		<Message from="assistant">
@@ -549,6 +659,7 @@ function AgentReply({
 							key={part.id}
 							call={part}
 							result={results.get(part.id)}
+							conversationId={conversationId}
 						/>
 					),
 				)}

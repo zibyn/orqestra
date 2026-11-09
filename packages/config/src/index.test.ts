@@ -2,10 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	catalogProviders,
 	GENERAL_WORKER,
+	invokedSkill,
 	loadConfig,
+	parseSkillBlock,
 	resolveThinking,
 	resolveTurn,
 	type Settings,
+	skillBlock,
+	turnSkills,
 } from "./index";
 
 const general = {
@@ -38,6 +42,7 @@ const deepseek = (
 	searchProviders: [],
 	servedBy: { search: null, scrape: null },
 	mcpServers: [],
+	skills: [],
 });
 const withAgents = (agents: Record<string, unknown>, enabled?: string[]) =>
 	deepseek(enabled, {}, agents);
@@ -242,6 +247,49 @@ describe("loadConfig", () => {
 			expect(config.mcpServers).toEqual({});
 		});
 
+		it("offers the Sandbox Provider with its token decrypted, on orrery's default Snapshot when none is set", async () => {
+			const stored = {
+				url: "http://orrery.internal",
+				token: "orr_1_s",
+				snapshot: null,
+				cpu: 2,
+				memory: 2147483648,
+			};
+			expect((await loadConfig(deepseek())).sandboxProvider).toBeUndefined();
+			expect(
+				(await loadConfig({ ...deepseek(), sandboxProvider: stored }))
+					.sandboxProvider,
+			).toEqual({
+				url: "http://orrery.internal",
+				token: "orr_1_s",
+				snapshot: undefined,
+				cpu: 2,
+				memory: 2147483648,
+			});
+			expect(
+				(
+					await loadConfig({
+						...deepseek(),
+						sandboxProvider: { ...stored, snapshot: "skills" },
+					})
+				).sandboxProvider?.snapshot,
+			).toBe("skills");
+		});
+
+		it("leaves the Sandbox Provider unavailable when its token cannot be decrypted", async () => {
+			const config = await loadConfig({
+				...deepseek(),
+				sandboxProvider: {
+					url: "http://orrery.internal",
+					token: undefined,
+					snapshot: null,
+					cpu: 2,
+					memory: 2147483648,
+				},
+			});
+			expect(config.sandboxProvider).toBeUndefined();
+		});
+
 		it("keeps an Agent's `tools` as written", async () => {
 			const config = await loadConfig(
 				withAgents({ general: agentWith({ tools: ["scrape"] }) }),
@@ -276,6 +324,69 @@ describe("loadConfig", () => {
 				],
 			});
 			expect(config.defaultAgent.tools).toEqual(["search", "scrape"]);
+		});
+	});
+
+	describe("Skills", () => {
+		const skill = (name: string, enabled = true) => ({
+			name,
+			enabled,
+			versionId: 1,
+			description: `${name} things`,
+			disableModelInvocation: false,
+		});
+		const orrery = {
+			url: "http://orrery.internal",
+			token: "orr_1_s",
+			snapshot: null,
+			cpu: 2,
+			memory: 2147483648,
+		};
+		const load = (sandboxProvider?: Settings["sandboxProvider"]) =>
+			loadConfig({
+				...withAgents({
+					general: agentWith({ skills: ["pdf", "off", "gone"] }),
+					template: agentWith({
+						default: false,
+						pickable: false,
+						skills: ["off"],
+					}),
+					plain: agentWith({ default: false }),
+				}),
+				skills: [skill("pdf"), skill("off", false), skill("unused")],
+				sandboxProvider,
+			});
+
+		it("keeps an Agent's `skills` as written, none when omitted", async () => {
+			const config = await load(orrery);
+			expect(config.agents.map((a) => [a.id, a.skills])).toEqual([
+				["general", ["pdf", "off", "gone"]],
+				["template", ["off"]],
+				["plain", []],
+			]);
+		});
+
+		it("offers a Run only the enabled Skills the Agent allows", async () => {
+			const config = await load(orrery);
+			expect(turnSkills(config, config.defaultAgent)).toEqual([
+				{
+					name: "pdf",
+					versionId: 1,
+					description: "pdf things",
+					disableModelInvocation: false,
+				},
+			]);
+		});
+
+		it("offers none without a Sandbox Provider", async () => {
+			const config = await load();
+			expect(turnSkills(config, config.defaultAgent)).toEqual([]);
+		});
+
+		it("gives the general worker no Skill, a Subagent from a template the template's", async () => {
+			const config = await load(orrery);
+			expect(resolveTurn(config, null)?.agent.skills).toEqual([]);
+			expect(resolveTurn(config, "template")?.agent.skills).toEqual(["off"]);
 		});
 	});
 
@@ -476,5 +587,39 @@ describe("resolveTurn", () => {
 
 	it("returns nothing once the Agent is removed from config, so the Conversation is read-only", async () => {
 		expect(resolveTurn(await load(), "deleted-agent")).toBeUndefined();
+	});
+});
+
+describe("a message that invokes a Skill", () => {
+	it("reads back as the Skill's name and the User's own text", () => {
+		expect(
+			parseSkillBlock(
+				skillBlock("pdf", "Use pypdf.\n\n</skill>?", "merge them"),
+			),
+		).toEqual({ name: "pdf", text: "merge them" });
+		expect(parseSkillBlock(skillBlock("pdf", "Use pypdf.", ""))).toEqual({
+			name: "pdf",
+			text: "",
+		});
+	});
+
+	it("is any other message when written by hand", () => {
+		expect(parseSkillBlock('<skill name="pdf">hi</skill>')).toBeUndefined();
+		expect(parseSkillBlock("/skill:pdf merge them")).toBeUndefined();
+	});
+});
+
+describe("a User's text that invokes a Skill", () => {
+	it("names the Skill and what follows it", () => {
+		expect(invokedSkill("/skill:pdf  merge\nthem ")).toEqual({
+			name: "pdf",
+			args: "merge\nthem",
+		});
+		expect(invokedSkill("/skill:pdf")).toEqual({ name: "pdf", args: "" });
+	});
+
+	it("is none unless the text starts with /skill:", () => {
+		expect(invokedSkill("use /skill:pdf")).toBeUndefined();
+		expect(invokedSkill("/skill:")).toBeUndefined();
 	});
 });

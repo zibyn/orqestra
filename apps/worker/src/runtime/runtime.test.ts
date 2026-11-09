@@ -22,6 +22,7 @@ import {
 import type { Transcript, Turn } from "@orqestra/conversations";
 import { memoryRun } from "@orqestra/conversations/testing";
 import { openToolbox } from "@orqestra/tools";
+import { memoryOrrery } from "@orqestra/tools/testing";
 import { runAgent } from "./index.ts";
 import { MAX_SUBAGENT_STEPS } from "./tools.ts";
 
@@ -51,6 +52,7 @@ const agent = (fields: Partial<AgentDefinition>): AgentDefinition => ({
 	pickable: true,
 	allModels: false,
 	tools: ["search", "scrape"],
+	skills: [],
 	unavailableModels: [],
 	...fields,
 });
@@ -75,13 +77,17 @@ const config = {
 		},
 	},
 	mcpServers: {},
+	skills: {},
 };
 const turn = (agentId = "faux") => resolveTurn(config, agentId) as Turn;
+
+const noSkillFiles = async () => [];
 
 // Search answers with `results`
 const deps = (results: unknown[] = []) => ({
 	config,
 	streamSimple,
+	skillFiles: noSkillFiles,
 	openToolbox: ((services, allowed, options) =>
 		openToolbox(services, allowed, {
 			...options,
@@ -379,6 +385,7 @@ describe("runAgent", () => {
 		await runAgent(m.run, {
 			config: mcpConfig,
 			streamSimple,
+			skillFiles: noSkillFiles,
 			openToolbox: ((services, allowed, options) =>
 				openToolbox(services, allowed, {
 					...options,
@@ -390,5 +397,299 @@ describe("runAgent", () => {
 		expect(roles(m.saved)).toEqual(["assistant", "toolResult", "assistant"]);
 		expect(JSON.stringify(m.saved[1])).toContain("ran a.b");
 		expect(m.over).toBe(true);
+	});
+});
+
+describe("runAgent with Skills", () => {
+	const files: Record<number, Record<string, string>> = {
+		1: { "SKILL.md": "# PDF v1", "scripts/x.py": "print(1)" },
+		2: { "SKILL.md": "# PDF v2" },
+		3: { "SKILL.md": "# Manual" },
+	};
+	const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 };
+	const skillConfig = () => ({
+		...config,
+		agents: [
+			agent({ id: "skilled", tools: [], skills: ["pdf", "manual", "gone"] }),
+		],
+		skills: {
+			pdf: {
+				versionId: 1,
+				description: "Fill & read <PDF> forms",
+				disableModelInvocation: false,
+			},
+			manual: {
+				versionId: 3,
+				description: "Only on request",
+				disableModelInvocation: true,
+			},
+		},
+		sandboxProvider: provider as typeof provider | undefined,
+	});
+	// a version's files as the database has them; `current.pdf` plays an Admin uploading a new version of pdf
+	const current = { pdf: 1 };
+	const skillFiles = async (versionId: number) =>
+		Object.entries(files[versionId === 1 ? current.pdf : versionId]).map(
+			([path, text]) => ({ path, content: Buffer.from(text) }),
+		);
+	const setup = (
+		o: ReturnType<typeof memoryOrrery>,
+		cfg: ReturnType<typeof skillConfig> = skillConfig(),
+	) => ({
+		m: memoryRun({
+			transcript: transcript(user("help")),
+			turn: resolveTurn(cfg, "skilled") as Turn,
+		}),
+		deps: {
+			config: cfg,
+			streamSimple,
+			openToolbox,
+			skillFiles,
+			orrery: () => o.client,
+		},
+	});
+	// what bash does for these commands
+	const shell = (command: string, fs: Map<string, Uint8Array<ArrayBuffer>>) => {
+		if (command.includes("rm -rf /workspace/.skills"))
+			for (const path of fs.keys())
+				if (path.startsWith(".skills/")) fs.delete(path);
+		return { stdout: command === "echo hi" ? "hi\n" : "" };
+	};
+	const toolResults = (m: ReturnType<typeof memoryRun>) =>
+		m.saved.filter((s): s is ToolResultMessage => s.role === "toolResult");
+	const resultText = (r: ToolResultMessage) =>
+		r.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+	// pi carries the prompt in the transcript's first, system, message
+	const systemPrompt = (c?: Context) =>
+		(c?.messages[0] as unknown as { role: string; content: string }).content;
+	// besides the Subagent Tools every top-level Agent has
+	const offeredTools = (c?: Context) =>
+		(
+			c?.messages.flatMap(
+				(msg) =>
+					(msg as { toolsAdded?: { name: string }[] }).toolsAdded?.map(
+						(t) => t.name,
+					) ?? [],
+			) ?? []
+		).filter((n) => !n.startsWith("subagent"));
+
+	it("lists the Skills the model may invoke in the prompt, and offers read, bash and attach", async () => {
+		let context: Context | undefined;
+		script([
+			(c) => {
+				context = c;
+				return fauxAssistantMessage("ok");
+			},
+		]);
+		const o = memoryOrrery();
+		const { m, deps } = setup(o);
+		await runAgent(m.run, deps);
+
+		const prompt = systemPrompt(context);
+		expect(prompt.startsWith("You are a test.")).toBe(true);
+		expect(prompt).toContain("<name>pdf</name>");
+		expect(prompt).toContain(
+			"<description>Fill &amp; read &lt;PDF&gt; forms</description>",
+		);
+		expect(prompt).toContain(
+			"<location>/workspace/.skills/pdf/SKILL.md</location>",
+		);
+		expect(prompt).not.toContain("manual");
+		expect(offeredTools(context)).toEqual(["read", "bash", "attach"]);
+		// nothing is created until a Tool needs it
+		expect(o.calls).toEqual([]);
+	});
+
+	it("offers no Sandbox, Tools or Skill list without a Sandbox Provider or an available Skill", async () => {
+		for (const cfg of [
+			{ ...skillConfig(), sandboxProvider: undefined },
+			{
+				...skillConfig(),
+				agents: [agent({ id: "skilled", tools: [], skills: ["gone"] })],
+			},
+		]) {
+			let context: Context | undefined;
+			script([
+				(c) => {
+					context = c;
+					return fauxAssistantMessage("ok");
+				},
+			]);
+			const { m, deps } = setup(memoryOrrery(), cfg);
+			await runAgent(m.run, deps);
+			expect(systemPrompt(context)).toBe("You are a test.");
+			expect(offeredTools(context)).toEqual([]);
+		}
+	});
+
+	it("creates the Sandbox when a Tool first needs it, writes the Skills, and runs commands in it", async () => {
+		script([
+			fauxAssistantMessage(
+				fauxToolCall("read", { path: "/workspace/.skills/pdf/SKILL.md" }),
+			),
+			fauxAssistantMessage(fauxToolCall("bash", { command: "echo hi" })),
+			fauxAssistantMessage("done"),
+		]);
+		const o = memoryOrrery({ exec: shell });
+		const { m, deps } = setup(o);
+		await runAgent(m.run, deps);
+
+		const [read, bash] = toolResults(m);
+		expect(read.isError).toBe(false);
+		expect(resultText(read)).toBe("# PDF v1");
+		expect(resultText(bash)).toContain("Exit code: 0");
+		expect(resultText(bash)).toContain("hi\n");
+		const id = m.sandboxId as string;
+		// every Skill the Agent may use is written, the one the model may not invoke too
+		expect([...o.files(id).keys()].sort()).toEqual([
+			".skills/manual/SKILL.md",
+			".skills/pdf/SKILL.md",
+			".skills/pdf/scripts/x.py",
+		]);
+		expect(o.calls.filter((c) => c.startsWith("createSandbox"))).toHaveLength(
+			1,
+		);
+		expect(o.calls.filter((c) => c.startsWith("uploadArchive"))).toHaveLength(
+			1,
+		);
+	});
+
+	it("writes the current Skills again after starting a Sandbox Idle Stop stopped", async () => {
+		const o = memoryOrrery({ exec: shell });
+		const { m, deps } = setup(o);
+		script([
+			fauxAssistantMessage(fauxToolCall("bash", { command: "echo hi" })),
+			() => {
+				// stopped between two steps, and the Admin uploaded a new version meanwhile
+				o.stop(m.sandboxId as string);
+				current.pdf = 2;
+				return fauxAssistantMessage(
+					fauxToolCall("read", { path: ".skills/pdf/SKILL.md" }),
+				);
+			},
+			fauxAssistantMessage("done"),
+		]);
+		try {
+			await runAgent(m.run, deps);
+		} finally {
+			current.pdf = 1;
+		}
+
+		expect(resultText(toolResults(m)[1])).toBe("# PDF v2");
+		expect(o.calls).toContain(`startSandbox ${m.sandboxId}`);
+		// the old version's script is gone
+		expect(o.files(m.sandboxId as string).has(".skills/pdf/scripts/x.py")).toBe(
+			false,
+		);
+	});
+
+	it("gives stdout, stderr and the exit code, cutting long output and saying so", async () => {
+		script([
+			fauxAssistantMessage(fauxToolCall("bash", { command: "noisy" })),
+			fauxAssistantMessage(fauxToolCall("bash", { command: "killed" })),
+			fauxAssistantMessage("done"),
+		]);
+		const o = memoryOrrery({
+			exec: (command) =>
+				command === "noisy"
+					? {
+							stdout: `${"x".repeat(100_000)}END`,
+							stderr: "oops",
+							exit_code: 2,
+						}
+					: command === "killed"
+						? { cause: "oom_killed" }
+						: {},
+		});
+		const { m, deps } = setup(o);
+		await runAgent(m.run, deps);
+
+		const [noisy, killed] = toolResults(m).map(resultText);
+		expect(noisy).toContain("Exit code: 2");
+		expect(noisy).toContain("oops");
+		expect(noisy).toContain("END");
+		expect(noisy.length).toBeLessThan(60_000);
+		expect(noisy).toContain("cut off");
+		expect(killed).toContain("oom_killed");
+	});
+
+	it("attaches only an existing regular file under /workspace to the reply", async () => {
+		script([
+			fauxAssistantMessage(
+				fauxToolCall("attach", { path: "/workspace/out/./report.pdf" }),
+			),
+			fauxAssistantMessage(fauxToolCall("attach", { path: "out" })),
+			fauxAssistantMessage(fauxToolCall("attach", { path: "/etc/passwd" })),
+			fauxAssistantMessage(fauxToolCall("attach", { path: "../etc/passwd" })),
+			fauxAssistantMessage("done"),
+		]);
+		// bash as it answers in a Sandbox holding out/report.pdf (12 bytes) and the folder out
+		const o = memoryOrrery({
+			exec: (command) =>
+				command.includes("realpath")
+					? command.includes("'/workspace/out/report.pdf'")
+						? { stdout: "12\n/workspace/out/report.pdf" }
+						: { exit_code: 1 }
+					: {},
+		});
+		const { m, deps } = setup(o);
+		await runAgent(m.run, deps);
+
+		const [file, folder, outside, escaping] = toolResults(m);
+		expect(file.isError).toBe(false);
+		expect(file.details).toEqual({
+			attachment: {
+				path: "/workspace/out/report.pdf",
+				name: "report.pdf",
+				size: 12,
+			},
+		});
+		expect(resultText(file)).toContain("report.pdf");
+		for (const refused of [folder, outside, escaping]) {
+			expect(refused.isError).toBe(true);
+			expect(resultText(refused)).toContain("/workspace");
+		}
+		// paths outside /workspace never reach the Sandbox
+		expect(
+			o.calls.filter(
+				(c) => c.startsWith("createExec") && c.includes("realpath"),
+			),
+		).toHaveLength(2);
+	});
+
+	it("answers a clear error when orrery cannot be reached, and the Run goes on", async () => {
+		script([
+			fauxAssistantMessage(fauxToolCall("bash", { command: "echo hi" })),
+			fauxAssistantMessage("sorry"),
+		]);
+		const o = memoryOrrery();
+		o.down = true;
+		const { m, deps } = setup(o);
+		await runAgent(m.run, deps);
+
+		const [result] = toolResults(m);
+		expect(result.isError).toBe(true);
+		expect(resultText(result)).toContain("Sandbox");
+		expect(resultText(result)).toContain("ECONNREFUSED");
+		expect(m.over).toBe(true);
+	});
+
+	it("cancels the command running when the Run is stopped", async () => {
+		script([
+			fauxAssistantMessage(fauxToolCall("bash", { command: "sleep 1000" })),
+		]);
+		const o = memoryOrrery({
+			exec: (command, fs) =>
+				command === "sleep 1000" ? { running: true } : shell(command, fs),
+		});
+		const { m, deps } = setup(o);
+		const ran = runAgent(m.run, deps);
+		while (!o.calls.includes("createExec sb1 sleep 1000"))
+			await new Promise((resolve) => setTimeout(resolve, 1));
+		m.stop();
+		// however the handler ends, serveRuns ends a stopped Run as stopped
+		await ran.catch(() => {});
+
+		expect(o.calls.filter((c) => c.startsWith("cancelExec"))).toHaveLength(1);
 	});
 });

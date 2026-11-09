@@ -16,7 +16,7 @@ pnpm dev
 - `packages/db` — Drizzle schema + client. `pnpm db:push` etc.
 - `packages/conversations` — the Conversation lifecycle (Runs, Inbox, Subagents, Notifications); the only code that reads or writes those tables. The web app calls its User side; the worker serves Runs through it (`serveRuns`).
 
-- `packages/config` — the Catalog (pi's built-in Providers and Models), and everything Admins configure in the database (Providers, Models, Search Providers, Agent Definitions); used by both web and worker.
+- `packages/config` — the Catalog (pi's built-in Providers and Models), and everything Admins configure in the database (Providers, Models, Search Providers, MCP Servers, the Sandbox Provider, Skills, Agent Definitions); used by both web and worker.
 
 Env vars live in the root `.env.local`, shared by all packages. `ORQESTRA_ENCRYPTION_KEY` is required by web and worker: it encrypts Provider API keys in the database (`openssl rand -base64 32`). Changing it makes stored keys unreadable; re-enter them in `/console/providers`.
 
@@ -27,6 +27,34 @@ Admin 在 `/console/providers` 里从目录（pi 内置的 Provider 列表）选
 ## 如何配置 Search 与 Scrape
 
 Agent 可以调用 Search（搜索网页）和 Scrape（读取一个网页，返回 Markdown）两个 Tool，由外部的 Search Provider（Tavily、Firecrawl、DeepSeek）提供。Admin 在 `/console/search` 添加 Search Provider 并填写 API Key（与 Provider 一样加密保存、只写不读）和 `baseUrl`（默认填好官方地址；自部署的 Firecrawl 或经过反向代理时改成自己的地址），再分别为 Search 和 Scrape 选一个。没有可用 Search Provider 的 Tool 不可用，Agent 照常运行但不带它。
+
+## 如何配置 Sandbox Provider（orrery）
+
+Skill 的脚本在 [orrery](https://github.com/zibyn/orrery) 的 Sandbox 里执行。Admin 在 `/console/sandbox` 填写 orrery 的 API 地址（不带 `/api/v1`）、API Token（加密保存、只写不读）、Snapshot（可选，留空用 orrery 默认的 Platform Snapshot），以及每个 Sandbox 的 CPU 和内存（默认 2 CPU、2 GiB）。最多配置一个；没有配置时所有 Skill 都不可用。保存时会用该 Token 请求一次 orrery 的 `GET /api/v1/users/me`，失败时显示原因（无法连接、Token 无效等），配置照常保存。所有 User 的 Sandbox 都在这个 Token 所属的 orrery User 下运行。
+
+**签发 API Token**：用一个专门给 Orqestra 用的 orrery User 登录 CLI，再签发一枚 `user` scope 的 Token（`read_only` 不能创建 Sandbox）。明文只显示这一次，形如 `orr_<id>_<secret>`：
+
+```bash
+orrery --api-url https://orrery.example.com login --username orqestra
+orrery token create --name orqestra --scope user
+```
+
+**构建推荐的 Snapshot**：Skill 常用 Python 3（pypdf、openpyxl、python-docx、pandas）和 Node。用同一个 orrery User 构建（Snapshot 名先在调用方自己的 Snapshot 里找，再找平台的），然后把名字（如 `orqestra-skills`）填进 Snapshot：
+
+```dockerfile
+# Dockerfile
+FROM python:3.12-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends nodejs npm git curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir pypdf openpyxl python-docx pandas
+```
+
+```bash
+orrery snapshot build orqestra-skills -f Dockerfile
+```
+
+再次运行同一条命令即生成新版本，orrery 构建成功后自动把 current 指向它；新建的 Sandbox 使用 current 版本。
 
 ## 如何添加一个 Agent
 

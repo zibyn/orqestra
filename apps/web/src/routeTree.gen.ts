@@ -12,14 +12,19 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as ApiSkillsRouteImport } from './routes/api/skills'
 import { Route as AuthSplatRouteImport } from './routes/auth/$'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
 import { Route as ConsoleMcpRouteImport } from './routes/console/mcp'
 import { Route as ConsoleProvidersRouteImport } from './routes/console/providers'
+import { Route as ConsoleSandboxRouteImport } from './routes/console/sandbox'
 import { Route as ConsoleSearchRouteImport } from './routes/console/search'
+import { Route as ConsoleSkillsRouteImport } from './routes/console/skills'
 import { Route as AppCConversationIdRouteImport } from './routes/_app/c.$conversationId'
 import { Route as ApiConversationsIdEventsRouteImport } from './routes/api/conversations/$id/events'
+import { Route as ApiConversationsIdFilesRouteImport } from './routes/api/conversations/$id/files'
+import { Route as ApiConversationsIdUploadsRouteImport } from './routes/api/conversations/$id/uploads'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -34,6 +39,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AppRoute,
+} as any)
+const ApiSkillsRoute = ApiSkillsRouteImport.update({
+  id: '/api/skills',
+  path: '/api/skills',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AuthSplatRoute = AuthSplatRouteImport.update({
   id: '/auth/$',
@@ -60,9 +70,19 @@ const ConsoleProvidersRoute = ConsoleProvidersRouteImport.update({
   path: '/providers',
   getParentRoute: () => ConsoleRoute,
 } as any)
+const ConsoleSandboxRoute = ConsoleSandboxRouteImport.update({
+  id: '/sandbox',
+  path: '/sandbox',
+  getParentRoute: () => ConsoleRoute,
+} as any)
 const ConsoleSearchRoute = ConsoleSearchRouteImport.update({
   id: '/search',
   path: '/search',
+  getParentRoute: () => ConsoleRoute,
+} as any)
+const ConsoleSkillsRoute = ConsoleSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
   getParentRoute: () => ConsoleRoute,
 } as any)
 const AppCConversationIdRoute = AppCConversationIdRouteImport.update({
@@ -76,88 +96,132 @@ const ApiConversationsIdEventsRoute =
     path: '/api/conversations/$id/events',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiConversationsIdFilesRoute = ApiConversationsIdFilesRouteImport.update({
+  id: '/api/conversations/$id/files',
+  path: '/api/conversations/$id/files',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiConversationsIdUploadsRoute =
+  ApiConversationsIdUploadsRouteImport.update({
+    id: '/api/conversations/$id/uploads',
+    path: '/api/conversations/$id/uploads',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleRouteWithChildren
+  '/api/skills': typeof ApiSkillsRoute
   '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
+  '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
+  '/console/skills': typeof ConsoleSkillsRoute
   '/console/': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
   '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
+  '/api/conversations/$id/files': typeof ApiConversationsIdFilesRoute
+  '/api/conversations/$id/uploads': typeof ApiConversationsIdUploadsRoute
 }
 export interface FileRoutesByTo {
+  '/api/skills': typeof ApiSkillsRoute
   '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
+  '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
+  '/console/skills': typeof ConsoleSkillsRoute
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
   '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
+  '/api/conversations/$id/files': typeof ApiConversationsIdFilesRoute
+  '/api/conversations/$id/uploads': typeof ApiConversationsIdUploadsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/console': typeof ConsoleRouteWithChildren
+  '/api/skills': typeof ApiSkillsRoute
   '/auth/$': typeof AuthSplatRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
+  '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
+  '/console/skills': typeof ConsoleSkillsRoute
   '/_app/': typeof AppIndexRoute
   '/console/': typeof ConsoleIndexRoute
   '/_app/c/$conversationId': typeof AppCConversationIdRoute
   '/api/conversations/$id/events': typeof ApiConversationsIdEventsRoute
+  '/api/conversations/$id/files': typeof ApiConversationsIdFilesRoute
+  '/api/conversations/$id/uploads': typeof ApiConversationsIdUploadsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/console'
+    | '/api/skills'
     | '/auth/$'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
+    | '/console/sandbox'
     | '/console/search'
+    | '/console/skills'
     | '/console/'
     | '/c/$conversationId'
     | '/api/conversations/$id/events'
+    | '/api/conversations/$id/files'
+    | '/api/conversations/$id/uploads'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/api/skills'
     | '/auth/$'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
+    | '/console/sandbox'
     | '/console/search'
+    | '/console/skills'
     | '/'
     | '/console'
     | '/c/$conversationId'
     | '/api/conversations/$id/events'
+    | '/api/conversations/$id/files'
+    | '/api/conversations/$id/uploads'
   id:
     | '__root__'
     | '/_app'
     | '/console'
+    | '/api/skills'
     | '/auth/$'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
+    | '/console/sandbox'
     | '/console/search'
+    | '/console/skills'
     | '/_app/'
     | '/console/'
     | '/_app/c/$conversationId'
     | '/api/conversations/$id/events'
+    | '/api/conversations/$id/files'
+    | '/api/conversations/$id/uploads'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   ConsoleRoute: typeof ConsoleRouteWithChildren
+  ApiSkillsRoute: typeof ApiSkillsRoute
   AuthSplatRoute: typeof AuthSplatRoute
   ApiConversationsIdEventsRoute: typeof ApiConversationsIdEventsRoute
+  ApiConversationsIdFilesRoute: typeof ApiConversationsIdFilesRoute
+  ApiConversationsIdUploadsRoute: typeof ApiConversationsIdUploadsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -182,6 +246,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/api/skills': {
+      id: '/api/skills'
+      path: '/api/skills'
+      fullPath: '/api/skills'
+      preLoaderRoute: typeof ApiSkillsRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/auth/$': {
       id: '/auth/$'
@@ -218,11 +289,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleProvidersRouteImport
       parentRoute: typeof ConsoleRoute
     }
+    '/console/sandbox': {
+      id: '/console/sandbox'
+      path: '/sandbox'
+      fullPath: '/console/sandbox'
+      preLoaderRoute: typeof ConsoleSandboxRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
     '/console/search': {
       id: '/console/search'
       path: '/search'
       fullPath: '/console/search'
       preLoaderRoute: typeof ConsoleSearchRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/console/skills': {
+      id: '/console/skills'
+      path: '/skills'
+      fullPath: '/console/skills'
+      preLoaderRoute: typeof ConsoleSkillsRouteImport
       parentRoute: typeof ConsoleRoute
     }
     '/_app/c/$conversationId': {
@@ -237,6 +322,20 @@ declare module '@tanstack/react-router' {
       path: '/api/conversations/$id/events'
       fullPath: '/api/conversations/$id/events'
       preLoaderRoute: typeof ApiConversationsIdEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/conversations/$id/files': {
+      id: '/api/conversations/$id/files'
+      path: '/api/conversations/$id/files'
+      fullPath: '/api/conversations/$id/files'
+      preLoaderRoute: typeof ApiConversationsIdFilesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/conversations/$id/uploads': {
+      id: '/api/conversations/$id/uploads'
+      path: '/api/conversations/$id/uploads'
+      fullPath: '/api/conversations/$id/uploads'
+      preLoaderRoute: typeof ApiConversationsIdUploadsRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -258,7 +357,9 @@ interface ConsoleRouteChildren {
   ConsoleAgentsRoute: typeof ConsoleAgentsRoute
   ConsoleMcpRoute: typeof ConsoleMcpRoute
   ConsoleProvidersRoute: typeof ConsoleProvidersRoute
+  ConsoleSandboxRoute: typeof ConsoleSandboxRoute
   ConsoleSearchRoute: typeof ConsoleSearchRoute
+  ConsoleSkillsRoute: typeof ConsoleSkillsRoute
   ConsoleIndexRoute: typeof ConsoleIndexRoute
 }
 
@@ -266,7 +367,9 @@ const ConsoleRouteChildren: ConsoleRouteChildren = {
   ConsoleAgentsRoute: ConsoleAgentsRoute,
   ConsoleMcpRoute: ConsoleMcpRoute,
   ConsoleProvidersRoute: ConsoleProvidersRoute,
+  ConsoleSandboxRoute: ConsoleSandboxRoute,
   ConsoleSearchRoute: ConsoleSearchRoute,
+  ConsoleSkillsRoute: ConsoleSkillsRoute,
   ConsoleIndexRoute: ConsoleIndexRoute,
 }
 
@@ -276,18 +379,12 @@ const ConsoleRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   ConsoleRoute: ConsoleRouteWithChildren,
+  ApiSkillsRoute: ApiSkillsRoute,
   AuthSplatRoute: AuthSplatRoute,
   ApiConversationsIdEventsRoute: ApiConversationsIdEventsRoute,
+  ApiConversationsIdFilesRoute: ApiConversationsIdFilesRoute,
+  ApiConversationsIdUploadsRoute: ApiConversationsIdUploadsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

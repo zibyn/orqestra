@@ -1,10 +1,16 @@
 import type { Message } from "@earendil-works/pi-ai";
 import {
+	type AgentDefinition,
+	invokedSkill,
 	modelRef,
 	type OrqestraConfig,
 	resolveThinking,
 	resolveTurn,
+	type SkillFile,
+	skillBlock,
+	skillInstructions,
 	type ThinkingLevel,
+	turnSkills,
 } from "@orqestra/config";
 import { db } from "@orqestra/db";
 import {
@@ -14,7 +20,12 @@ import {
 	message,
 	subagent,
 } from "@orqestra/db/schema";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import {
+	OrreryError,
+	orrery as orreryClient,
+	workspacePath,
+} from "@orqestra/tools";
+import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import {
 	AGENT_RUNS_QUEUE,
@@ -30,10 +41,14 @@ import {
 	stopSubagents,
 } from "./runs.ts";
 
+import { ensureSandbox, SandboxGone, wakeSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
+import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
 
+export { MAX_UPLOAD_BYTES } from "@orqestra/config";
 export type { ConversationEvent, Ended } from "./runs.ts";
 export { MAX_SUBAGENTS } from "./runs.ts";
+export { ensureSandbox } from "./sandbox.ts";
 export {
 	BudgetExceeded,
 	MAX_SUBAGENT_TASKS,
@@ -48,6 +63,7 @@ export {
 	type TranscriptMessage,
 	type Turn,
 } from "./serve.ts";
+export { UploadTooLarge } from "./uploads.ts";
 
 // The only module that reads and writes Conversations, their Inbox, messages, Subagents and compactions.
 // The User's side takes the signed-in user's id everywhere: nobody else, Admins included, can see a Conversation.
@@ -74,12 +90,63 @@ const ownedSubagent = async (userId: string, id: string) => {
 	return row as { parentId: string; number: number } | undefined;
 };
 
+/** An Agent takes attachments when it has a Sandbox: a Sandbox Provider and a Skill it may use. */
+const takesAttachments = (
+	cfg: OrqestraConfig,
+	agent: Pick<AgentDefinition, "skills">,
+) => turnSkills(cfg, agent).length > 0;
+
 export function createConversations({
 	config,
+	skillFiles,
+	orrery = orreryClient,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
+	/** A Skill version's files, read when a User invokes it. */
+	skillFiles: (versionId: number) => Promise<SkillFile[]>;
+	/** The Sandbox Provider's client, for deleting Sandboxes and uploading attachments; tests pass a fake. */
+	orrery?: typeof orreryClient;
 }) {
+	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
+	async function expandSkill(
+		cfg: OrqestraConfig,
+		agent: Pick<AgentDefinition, "skills">,
+		text: string,
+	) {
+		const invoked = invokedSkill(text);
+		if (!invoked) return text;
+		const { name, args } = invoked;
+		const skill = turnSkills(cfg, agent).find((s) => s.name === name);
+		const md = skill
+			? (await skillFiles(skill.versionId)).find((f) => f.path === "SKILL.md")
+			: undefined;
+		if (!md) throw new ConversationError("This Skill is unavailable");
+		return skillBlock(
+			name,
+			skillInstructions(new TextDecoder().decode(md.content)),
+			args,
+		);
+	}
+
+	/** Deletes the Sandboxes of deleted Conversations; one orrery does not delete is logged and left to its Idle Stop. */
+	async function deleteSandboxes(ids: (string | null)[]) {
+		const sandboxes = ids.filter((id): id is string => !!id);
+		if (!sandboxes.length) return;
+		const provider = (await config()).sandboxProvider;
+		const client = provider && orrery(provider);
+		await Promise.all(
+			sandboxes.map((id) =>
+				(client
+					? client.deleteSandbox(id, { signal: AbortSignal.timeout(10_000) })
+					: Promise.reject(new Error("no Sandbox Provider is configured"))
+				).catch((error) =>
+					console.error(`Sandbox ${id} is left to orrery's Idle Stop`, error),
+				),
+			),
+		);
+	}
+
 	return {
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
@@ -97,7 +164,13 @@ export function createConversations({
 					description: a.description,
 					default: a.default,
 					pickable: a.pickable,
+					attachments: takesAttachments(cfg, a),
 					defaultModel: a.defaultModel,
+					// the User may invoke those the Agent may not
+					skills: turnSkills(cfg, a).map(({ name, description }) => ({
+						name,
+						description,
+					})),
 					models: a.models.map((ref) => {
 						const model = cfg.models.find((m) => modelRef(m) === ref);
 						return {
@@ -192,6 +265,47 @@ export function createConversations({
 			};
 		},
 
+		/** Starts a Conversation with no messages yet, so attachments can be uploaded before the first one is sent. */
+		async start(userId: string, agentId: string) {
+			const cfg = await config();
+			const turn = resolveTurn(cfg, agentId);
+			if (!turn) throw new ConversationError("This Agent is offline");
+			if (!turn.agent.pickable)
+				throw new ConversationError("This Agent cannot be picked");
+			const [{ id }] = await db
+				.insert(conversation)
+				.values({ userId, agentId })
+				.returning({ id: conversation.id });
+			return id;
+		},
+
+		/**
+		 * Streams one attachment into the Conversation's Sandbox (creating or waking it) as `/workspace/uploads/<name>`,
+		 * renamed when the name is taken; returns its name and path. Undefined when the Conversation is not the user's.
+		 * Throws UploadTooLarge past MAX_UPLOAD_BYTES, and whatever the Sandbox Provider fails with.
+		 */
+		async upload(
+			userId: string,
+			id: string,
+			name: string,
+			body: ReadableStream<Uint8Array>,
+			{ signal }: { signal?: AbortSignal } = {},
+		) {
+			const conv = await owned(userId, id);
+			// a Subagent's Conversation is the Agent's to write to, not the User's
+			if (!conv || conv.parentId) return undefined;
+			const cfg = await config();
+			const turn = resolveTurn(cfg, conv.agentId);
+			if (!turn || !cfg.sandboxProvider || !takesAttachments(cfg, turn.agent))
+				throw new ConversationError("This Agent takes no attachments");
+			// orrery's 65-second request timeout is too short to stream 50 MB from a slow browser
+			const client = orrery({ ...cfg.sandboxProvider, timeoutMs: 10 * 60_000 });
+			const sandbox = await ensureSandbox(id, client, cfg.sandboxProvider, {
+				signal,
+			});
+			return writeUpload(client, sandbox.id, name, body, { signal });
+		},
+
 		/** Puts a user message in the inbox (starting a Conversation when there is no id) and has the Agent reply. */
 		async send(
 			userId: string,
@@ -201,8 +315,15 @@ export function createConversations({
 				text: string;
 				model?: string;
 				thinking?: ThinkingLevel;
+				/** Names `upload` returned; the message gives the Agent their paths. */
+				attachments?: string[];
 			},
 		) {
+			const attachments = (input.attachments ?? []).map((name) => {
+				if (safeFileName(name) !== name)
+					throw new ConversationError("Not an attachment's name");
+				return { name, path: uploadPath(name) };
+			});
 			const cfg = await config();
 			const existing = input.conversationId
 				? await owned(userId, input.conversationId)
@@ -217,6 +338,7 @@ export function createConversations({
 			// existing Conversations keep their Agent even after it stops being pickable
 			if (!existing && !turn.agent.pickable)
 				throw new ConversationError("This Agent cannot be picked");
+			const content = await expandSkill(cfg, turn.agent, input.text);
 
 			const conversationId = await db.transaction(async (tx) => {
 				let id = existing?.id;
@@ -236,7 +358,21 @@ export function createConversations({
 				}
 				await tx.insert(inbox).values({
 					conversationId: id,
-					message: { role: "user", content: input.text, timestamp: Date.now() },
+					message: attachments.length
+						? {
+								role: "user",
+								content: [
+									{ type: "text", text: content },
+									{
+										type: "text",
+										text: `\n\nAttached files, in your Sandbox:\n${attachments.map((a) => `- ${a.path}`).join("\n")}`,
+									},
+								],
+								// the User sees their names in place of the second text
+								attachments,
+								timestamp: Date.now(),
+							}
+						: { role: "user", content, timestamp: Date.now() },
 					model: modelRef(turn.model),
 					thinkingLevel: turn.thinking,
 					wake: true,
@@ -267,13 +403,14 @@ export function createConversations({
 					sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
 				);
 				return (
-					await tx.execute<{ id: string }>(
-						sql`delete from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id}) returning id`,
+					await tx.execute<{ id: string; sandboxId: string | null }>(
+						sql`delete from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id}) returning id, sandbox_id as "sandboxId"`,
 					)
 				).rows;
 			});
 			// their Runs stop; with their Conversation gone they save nothing more
 			await requestStop(dropped.map((d) => d.id));
+			await deleteSandboxes(dropped.map((d) => d.sandboxId));
 			await enqueue(id);
 		},
 
@@ -318,9 +455,77 @@ export function createConversations({
 				.select({ id: conversation.id })
 				.from(conversation)
 				.where(eq(conversation.parentId, id));
-			// its Run and its Subagents' stop first, then they go (cascade); a Run that outlives its Conversation saves nothing more
+			// its Run and its Subagents' stop first, then they go; a Run that outlives its Conversation saves nothing more
 			await requestStop([id, ...children.map((c) => c.id)]);
-			await db.delete(conversation).where(eq(conversation.id, id));
+			// its Subagents' rows too, so the Sandbox ids are those last stored: a Run claims one under the row's lock
+			const deleted = await db
+				.delete(conversation)
+				.where(or(eq(conversation.id, id), eq(conversation.parentId, id)))
+				.returning({ sandboxId: conversation.sandboxId });
+			await deleteSandboxes(deleted.map((d) => d.sandboxId));
+		},
+
+		/**
+		 * A file the Agent attached in the user's Conversation, a Subagent's included, streamed from its Sandbox by orrery as it arrives.
+		 * Starts the Sandbox if Idle Stop stopped it, but never creates one. `path` is absolute or relative to /workspace.
+		 */
+		async openFile(
+			userId: string,
+			id: string,
+			path: string,
+			signal: AbortSignal,
+		): Promise<
+			| {
+					file: {
+						name: string;
+						size?: number;
+						body: ReadableStream<Uint8Array>;
+					};
+			  }
+			| { error: "not_found" | "no_file" | "gone" | "unavailable" }
+		> {
+			// a Subagent's Conversation carries its parent's userId
+			if (!(await owned(userId, id))) return { error: "not_found" };
+			const relative = workspacePath(path);
+			if (!relative) return { error: "no_file" };
+			// only what the Agent attached here: the rest of the Sandbox is its working space
+			const attached = await db
+				.select({ id: message.id })
+				.from(message)
+				.where(
+					and(
+						eq(message.conversationId, id),
+						sql`${message.message} @> ${JSON.stringify({
+							role: "toolResult",
+							toolName: "attach",
+							details: { attachment: { path: `/workspace/${relative}` } },
+						})}::jsonb`,
+					),
+				)
+				.limit(1);
+			if (!attached.length) return { error: "no_file" };
+			const provider = (await config()).sandboxProvider;
+			if (!provider) return { error: "unavailable" };
+			const client = orrery(provider);
+			try {
+				const { id: sandbox } = await wakeSandbox(id, client, provider, {
+					signal,
+				});
+				const file = await client.openFile(sandbox, relative, { signal });
+				return {
+					file: {
+						name: relative.slice(relative.lastIndexOf("/") + 1),
+						...file,
+					},
+				};
+			} catch (error) {
+				if (error instanceof SandboxGone) return { error: "gone" };
+				if (error instanceof OrreryError && error.code === "not_found")
+					return { error: "no_file" };
+				if (!signal.aborted)
+					console.error("A file could not be read from its Sandbox:", error);
+				return { error: "unavailable" };
+			}
 		},
 
 		/** A Subagent's transcript, loaded when its panel opens; undefined when it is not the user's. */

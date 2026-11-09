@@ -4,10 +4,13 @@ import {
 	enabledModel,
 	mcpServer,
 	provider,
+	sandboxProvider,
 	searchProvider,
+	skill,
+	skillVersion,
 } from "@orqestra/db/schema";
 import { availableTools } from "@orqestra/tools";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { admin, servedBy } from "./admin.ts";
 import {
 	loadConfig,
@@ -22,7 +25,7 @@ import { decryptSecret, encryptionKey } from "./secret.ts";
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
 
-export type { McpTestResult } from "@orqestra/tools";
+export type { McpTestResult, SandboxTestResult } from "@orqestra/tools";
 export {
 	agentInput,
 	mcpServerEnabledInput,
@@ -30,22 +33,48 @@ export {
 	modelEnabledInput,
 	providerInput,
 	providerTestInput,
+	sandboxProviderInput,
 	searchProviderInput,
+	skillCreateInput,
+	skillCurrentInput,
+	skillEditInput,
+	skillEnabledInput,
+	skillFiles,
 	toolServiceInput,
 } from "./admin.ts";
 
 /** Everything saved in /console, with API keys decrypted. */
 async function loadSettings(): Promise<Settings> {
 	const key = encryptionKey();
-	const [providers, enabled, searchProviders, served, mcpServers, agents] =
-		await Promise.all([
-			db.select().from(provider),
-			db.select().from(enabledModel),
-			db.select().from(searchProvider),
-			servedBy(),
-			db.select().from(mcpServer).orderBy(mcpServer.createdAt),
-			db.select().from(agent).orderBy(agent.createdAt),
-		]);
+	const [
+		providers,
+		enabled,
+		searchProviders,
+		served,
+		mcpServers,
+		agents,
+		skills,
+		[sandbox],
+	] = await Promise.all([
+		db.select().from(provider),
+		db.select().from(enabledModel),
+		db.select().from(searchProvider),
+		servedBy(),
+		db.select().from(mcpServer).orderBy(mcpServer.createdAt),
+		db.select().from(agent).orderBy(agent.createdAt),
+		db
+			.select({
+				name: skill.name,
+				enabled: skill.enabled,
+				versionId: skillVersion.id,
+				description: skillVersion.description,
+				disableModelInvocation: skillVersion.disableModelInvocation,
+			})
+			.from(skill)
+			.innerJoin(skillVersion, eq(skill.currentVersionId, skillVersion.id))
+			.orderBy(skill.name),
+		db.select().from(sandboxProvider),
+	]);
 	return {
 		providers: providers.map((p) => ({
 			id: p.id,
@@ -72,6 +101,14 @@ async function loadSettings(): Promise<Settings> {
 				value: decryptSecret(h.value, key),
 			})),
 		})),
+		skills,
+		sandboxProvider: sandbox && {
+			url: sandbox.url,
+			token: decryptSecret(sandbox.token, key),
+			snapshot: sandbox.snapshot,
+			cpu: sandbox.cpu,
+			memory: sandbox.memory,
+		},
 	};
 }
 

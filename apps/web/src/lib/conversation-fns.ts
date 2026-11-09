@@ -44,9 +44,18 @@ export const sendMessage = createServerFn({ method: "POST" })
 			text: z.string().trim().min(1),
 			model: z.string().optional(),
 			thinking: thinkingLevel.optional(),
+			// names the uploads route answered
+			attachments: z.array(z.string()).max(20).optional(),
 		}),
 	)
 	.handler(async ({ data }) => conversations.send(await requireUserId(), data));
+
+/** An empty Conversation to upload attachments into before its first message. */
+export const startConversation = createServerFn({ method: "POST" })
+	.validator(z.string())
+	.handler(async ({ data }) =>
+		conversations.start(await requireUserId(), data),
+	);
 
 export const stopRun = createServerFn({ method: "POST" })
 	.validator(id)
