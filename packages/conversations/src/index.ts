@@ -577,6 +577,8 @@ export function createConversations({
 					);
 					client.on("error", close);
 					signal.addEventListener("abort", close);
+					// the client may have gone while the connection was opening
+					if (signal.aborted) return close();
 					// keeps proxies from closing an idle stream
 					ping = setInterval(
 						() => controller.enqueue(encoder.encode(": ping\n\n")),
