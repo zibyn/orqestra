@@ -22,8 +22,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orqestra}
       POSTGRES_DB: orqestra
     volumes:
-      # Postgres 18 keeps its data under /var/lib/postgresql/18; a new volume so a 17 one is never read by 18 (see README to upgrade)
-      - postgres18:/var/lib/postgresql
+      # Postgres 18 keeps its data under /var/lib/postgresql/18
+      - postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U orqestra -d orqestra"]
       interval: 5s
@@ -61,4 +61,4 @@ services:
       migrate: { condition: service_completed_successfully }
 
 volumes:
-  postgres18:
+  postgres:
