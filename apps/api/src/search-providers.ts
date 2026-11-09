@@ -14,7 +14,7 @@ import { saved } from "./saved.ts";
 export const searchProviders = (signedIn: SignedIn) =>
 	new Elysia({ prefix: "/search-providers" })
 		.use(signedIn)
-		.onBeforeHandle(adminOnly)
+		.derive(adminOnly)
 		.get("/", () => config.searchProviders.list())
 		.post(
 			"/",

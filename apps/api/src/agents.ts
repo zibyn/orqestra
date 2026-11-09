@@ -10,7 +10,7 @@ import { saved } from "./saved.ts";
 export const agents = (signedIn: SignedIn) =>
 	new Elysia({ prefix: "/agents" })
 		.use(signedIn)
-		.onBeforeHandle(adminOnly)
+		.derive(adminOnly)
 		.get("/", () => config.agents.list())
 		// field errors by path (`name`, `thinking.default`, …)
 		.post("/", async ({ body }) => saved(await config.agents.save(body)), {

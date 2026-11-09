@@ -37,8 +37,8 @@ import {
 import { Input } from "#/components/ui/input";
 import { Switch } from "#/components/ui/switch";
 import { Textarea } from "#/components/ui/textarea";
-import { api } from "#/lib/api";
-import { errorText, ok, saved, saveErrorTexts } from "#/lib/save-errors";
+import { api, ok } from "#/lib/api";
+import { errorText, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 
 const listAgents = () => ok(api().api.agents.get());

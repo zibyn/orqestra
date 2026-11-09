@@ -2,10 +2,13 @@ import { thinkingLevel } from "@orqestra/config/shared";
 import { ConversationError, type Conversations } from "@orqestra/conversations";
 import { Elysia } from "elysia";
 import { z } from "zod";
+import { signedInOnly } from "./admin.ts";
 import type { SignedIn } from "./app.ts";
 
-const id = z.object({ id: z.uuid() });
-const notFound = { errors: { conversation: { code: "not_found" } } } as const;
+const idParams = z.object({ id: z.uuid() });
+export const notFound = {
+	errors: { conversation: { code: "not_found" } },
+} as const;
 
 /** Everything a User does with their Conversations; another User's reads as not found. */
 export const conversationRoutes = (
@@ -14,11 +17,7 @@ export const conversationRoutes = (
 ) =>
 	new Elysia()
 		.use(signedIn)
-		.resolve(({ user, status }) =>
-			user
-				? { user }
-				: status(401, { errors: { session: { code: "unauthorized" } } }),
-		)
+		.derive(signedInOnly)
 		.onError(({ error, status }) => {
 			if (!(error instanceof ConversationError)) return;
 			// sent to a Conversation that is not the User's
@@ -41,7 +40,7 @@ export const conversationRoutes = (
 			"/conversations/:id",
 			async ({ user, params, status }) =>
 				(await conversations.get(user.id, params.id)) ?? status(404, notFound),
-			{ params: id },
+			{ params: idParams },
 		)
 		.patch(
 			"/conversations/:id",
@@ -50,7 +49,7 @@ export const conversationRoutes = (
 					return status(404, notFound);
 			},
 			{
-				params: id,
+				params: idParams,
 				body: z.object({ title: z.string().trim().min(1).max(100) }),
 			},
 		)
@@ -60,7 +59,7 @@ export const conversationRoutes = (
 				if (!(await conversations.delete(user.id, params.id)))
 					return status(404, notFound);
 			},
-			{ params: id },
+			{ params: idParams },
 		)
 		/** Puts a message in the Conversation's Inbox, starting one when there is no conversationId; returns its id. */
 		.post(
@@ -87,7 +86,7 @@ export const conversationRoutes = (
 				if (!(await conversations.stop(user.id, params.id)))
 					return status(404, notFound);
 			},
-			{ params: id },
+			{ params: idParams },
 		)
 		.post(
 			"/conversations/:id/retry",
@@ -95,7 +94,7 @@ export const conversationRoutes = (
 				if (!(await conversations.retry(user.id, params.id)))
 					return status(404, notFound);
 			},
-			{ params: id },
+			{ params: idParams },
 		)
 		/** Reverses the Memory change of one of the Agent's Tool calls in the Conversation. */
 		.post(
@@ -110,7 +109,7 @@ export const conversationRoutes = (
 				if (error)
 					return status(422, { errors: { toolCallId: { code: error } } });
 			},
-			{ params: id, body: z.object({ toolCallId: z.string().min(1) }) },
+			{ params: idParams, body: z.object({ toolCallId: z.string().min(1) }) },
 		)
 		/** A Subagent's transcript, by its Conversation's id. */
 		.get(
@@ -118,7 +117,7 @@ export const conversationRoutes = (
 			async ({ user, params, status }) =>
 				(await conversations.subagentTranscript(user.id, params.id)) ??
 				status(404, notFound),
-			{ params: id },
+			{ params: idParams },
 		)
 		.post(
 			"/subagents/:id/stop",
@@ -126,5 +125,5 @@ export const conversationRoutes = (
 				if (!(await conversations.stopSubagent(user.id, params.id)))
 					return status(404, notFound);
 			},
-			{ params: id },
+			{ params: idParams },
 		);

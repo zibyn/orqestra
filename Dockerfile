@@ -10,9 +10,9 @@ COPY . .
 RUN pnpm install --offline --frozen-lockfile && pnpm build
 # each its own package and production dependencies, without the store and the rest of the workspace;
 # the migrations keep packages/db's dev dependencies, since drizzle-kit is one;
-# the api's goes online: offline, pnpm cannot check its lockfile's release ages (no full metadata for jose) and fails
+# the api's skips the release-age check, whose metadata (jose's) offline lacks: it deploys only the frozen lockfile's versions
 RUN pnpm --filter @orqestra/worker deploy --prod --offline /out/worker \
-	&& pnpm --filter @orqestra/api deploy --prod /out/api \
+	&& pnpm --filter @orqestra/api deploy --prod --offline --config.minimum-release-age=0 /out/api \
 	&& pnpm --filter @orqestra/db deploy --offline /out/migrate
 
 # The web app: Nitro's self-contained Node server

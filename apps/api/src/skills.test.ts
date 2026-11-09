@@ -147,7 +147,7 @@ describe.skipIf(!db)("an Admin's Skills (Postgres)", () => {
 	it("uploads a zip, and refuses an invalid one with 422", async () => {
 		expect(await send(upload(skillZip("pdf", "Fills PDFs")))).toEqual({
 			status: 200,
-			body: { name: "pdf" },
+			body: { errors: {}, name: "pdf" },
 		});
 		expect(await list()).toMatchObject([
 			{ name: "pdf", description: "Fills PDFs", enabled: true },
@@ -191,7 +191,7 @@ describe.skipIf(!db)("an Admin's Skills (Postgres)", () => {
 					files: [{ path: "SKILL.md", text: md }, { path: "a.py" }],
 				}),
 			),
-		).toEqual({ status: 200, body: {} });
+		).toEqual({ status: 200, body: { errors: {} } });
 		const [pdf] = await list();
 		expect(pdf.description).toBe("v2");
 		const edited = await send(
@@ -223,10 +223,24 @@ describe.skipIf(!db)("an Admin's Skills (Postgres)", () => {
 		});
 	});
 
+	it("is 404 for a Skill or version that is gone", async () => {
+		await send(upload(skillZip("pdf", "v1")));
+		const [{ currentVersionId: base }] = await list();
+		for (const [request, field] of [
+			[json("PUT", "/gone/enabled", { enabled: false }), "name"],
+			[json("PUT", "/pdf/current", { versionId: 0 }), "versionId"],
+			[json("POST", "/gone/versions", { base, files: [] }), "base"],
+		] as const)
+			expect(await send(request)).toEqual({
+				status: 404,
+				body: { errors: { [field]: { code: "not_found" } } },
+			});
+	});
+
 	it("creates, disables and deletes a Skill", async () => {
 		expect(
 			await send(json("PUT", "/pdf", { description: "Fills PDFs" })),
-		).toEqual({ status: 200, body: {} });
+		).toEqual({ status: 200, body: { errors: {} } });
 		expect(await send(json("PUT", "/pdf", { description: "again" }))).toEqual({
 			status: 422,
 			body: { errors: { name: { code: "skill_exists" } } },

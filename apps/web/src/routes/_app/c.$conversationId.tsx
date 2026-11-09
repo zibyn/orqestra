@@ -474,6 +474,8 @@ function FileDownload({
 	attachment: FileAttachment;
 	conversationId: string;
 }) {
+	const [error, setError] = useState<string>();
+	const href = `/api/conversations/${conversationId}/files?${new URLSearchParams({ path: attachment.path })}`;
 	return (
 		<Attachment size="sm">
 			<AttachmentMedia>
@@ -481,8 +483,8 @@ function FileDownload({
 			</AttachmentMedia>
 			<AttachmentContent>
 				<AttachmentTitle>{attachment.name}</AttachmentTitle>
-				<AttachmentDescription>
-					{fileSize(attachment.size)}
+				<AttachmentDescription className={cn(error && "text-destructive")}>
+					{error ?? fileSize(attachment.size)}
 				</AttachmentDescription>
 			</AttachmentContent>
 			<DownloadIcon className="mr-1 size-4 text-muted-foreground" />
@@ -490,10 +492,33 @@ function FileDownload({
 				render={
 					// biome-ignore lint/a11y/useAnchorContent: labelled by aria-label; the visible name sits beside it
 					<a
-						href={`/api/conversations/${conversationId}/files?${new URLSearchParams({ path: attachment.path })}`}
-						target="_blank"
-						rel="noopener"
+						href={href}
 						aria-label={m.file_download({ name: attachment.name })}
+						// asked first, so the User reads why a file cannot be had; the api answers its code as JSON
+						onClick={async (e) => {
+							e.preventDefault();
+							setError(undefined);
+							const response = await fetch(href).catch(() => undefined);
+							if (response?.ok) {
+								await response.body?.cancel();
+								// an attachment: the browser saves it and stays on the page
+								location.assign(href);
+								return;
+							}
+							const code: string | undefined = await response?.json().then(
+								(b) => b.errors?.file?.code,
+								() => undefined,
+							);
+							setError(
+								(code === "not_found"
+									? m.file_not_found
+									: code === "gone"
+										? m.file_sandbox_gone
+										: code === "unavailable"
+											? m.file_unavailable
+											: m.request_failed)(),
+							);
+						}}
 					/>
 				}
 			/>

@@ -1,15 +1,17 @@
 import {
 	config,
+	SkillNotFound,
 	skillCreateInput,
 	skillCurrentInput,
 	skillEditInput,
 	skillEnabledInput,
 } from "@orqestra/config/live";
-import { type SaveErrors, SKILL_ZIP_MAX_BYTES } from "@orqestra/config/shared";
+import { SKILL_ZIP_MAX_BYTES } from "@orqestra/config/shared";
 import { Elysia, status } from "elysia";
 import { z } from "zod";
 import { adminOnly } from "./admin.ts";
 import type { SignedIn } from "./app.ts";
+import { saved } from "./saved.ts";
 
 /** The whole body, or undefined once more than `limit` bytes have come. */
 async function readAtMost(body: ReadableStream<Uint8Array>, limit: number) {
@@ -26,18 +28,21 @@ async function readAtMost(body: ReadableStream<Uint8Array>, limit: number) {
 const tooLarge = () =>
 	status(413, { errors: { file: { code: "skill_too_large" } } });
 
-/** A save's result: 200 when saved, 422 with its errors. */
-const saved = <T extends { errors: SaveErrors }>({ errors, ...rest }: T) =>
-	Object.keys(errors).length ? status(422, { errors, ...rest }) : rest;
-
 // The path names the Skill; the rest of the package's input is the body
-const name = z.object({ name: z.string() });
+const nameParams = z.object({ name: z.string() });
 
 /** Skills, managed by Admins in the console. */
 export const skills = (signedIn: SignedIn) =>
 	new Elysia({ prefix: "/skills" })
 		.use(signedIn)
-		.onBeforeHandle(adminOnly)
+		.derive(adminOnly)
+		// renamed or deleted since the console loaded it
+		.onError(({ error, status }) => {
+			if (error instanceof SkillNotFound)
+				return status(404, {
+					errors: { [error.field]: { code: "not_found" } },
+				});
+		})
 		/** Every Skill with its versions, newest first. */
 		.get("", () => config.skills.list())
 		// A Skill's zip, the raw body; `?replace=true` once the Admin confirmed adding a version to an existing name.
@@ -63,7 +68,7 @@ export const skills = (signedIn: SignedIn) =>
 			"/:name",
 			async ({ params, body }) =>
 				saved(await config.skills.create(params.name, body.description)),
-			{ params: name, body: skillCreateInput.omit({ name: true }) },
+			{ params: nameParams, body: skillCreateInput.omit({ name: true }) },
 		)
 		/** A version's files; binary ones without `text`. */
 		.get(
@@ -76,31 +81,28 @@ export const skills = (signedIn: SignedIn) =>
 			"/:name/versions",
 			async ({ params, body }) =>
 				saved(await config.skills.edit(params.name, body.base, body.files)),
-			{ params: name, body: skillEditInput.omit({ name: true }) },
+			{ params: nameParams, body: skillEditInput.omit({ name: true }) },
 		)
 		/** Rolls the Skill back (or forward) to one of its versions. */
 		.put(
 			"/:name/current",
 			async ({ params, body }) => {
 				await config.skills.setCurrent(params.name, body.versionId);
-				return {};
 			},
-			{ params: name, body: skillCurrentInput.omit({ name: true }) },
+			{ params: nameParams, body: skillCurrentInput.omit({ name: true }) },
 		)
 		.put(
 			"/:name/enabled",
 			async ({ params, body }) => {
 				await config.skills.setEnabled(params.name, body.enabled);
-				return {};
 			},
-			{ params: name, body: skillEnabledInput.omit({ name: true }) },
+			{ params: nameParams, body: skillEnabledInput.omit({ name: true }) },
 		)
 		/** Also removes it from every Agent Definition. */
 		.delete(
 			"/:name",
 			async ({ params }) => {
 				await config.skills.delete(params.name);
-				return {};
 			},
-			{ params: name },
+			{ params: nameParams },
 		);

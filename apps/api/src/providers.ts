@@ -13,7 +13,7 @@ import { saved } from "./saved.ts";
 export const providers = (signedIn: SignedIn) =>
 	new Elysia({ prefix: "/providers" })
 		.use(signedIn)
-		.onBeforeHandle(adminOnly)
+		.derive(adminOnly)
 		.get("/", () => config.providers.list())
 		.post("/", async ({ body }) => saved(await config.providers.save(body)), {
 			body: providerInput,

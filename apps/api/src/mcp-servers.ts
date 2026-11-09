@@ -14,7 +14,7 @@ import { saved } from "./saved.ts";
 export const mcpServers = (signedIn: SignedIn) =>
 	new Elysia({ prefix: "/mcp-servers" })
 		.use(signedIn)
-		.onBeforeHandle(adminOnly)
+		.derive(adminOnly)
 		.get("/", () => config.mcpServers.list())
 		// once saved, with the connection test's result
 		.post("/", async ({ body }) => saved(await config.mcpServers.save(body)), {

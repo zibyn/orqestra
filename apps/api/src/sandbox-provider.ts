@@ -8,7 +8,7 @@ import { saved } from "./saved.ts";
 export const sandboxProvider = (signedIn: SignedIn) =>
 	new Elysia({ prefix: "/sandbox-provider" })
 		.use(signedIn)
-		.onBeforeHandle(adminOnly)
+		.derive(adminOnly)
 		// wrapped, as a bare null would be an empty body
 		.get("/", async () => ({ provider: await config.sandboxProvider.get() }))
 		// once saved, with the connection test's result

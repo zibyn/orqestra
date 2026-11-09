@@ -14,6 +14,10 @@ const env = z
 		POLARIS_AUDIENCE: z.string().min(1),
 		// Encrypts the session cookie; changing it signs everyone out. `openssl rand -base64 32`
 		POLARIS_SECRET: z.string().min(32),
+		// Encrypts Provider API keys in the database; `openssl rand -base64 32`
+		ORQESTRA_ENCRYPTION_KEY: z.base64().refine((s) => atob(s).length === 32, {
+			message: "must be 32 bytes of base64 (openssl rand -base64 32)",
+		}),
 	})
 	.safeParse(process.env);
 if (!env.success) {

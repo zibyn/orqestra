@@ -119,6 +119,13 @@ export const skillEditInput = z.object({
 	// without `text`: kept as it is in version `base`
 	files: z.array(z.object({ path: z.string(), text: z.string().optional() })),
 });
+/** A Skill or version gone since the console loaded it; `field` is the input naming it. */
+export class SkillNotFound extends Error {
+	constructor(readonly field: "name" | "versionId" | "base") {
+		super(field === "name" ? "Skill not found" : "Skill version not found");
+	}
+}
+
 export const sandboxProviderInput = z.object({
 	url: httpUrl,
 	// blank keeps the stored token
@@ -545,7 +552,7 @@ const skills = ({ write }: Deps) => ({
 			.select({ id: skillVersion.id })
 			.from(skillVersion)
 			.where(and(eq(skillVersion.id, base), eq(skillVersion.skillName, name)));
-		if (!version) throw new Error("Skill version not found");
+		if (!version) throw new SkillNotFound("base");
 		const old = new Map(
 			(await skillFiles(base)).map((f) => [f.path, f.content]),
 		);
@@ -573,7 +580,7 @@ const skills = ({ write }: Deps) => ({
 				.where(eq(skill.name, name))
 				.returning({ name: skill.name }),
 		);
-		if (!updated.length) throw new Error("Skill not found");
+		if (!updated.length) throw new SkillNotFound("name");
 	},
 
 	/** Agents use this version from their next Run on; it must be one of the Skill's. */
@@ -590,7 +597,7 @@ const skills = ({ write }: Deps) => ({
 				)
 				.returning({ name: skill.name }),
 		);
-		if (!updated.length) throw new Error("Skill version not found");
+		if (!updated.length) throw new SkillNotFound("versionId");
 	},
 
 	/** Also deletes its versions and removes it from every Agent Definition. */

@@ -57,13 +57,6 @@ type Response<T> =
 	| { data: T; error: null }
 	| { data: null; error: { status: unknown; value: unknown } };
 
-/** An api call's data; its error is thrown, for errorText. */
-export async function ok<T>(response: Promise<Response<T>>) {
-	const { data, error } = await response;
-	if (error) throw error;
-	return data as T;
-}
-
 /** A save's result, its field errors empty when it was saved: the api answers 422 with them. */
 export async function saved<T extends { errors: SaveErrors }>(
 	response: Promise<Response<T>>,

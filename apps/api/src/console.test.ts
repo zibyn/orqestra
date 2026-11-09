@@ -91,6 +91,25 @@ describe("console endpoints", () => {
 		});
 	}
 
+	// checked before the body, so a request that is not allowed learns nothing of the fields
+	it("is 401 or 403 before invalid input is validated", async () => {
+		for (const [user, status] of [
+			[null, 401],
+			[member, 403],
+		] as const)
+			for (const [method, path, body] of [
+				["POST", "/api/providers", { id: 1 }],
+				["PUT", "/api/skills/x/current", {}],
+				["POST", "/api/messages", {}],
+				["PUT", "/api/memories", {}],
+			] as const) {
+				// Members may use their Conversations and Memories
+				if (user && !path.match(/providers|skills/)) continue;
+				const response = await app(user)(request(method, path, body));
+				expect([path, response.status]).toEqual([path, status]);
+			}
+	});
+
 	it("is 422 with the field's code for invalid input", async () => {
 		const response = await app(admin)(
 			request("POST", "/api/providers", { id: "openai", baseUrl: "ftp://x" }),

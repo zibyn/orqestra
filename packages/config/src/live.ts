@@ -33,6 +33,7 @@ export {
 	modelEnabledInput,
 	providerInput,
 	providerTestInput,
+	SkillNotFound,
 	sandboxProviderInput,
 	searchProviderInput,
 	skillCreateInput,

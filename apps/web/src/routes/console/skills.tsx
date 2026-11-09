@@ -44,32 +44,20 @@ import {
 	TableRow,
 } from "#/components/ui/table";
 import { Textarea } from "#/components/ui/textarea";
-import { api } from "#/lib/api";
-import { errorText, firstError, saveErrorTexts } from "#/lib/save-errors";
+import { api, ok } from "#/lib/api";
+import {
+	errorText,
+	firstError,
+	saved,
+	saveErrorTexts,
+} from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
-
-/** The data of an api call; throws what to show when it failed. */
-function data<T>(result: { data: T; error: unknown }): NonNullable<T> {
-	if (result.error) throw new Error(m.request_failed());
-	return result.data as NonNullable<T>;
-}
-
-/** A save's field errors, empty once saved: the api answers 422 (or 413 for a zip) with them. */
-function saved(result: { error: { status: unknown; value: unknown } | null }): {
-	errors: SaveErrors;
-	name?: string;
-} {
-	if (!result.error) return { errors: {} };
-	if (result.error.status === 422 || result.error.status === 413)
-		return result.error.value as { errors: SaveErrors; name?: string };
-	throw new Error(m.request_failed());
-}
 
 const skillsApi = () => api().api.skills;
 
 export const Route = createFileRoute("/console/skills")({
-	loader: async () => data(await skillsApi().get()),
+	loader: () => ok(skillsApi().get()),
 	component: Skills,
 });
 
@@ -104,11 +92,11 @@ function Skills() {
 				method: "POST",
 				body: file,
 			});
-			return saved({
-				error: response.ok
-					? null
-					: { status: response.status, value: await response.json() },
-			});
+			const value: { errors: SaveErrors; name?: string } =
+				await response.json();
+			if (response.ok || response.status === 422) return value;
+			// as Eden throws it, for errorText
+			throw { status: response.status, value };
 		};
 		let result = await send(false);
 		if (
@@ -188,9 +176,9 @@ function Skills() {
 									disabled={!!busy}
 									onCheckedChange={(enabled) =>
 										act(`enable-${s.name}`, () =>
-											skillsApi()({ name: s.name })
-												.enabled.put({ enabled })
-												.then(data),
+											ok(
+												skillsApi()({ name: s.name }).enabled.put({ enabled }),
+											),
 										)
 									}
 								/>
@@ -215,7 +203,7 @@ function Skills() {
 									onClick={() => {
 										if (confirm(m.delete_skill_confirm()))
 											void act(`delete-${s.name}`, () =>
-												skillsApi()({ name: s.name }).delete().then(data),
+												ok(skillsApi()({ name: s.name }).delete()),
 											);
 									}}
 								/>
@@ -293,9 +281,13 @@ function Skills() {
 															)
 														)
 															void act(`version-${v.id}`, () =>
-																skillsApi()({ name: shown.name })
-																	.current.put({ versionId: v.id })
-																	.then(data),
+																ok(
+																	skillsApi()({ name: shown.name }).current.put(
+																		{
+																			versionId: v.id,
+																		},
+																	),
+																),
 															);
 													}}
 												>
@@ -332,7 +324,7 @@ function NewSkillForm({ onDone }: { onDone: () => void }) {
 	async function create() {
 		setBusy(true);
 		try {
-			const result = saved(await skillsApi()({ name }).put({ description }));
+			const result = await saved(skillsApi()({ name }).put({ description }));
 			setErrors(saveErrorTexts(result.errors));
 			if (!Object.keys(result.errors).length) {
 				await router.invalidate();
@@ -403,11 +395,9 @@ function SkillEditor({
 	const [error, setError] = useState("");
 
 	useEffect(() => {
-		skillsApi()
-			.versions({ id: base })
-			.files.get()
-			.then(data)
-			.then(setFiles, (e) => setError(errorText(e)));
+		ok(skillsApi().versions({ id: base }).files.get()).then(setFiles, (e) =>
+			setError(errorText(e)),
+		);
 	}, [base]);
 
 	const file = files?.find((f) => f.path === open);
@@ -427,8 +417,8 @@ function SkillEditor({
 		if (!files) return;
 		setBusy(true);
 		try {
-			const result = saved(
-				await skillsApi()({ name }).versions.post({
+			const result = await saved(
+				skillsApi()({ name }).versions.post({
 					base,
 					files: files.map(({ path, text }) => ({ path, text })),
 				}),

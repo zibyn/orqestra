@@ -6,6 +6,7 @@ import {
 	userMemories,
 } from "@orqestra/conversations";
 import { Elysia, t } from "elysia";
+import { unauthorized } from "./admin.ts";
 import type { SignedIn } from "./app.ts";
 
 const notFound = { errors: { path: { code: "not_found" as const } } };
@@ -14,10 +15,9 @@ const notFound = { errors: { path: { code: "not_found" as const } } };
 export const memoryRoutes = (signedIn: SignedIn) =>
 	new Elysia({ prefix: "/memories" }).use(signedIn).group("", (memories) =>
 		memories
-			.resolve(({ user, status }) =>
-				user
-					? { mine: userMemories(user.id) }
-					: status(401, { errors: { session: { code: "unauthorized" } } }),
+			// a derive, so a signed-out request is refused before its body is validated
+			.derive(({ user, status }) =>
+				user ? { mine: userMemories(user.id) } : status(401, unauthorized),
 			)
 			.get("", async ({ mine }) => {
 				const [list, on] = await Promise.all([mine.list(), mine.on()]);

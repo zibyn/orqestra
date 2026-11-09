@@ -27,8 +27,8 @@ import {
 	FieldLabel,
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
-import { api } from "#/lib/api";
-import { errorText, firstError, ok, saved } from "#/lib/save-errors";
+import { api, ok } from "#/lib/api";
+import { errorText, firstError, saved } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 
 const getSearchProviders = () => ok(api().api["search-providers"].get());

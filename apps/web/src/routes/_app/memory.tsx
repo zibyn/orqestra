@@ -22,19 +22,10 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Switch } from "#/components/ui/switch";
 import { Textarea } from "#/components/ui/textarea";
-import { api } from "#/lib/api";
+import { api, ok } from "#/lib/api";
 import { errorText } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
-
-/** An api call's data; its error thrown, for errorText. */
-async function ok<R extends { data: unknown; error: unknown }>(
-	call: Promise<R>,
-) {
-	const { data, error } = await call;
-	if (error) throw error;
-	return data as NonNullable<R["data"]>;
-}
 
 const memoryApi = () => api().api.memories;
 const getMemories = () => ok(memoryApi().get());
