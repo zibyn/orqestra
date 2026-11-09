@@ -26,6 +26,9 @@ export const thinkingLevel = z.enum([
 /** The largest attachment a User can upload into a Sandbox. */
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
+/** The largest Skill zip an Admin can upload: 10 MB of files unzipped, stored as they are, plus room for the zip's headers. */
+export const SKILL_ZIP_MAX_BYTES = 12 * 1024 * 1024;
+
 /** A message's text, without thinking or tool calls. */
 export const messageText = (message: Message) =>
 	typeof message.content === "string"

@@ -1,3 +1,4 @@
+import type { SaveErrors } from "@orqestra/config/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { Loader2Icon, PlusIcon, UploadIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -39,7 +40,6 @@ import {
 	getSkills,
 	setSkillEnabled,
 	setSkillVersion,
-	uploadSkill,
 } from "#/lib/skills";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
@@ -72,11 +72,18 @@ function Skills() {
 	}
 
 	async function upload(file: File) {
-		const send = (replace: boolean) => {
-			const data = new FormData();
-			data.set("file", file);
-			data.set("replace", String(replace));
-			return uploadSkill({ data });
+		const send = async (replace: boolean) => {
+			const response = await fetch(`/api/skills?replace=${replace}`, {
+				method: "POST",
+				body: file,
+			});
+			// 413 answers why, as a save does
+			if (!response.ok && response.status !== 413)
+				throw new Error(m.request_failed());
+			return (await response.json()) as {
+				errors: SaveErrors;
+				name?: string;
+			};
 		};
 		let result = await send(false);
 		if (
