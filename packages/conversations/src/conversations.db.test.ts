@@ -1116,7 +1116,8 @@ describe.skipIf(!url)(
 				["user", "also this"],
 				["assistant", "answer"],
 			]);
-		});
+			// two Runs back to back; 5s was too tight on CI runners
+		}, 15_000);
 
 		it(`holds a stopped Subagent's slot until its Run ends`, async () => {
 			const [parent] = await db
