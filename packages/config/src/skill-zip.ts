@@ -140,6 +140,14 @@ export function checkSkill(
 	const unsafe = files.find((f) => !safePath(f.path));
 	if (unsafe)
 		return { error: { code: "skill_path_unsafe", path: unsafe.path } };
+	const seen = new Set<string>();
+	for (const { path } of files) {
+		if (seen.has(path))
+			return { error: { code: "skill_path_duplicate", path } };
+		seen.add(path);
+	}
+	const nested = files.find((f) => f.path.endsWith("/SKILL.md"));
+	if (nested) return { error: { code: "skill_md_nested", path: nested.path } };
 	if (files.length > SKILL_MAX_FILES)
 		return { error: { code: "skill_too_many_files" } };
 	if (files.reduce((n, f) => n + f.content.length, 0) > SKILL_MAX_BYTES)
@@ -160,7 +168,7 @@ export function checkSkill(
 	if (
 		typeof description !== "string" ||
 		!description.trim() ||
-		description.length > 1024
+		[...description].length > 1024
 	)
 		return { error: { code: "skill_description_invalid" } };
 	return {

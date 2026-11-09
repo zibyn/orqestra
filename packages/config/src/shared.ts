@@ -109,7 +109,15 @@ export type SaveError =
 				| "skill_too_many_files"
 				| "skill_exists";
 	  }
-	| { code: "skill_path_unsafe" | "skill_symlink"; path: string }
+	| {
+			code:
+				| "skill_path_unsafe"
+				| "skill_symlink"
+				| "skill_path_duplicate"
+				| "skill_md_nested"
+				| "skill_file_binary";
+			path: string;
+	  }
 	| { code: "skill_name_mismatch"; name: string; folder: string }
 	| { code: "invalid"; detail: string }
 	| {
