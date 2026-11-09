@@ -1,7 +1,13 @@
 # Copy .env.example to .env and fill it in, then: docker compose up -d
 name: orqestra
 
+# Docker keeps container logs forever by default
+x-logging: &logging
+  logging:
+    options: { max-size: 10m, max-file: "3" }
+
 x-app: &app
+  <<: *logging
   env_file: .env
   environment:
     DATABASE_URL: postgres://orqestra:${POSTGRES_PASSWORD:-orqestra}@postgres:5432/orqestra
@@ -9,18 +15,21 @@ x-app: &app
 
 services:
   postgres:
-    image: postgres:17-alpine
+    <<: *logging
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: orqestra
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orqestra}
       POSTGRES_DB: orqestra
     volumes:
-      - postgres:/var/lib/postgresql/data
+      # Postgres 18 keeps its data under /var/lib/postgresql/18; a new volume so a 17 one is never read by 18 (see README to upgrade)
+      - postgres18:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U orqestra -d orqestra"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   # Applies database migrations once, before web and worker start
@@ -46,8 +55,10 @@ services:
   worker:
     <<: *app
     image: ghcr.io/zibyn/orqestra-worker:${ORQESTRA_VERSION:-latest}
+    # the worker gives active Runs 10s to stop; Docker's default 10s would kill it first
+    stop_grace_period: 15s
     depends_on:
       migrate: { condition: service_completed_successfully }
 
 volumes:
-  postgres:
+  postgres18:

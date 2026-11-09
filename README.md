@@ -41,6 +41,26 @@ Compose 启动四个服务：`postgres`、`migrate`（执行数据库迁移后�
 
 升级：`docker compose pull && docker compose up -d`，迁移会在 web 和 worker 启动前自动执行。
 
+#### 从 PostgreSQL 17 升级到 18
+
+v0.1.2 之后的 Compose 使用 PostgreSQL 18 和新的数据卷 `postgres18`；旧卷 `orqestra_postgres` 不会被改动，但 18 不能直接读取 17 的数据，需要导出再导入：
+
+```bash
+# 1. 更新代码前，用旧版本（17）导出
+docker compose stop web worker
+docker compose exec -T postgres pg_dump -U orqestra -d orqestra -Fc > orqestra.dump
+
+# 2. 更新后只启动 18，导入数据
+git pull
+docker compose up -d postgres
+docker compose exec -T postgres pg_restore -U orqestra -d orqestra --no-owner < orqestra.dump
+
+# 3. 启动其余服务（迁移会自动执行）
+docker compose up -d
+```
+
+确认数据无误后，可用 `docker volume rm orqestra_postgres` 删除旧卷。
+
 ### 环境变量
 
 | 变量 | 必填 | 说明 |
