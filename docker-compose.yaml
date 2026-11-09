@@ -35,10 +35,8 @@ services:
   # Applies database migrations once, before web and worker start
   migrate:
     <<: *app
-    image: ghcr.io/zibyn/orqestra-worker:${ORQESTRA_VERSION:-latest}
-    build: { context: ., target: worker }
-    working_dir: /app
-    command: ["pnpm", "db:migrate"]
+    image: ghcr.io/zibyn/orqestra-migrate:${ORQESTRA_VERSION:-latest}
+    build: { context: ., target: migrate }
     restart: "no"
     depends_on:
       postgres: { condition: service_healthy }
@@ -55,6 +53,7 @@ services:
   worker:
     <<: *app
     image: ghcr.io/zibyn/orqestra-worker:${ORQESTRA_VERSION:-latest}
+    build: { context: ., target: worker }
     # the worker gives active Runs 10s to stop; Docker's default 10s would kill it first
     stop_grace_period: 15s
     depends_on:

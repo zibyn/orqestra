@@ -37,7 +37,7 @@ cp .env.example .env   # 填写各项，密钥用 openssl rand -base64 32 生成
 docker compose up -d
 ```
 
-Compose 启动四个服务：`postgres`、`migrate`（执行数据库迁移后退出）、`web`（默认端口 3000，可用 `PORT` 修改）和 `worker`。默认拉取 `ghcr.io/zibyn/orqestra-web` 与 `ghcr.io/zibyn/orqestra-worker` 的 `latest` 镜像；用 `ORQESTRA_VERSION=0.1.0` 固定版本，或用 `docker compose up -d --build` 从源码构建。
+Compose 启动四个服务：`postgres`、`migrate`（执行数据库迁移后退出）、`web`（默认端口 3000，可用 `PORT` 修改）和 `worker`。默认拉取 `ghcr.io/zibyn/orqestra-web`、`ghcr.io/zibyn/orqestra-worker` 与 `ghcr.io/zibyn/orqestra-migrate` 的 `latest` 镜像；用 `ORQESTRA_VERSION=0.1.0` 固定版本，或用 `docker compose up -d --build` 从源码构建。
 
 升级：`docker compose pull && docker compose up -d`，迁移会在 web 和 worker 启动前自动执行。
 
