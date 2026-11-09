@@ -2,24 +2,24 @@ import { slugify } from "@orqestra/config/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import {
 	CheckCircle2Icon,
-	Loader2Icon,
+	PlugIcon,
 	PlusIcon,
 	TriangleAlertIcon,
 	XIcon,
 } from "lucide-react";
 import { useState } from "react";
-import { ConsolePage } from "#/components/ConsolePage";
+import {
+	ConsolePage,
+	DeleteButton,
+	FormSheet,
+	Item,
+	ItemList,
+	SheetForm,
+	useSheet,
+} from "#/components/ConsolePage";
 import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
-import {
-	Card,
-	CardAction,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "#/components/ui/card";
 import {
 	Field,
 	FieldDescription,
@@ -30,7 +30,6 @@ import {
 	FieldSet,
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
-import { Label } from "#/components/ui/label";
 import { Switch } from "#/components/ui/switch";
 import {
 	deleteMcpServer,
@@ -55,8 +54,11 @@ type McpTestResult = NonNullable<
 function McpServers() {
 	const servers = Route.useLoaderData();
 	const router = useRouter();
+	const sheet = useSheet<McpServer | undefined>();
 	const [busy, setBusy] = useState<string>();
 	const [error, setError] = useState("");
+	// the connection test of the server saved last, shown under its row
+	const [tested, setTested] = useState<{ id: string; result: McpTestResult }>();
 
 	async function act(key: string, action: () => Promise<unknown>) {
 		setBusy(key);
@@ -72,23 +74,39 @@ function McpServers() {
 	}
 
 	return (
-		<ConsolePage title={m.mcp_servers()} description={m.mcp_servers_hint()}>
-			{servers.map((s) => (
-				<Card key={s.id}>
-					<CardHeader>
-						<CardTitle className="flex items-center gap-2">
-							{s.name}
-							<Badge variant="outline" className="font-mono">
-								{s.id}
-							</Badge>
-						</CardTitle>
-						<CardDescription className="truncate font-mono text-xs">
-							{s.url}
-						</CardDescription>
-						<CardAction className="flex items-center gap-4">
-							<div className="flex items-center gap-2">
+		<ConsolePage
+			title={m.mcp_servers()}
+			description={m.mcp_servers_hint()}
+			action={
+				<Button onClick={() => sheet.show(undefined)}>
+					<PlusIcon data-icon="inline-start" />
+					{m.add_mcp_server()}
+				</Button>
+			}
+		>
+			<ItemList
+				empty={{
+					icon: PlugIcon,
+					title: m.no_mcp_servers_title(),
+					hint: m.no_mcp_servers(),
+				}}
+			>
+				{servers.map((s) => (
+					<Item
+						key={s.id}
+						title={
+							<>
+								{s.name}
+								<Badge variant="outline" className="font-mono">
+									{s.id}
+								</Badge>
+							</>
+						}
+						description={<span className="font-mono text-xs">{s.url}</span>}
+						actions={
+							<>
 								<Switch
-									id={`mcp-${s.id}-enabled`}
+									aria-label={m.mcp_server_enabled()}
 									checked={s.enabled}
 									disabled={!!busy}
 									onCheckedChange={(enabled) =>
@@ -97,75 +115,78 @@ function McpServers() {
 										)
 									}
 								/>
-								<Label htmlFor={`mcp-${s.id}-enabled`}>
-									{m.mcp_server_enabled()}
-								</Label>
-							</div>
-							<Button
-								size="sm"
-								variant="destructive"
-								disabled={!!busy}
-								onClick={() => {
-									if (confirm(m.delete_mcp_server_confirm()))
-										void act(`delete-${s.id}`, () =>
-											deleteMcpServer({ data: s.id }),
-										);
-								}}
-							>
-								{busy === `delete-${s.id}` && (
-									<Loader2Icon
-										data-icon="inline-start"
-										className="animate-spin"
-									/>
-								)}
-								{m.delete()}
-							</Button>
-						</CardAction>
-					</CardHeader>
-					<CardContent className="gap-5">
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={() => sheet.show(s)}
+								>
+									{m.edit()}
+								</Button>
+								<DeleteButton
+									busy={busy === `delete-${s.id}`}
+									disabled={!!busy}
+									onClick={() => {
+										if (confirm(m.delete_mcp_server_confirm()))
+											void act(`delete-${s.id}`, () =>
+												deleteMcpServer({ data: s.id }),
+											);
+									}}
+								/>
+							</>
+						}
+					>
 						{s.headers.some((h) => !h.readable) && (
 							<Alert variant="destructive">
 								<TriangleAlertIcon />
 								<AlertDescription>{m.mcp_header_unreadable()}</AlertDescription>
 							</Alert>
 						)}
-						<McpServerForm existing={s} />
-					</CardContent>
-				</Card>
-			))}
-			<Card>
-				<CardHeader>
-					<CardTitle>{m.add_mcp_server()}</CardTitle>
-				</CardHeader>
-				<CardContent>
-					<McpServerForm />
-				</CardContent>
-			</Card>
+						{tested?.id === s.id && <McpTestOutcome result={tested.result} />}
+					</Item>
+				))}
+			</ItemList>
 			<FieldError>{error}</FieldError>
+			<FormSheet
+				open={sheet.open}
+				onClose={sheet.close}
+				title={sheet.item?.name ?? m.add_mcp_server()}
+			>
+				<McpServerForm
+					existing={sheet.item}
+					onSaved={(id, result) => {
+						setTested(result && { id, result });
+						sheet.close();
+					}}
+				/>
+			</FormSheet>
 		</ConsolePage>
 	);
 }
 
 /** Adds an MCP Server or edits `existing`; a blank header value keeps the stored one. */
-function McpServerForm({ existing }: { existing?: McpServer }) {
+function McpServerForm({
+	existing,
+	onSaved,
+}: {
+	existing?: McpServer;
+	onSaved: (id: string, test?: McpTestResult) => void;
+}) {
 	const router = useRouter();
 	const [name, setName] = useState(existing?.name ?? "");
 	const [id, setId] = useState(existing?.id ?? "");
 	const [idEdited, setIdEdited] = useState(false);
 	const [url, setUrl] = useState(existing?.url ?? "");
-	const blank = () =>
-		existing?.headers.map((h) => ({ name: h.name, value: "" })) ?? [];
-	const [headers, setHeaders] = useState(blank);
+	const [headers, setHeaders] = useState(
+		() => existing?.headers.map((h) => ({ name: h.name, value: "" })) ?? [],
+	);
 	const [busy, setBusy] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
-	const [test, setTest] = useState<McpTestResult>();
 	const fieldId = (field: string) => `mcp-${existing?.id ?? "new"}-${field}`;
 	const setHeader = (i: number, fields: Partial<(typeof headers)[number]>) =>
 		setHeaders(headers.map((h, j) => (j === i ? { ...h, ...fields } : h)));
 
 	async function save() {
 		setBusy(true);
-		setTest(undefined);
 		try {
 			const result = await saveMcpServer({
 				data: {
@@ -178,16 +199,9 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 				},
 			});
 			setErrors(saveErrorTexts(result.errors));
-			setTest(result.test);
 			if (!Object.keys(result.errors).length) {
-				if (!existing) {
-					setName("");
-					setId("");
-					setIdEdited(false);
-					setUrl("");
-				}
-				setHeaders(blank());
 				await router.invalidate();
+				onSaved(id, result.test);
 			}
 		} catch (e) {
 			setErrors({ "": errorText(e) });
@@ -197,48 +211,46 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 	}
 
 	return (
-		<form
-			onSubmit={(e) => {
-				e.preventDefault();
-				void save();
-			}}
+		<SheetForm
+			onSubmit={() => void save()}
+			busy={busy}
+			submitLabel={existing ? m.save() : m.add_mcp_server()}
 		>
 			<FieldGroup className="gap-5">
-				<div className="grid gap-5 md:grid-cols-2">
-					<Field>
-						<FieldLabel htmlFor={fieldId("name")}>
-							{m.mcp_server_name()}
-						</FieldLabel>
-						<Input
-							id={fieldId("name")}
-							required
-							value={name}
-							onChange={(e) => {
-								setName(e.target.value);
-								if (!existing && !idEdited) setId(slugify(e.target.value));
-							}}
-						/>
-					</Field>
-					<Field data-invalid={!!errors.id || undefined}>
-						<FieldLabel htmlFor={fieldId("id")}>{m.mcp_server_id()}</FieldLabel>
-						<Input
-							id={fieldId("id")}
-							required
-							disabled={!!existing}
-							aria-invalid={!!errors.id || undefined}
-							pattern="[a-z0-9][a-z0-9\-]*"
-							value={id}
-							onChange={(e) => {
-								setId(e.target.value);
-								setIdEdited(true);
-							}}
-						/>
-						{!existing && (
-							<FieldDescription>{m.mcp_server_id_hint()}</FieldDescription>
-						)}
-						<FieldError>{errors.id}</FieldError>
-					</Field>
-				</div>
+				<Field>
+					<FieldLabel htmlFor={fieldId("name")}>
+						{m.mcp_server_name()}
+					</FieldLabel>
+					<Input
+						id={fieldId("name")}
+						required
+						value={name}
+						onChange={(e) => {
+							setName(e.target.value);
+							if (!existing && !idEdited) setId(slugify(e.target.value));
+						}}
+					/>
+				</Field>
+				<Field data-invalid={!!errors.id || undefined}>
+					<FieldLabel htmlFor={fieldId("id")}>{m.mcp_server_id()}</FieldLabel>
+					<Input
+						id={fieldId("id")}
+						required
+						disabled={!!existing}
+						className="font-mono"
+						aria-invalid={!!errors.id || undefined}
+						pattern="[a-z0-9][a-z0-9\-]*"
+						value={id}
+						onChange={(e) => {
+							setId(e.target.value);
+							setIdEdited(true);
+						}}
+					/>
+					{!existing && (
+						<FieldDescription>{m.mcp_server_id_hint()}</FieldDescription>
+					)}
+					<FieldError>{errors.id}</FieldError>
+				</Field>
 				<Field>
 					<FieldLabel htmlFor={fieldId("url")}>{m.mcp_server_url()}</FieldLabel>
 					<Input
@@ -263,7 +275,7 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 								<Input
 									aria-label={m.header_name()}
 									placeholder={m.header_name()}
-									className="w-40 font-mono sm:w-56"
+									className="w-40 font-mono"
 									required
 									value={h.name}
 									onChange={(e) => setHeader(i, { name: e.target.value })}
@@ -304,21 +316,9 @@ function McpServerForm({ existing }: { existing?: McpServer }) {
 					</Button>
 					<FieldError>{errors.headers}</FieldError>
 				</FieldSet>
-				<Button
-					type="submit"
-					className="self-start"
-					variant={existing ? "outline" : "default"}
-					disabled={busy}
-				>
-					{busy && (
-						<Loader2Icon data-icon="inline-start" className="animate-spin" />
-					)}
-					{existing ? m.save() : m.add_mcp_server()}
-				</Button>
-				{test && <McpTestOutcome result={test} />}
 				<FieldError>{errors[""]}</FieldError>
 			</FieldGroup>
-		</form>
+		</SheetForm>
 	);
 }
 

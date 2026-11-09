@@ -2,17 +2,17 @@ import type { SaveErrors } from "@orqestra/config/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { BookOpenIcon, Loader2Icon, PlusIcon, UploadIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ConsolePage } from "#/components/ConsolePage";
+import {
+	ConsolePage,
+	DeleteButton,
+	FormSheet,
+	Item,
+	ItemList,
+	SheetForm,
+	useSheet,
+} from "#/components/ConsolePage";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
-import {
-	Card,
-	CardAction,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "#/components/ui/card";
 import {
 	Field,
 	FieldError,
@@ -20,7 +20,7 @@ import {
 	FieldLabel,
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
-import { Label } from "#/components/ui/label";
+import { SheetFooter } from "#/components/ui/sheet";
 import { Switch } from "#/components/ui/switch";
 import {
 	Table,
@@ -55,7 +55,9 @@ function Skills() {
 	const router = useRouter();
 	const input = useRef<HTMLInputElement>(null);
 	const [busy, setBusy] = useState<string>();
-	const [editing, setEditing] = useState<string>();
+	const sheet = useSheet<
+		{ kind: "new"; name?: never } | { kind: "files" | "versions"; name: string }
+	>();
 	const [error, setError] = useState("");
 
 	async function act(key: string, action: () => Promise<unknown>) {
@@ -96,6 +98,8 @@ function Skills() {
 		if (failed) throw new Error(failed);
 	}
 
+	const shown = skills.find((s) => s.name === sheet.item?.name);
+
 	return (
 		<ConsolePage
 			title={m.skills()}
@@ -114,7 +118,11 @@ function Skills() {
 							if (file) void act("upload", () => upload(file));
 						}}
 					/>
-					<Button disabled={!!busy} onClick={() => input.current?.click()}>
+					<Button
+						variant="outline"
+						disabled={!!busy}
+						onClick={() => input.current?.click()}
+					>
 						{busy === "upload" ? (
 							<Loader2Icon data-icon="inline-start" className="animate-spin" />
 						) : (
@@ -122,39 +130,37 @@ function Skills() {
 						)}
 						{m.upload_skill()}
 					</Button>
+					<Button onClick={() => sheet.show({ kind: "new" })}>
+						<PlusIcon data-icon="inline-start" />
+						{m.new_skill()}
+					</Button>
 				</>
 			}
 		>
 			<FieldError>{error}</FieldError>
-			{!skills.length && (
-				<div className="flex flex-col items-center gap-2 py-8 text-center">
-					<BookOpenIcon className="size-8 text-muted-foreground" />
-					<p className="text-lg font-medium">{m.no_skills_title()}</p>
-					<p className="text-sm text-muted-foreground">{m.no_skills()}</p>
-				</div>
-			)}
-			{skills.map((s) => (
-				<Card key={s.name}>
-					<CardHeader>
-						<CardTitle className="flex items-center gap-2">
-							<span className="font-mono">{s.name}</span>
-							<Badge variant="outline" className="font-mono">
-								v{s.versions.find((v) => v.id === s.currentVersionId)?.number}
-							</Badge>
-						</CardTitle>
-						<CardDescription>{s.description}</CardDescription>
-						<CardAction className="flex items-center gap-4">
-							<Button
-								size="sm"
-								variant="outline"
-								disabled={!!busy || editing === s.name}
-								onClick={() => setEditing(s.name)}
-							>
-								{m.edit_skill_files()}
-							</Button>
-							<div className="flex items-center gap-2">
+			<ItemList
+				empty={{
+					icon: BookOpenIcon,
+					title: m.no_skills_title(),
+					hint: m.no_skills(),
+				}}
+			>
+				{skills.map((s) => (
+					<Item
+						key={s.name}
+						title={
+							<>
+								<span className="font-mono">{s.name}</span>
+								<Badge variant="outline" className="font-mono">
+									v{s.versions.find((v) => v.id === s.currentVersionId)?.number}
+								</Badge>
+							</>
+						}
+						description={s.description}
+						actions={
+							<>
 								<Switch
-									id={`skill-${s.name}-enabled`}
+									aria-label={m.skill_enabled()}
 									checked={s.enabled}
 									disabled={!!busy}
 									onCheckedChange={(enabled) =>
@@ -163,39 +169,65 @@ function Skills() {
 										)
 									}
 								/>
-								<Label htmlFor={`skill-${s.name}-enabled`}>
-									{m.skill_enabled()}
-								</Label>
-							</div>
-							<Button
-								size="sm"
-								variant="destructive"
-								disabled={!!busy}
-								onClick={() => {
-									if (confirm(m.delete_skill_confirm()))
-										void act(`delete-${s.name}`, () =>
-											deleteSkill({ data: s.name }),
-										);
-								}}
-							>
-								{busy === `delete-${s.name}` && (
-									<Loader2Icon
-										data-icon="inline-start"
-										className="animate-spin"
-									/>
-								)}
-								{m.delete()}
-							</Button>
-						</CardAction>
-					</CardHeader>
-					<CardContent className="flex flex-col gap-5">
-						{editing === s.name && s.currentVersionId !== null && (
-							<SkillEditor
-								name={s.name}
-								base={s.currentVersionId}
-								onClose={() => setEditing(undefined)}
-							/>
-						)}
+								<Button
+									size="sm"
+									variant="ghost"
+									onClick={() => sheet.show({ kind: "versions", name: s.name })}
+								>
+									{m.skill_versions()}
+								</Button>
+								<Button
+									size="sm"
+									variant="outline"
+									disabled={s.currentVersionId === null}
+									onClick={() => sheet.show({ kind: "files", name: s.name })}
+								>
+									{m.edit_skill_files()}
+								</Button>
+								<DeleteButton
+									busy={busy === `delete-${s.name}`}
+									disabled={!!busy}
+									onClick={() => {
+										if (confirm(m.delete_skill_confirm()))
+											void act(`delete-${s.name}`, () =>
+												deleteSkill({ data: s.name }),
+											);
+									}}
+								/>
+							</>
+						}
+					/>
+				))}
+			</ItemList>
+			<FormSheet
+				open={sheet.open}
+				onClose={sheet.close}
+				className={sheet.item?.kind === "new" ? undefined : "sm:max-w-3xl"}
+				title={
+					sheet.item?.kind === "new" ? (
+						m.new_skill()
+					) : (
+						<span className="font-mono">{sheet.item?.name}</span>
+					)
+				}
+				description={
+					sheet.item?.kind === "new"
+						? m.new_skill_hint()
+						: sheet.item?.kind === "versions"
+							? m.skill_versions()
+							: m.edit_skill_files()
+				}
+			>
+				{sheet.item?.kind === "new" && <NewSkillForm onDone={sheet.close} />}
+				{sheet.item?.kind === "files" && shown?.currentVersionId != null && (
+					<SkillEditor
+						name={shown.name}
+						base={shown.currentVersionId}
+						onClose={sheet.close}
+					/>
+				)}
+				{sheet.item?.kind === "versions" && shown && (
+					<div className="flex-1 overflow-y-auto p-4">
 						<Table>
 							<TableHeader>
 								<TableRow>
@@ -206,17 +238,17 @@ function Skills() {
 								</TableRow>
 							</TableHeader>
 							<TableBody>
-								{s.versions.map((v) => (
+								{shown.versions.map((v) => (
 									<TableRow key={v.id}>
 										<TableCell className="font-mono">v{v.number}</TableCell>
 										<TableCell>
 											{new Date(v.createdAt).toLocaleString(getLocale())}
 										</TableCell>
-										<TableCell className="max-w-md truncate">
+										<TableCell className="max-w-xs truncate">
 											{v.description}
 										</TableCell>
 										<TableCell className="text-right">
-											{v.id === s.currentVersionId ? (
+											{v.id === shown.currentVersionId ? (
 												<Badge variant="secondary">
 													{m.skill_current_version()}
 												</Badge>
@@ -233,7 +265,7 @@ function Skills() {
 														)
 															void act(`version-${v.id}`, () =>
 																setSkillVersion({
-																	data: { name: s.name, versionId: v.id },
+																	data: { name: shown.name, versionId: v.id },
 																}),
 															);
 													}}
@@ -252,24 +284,16 @@ function Skills() {
 								))}
 							</TableBody>
 						</Table>
-					</CardContent>
-				</Card>
-			))}
-			<Card>
-				<CardHeader>
-					<CardTitle>{m.new_skill()}</CardTitle>
-					<CardDescription>{m.new_skill_hint()}</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<NewSkillForm />
-				</CardContent>
-			</Card>
+						<FieldError>{error}</FieldError>
+					</div>
+				)}
+			</FormSheet>
 		</ConsolePage>
 	);
 }
 
 /** Creates a Skill whose SKILL.md holds only the name and description. */
-function NewSkillForm() {
+function NewSkillForm({ onDone }: { onDone: () => void }) {
 	const router = useRouter();
 	const [name, setName] = useState("");
 	const [description, setDescription] = useState("");
@@ -282,9 +306,8 @@ function NewSkillForm() {
 			const result = await createSkill({ data: { name, description } });
 			setErrors(saveErrorTexts(result.errors));
 			if (!Object.keys(result.errors).length) {
-				setName("");
-				setDescription("");
 				await router.invalidate();
+				onDone();
 			}
 		} catch (e) {
 			setErrors({ "": errorText(e) });
@@ -294,11 +317,10 @@ function NewSkillForm() {
 	}
 
 	return (
-		<form
-			onSubmit={(e) => {
-				e.preventDefault();
-				void create();
-			}}
+		<SheetForm
+			onSubmit={() => void create()}
+			busy={busy}
+			submitLabel={m.create_skill()}
 		>
 			<FieldGroup className="gap-5">
 				<Field data-invalid={!!errors.name || undefined}>
@@ -326,17 +348,9 @@ function NewSkillForm() {
 					/>
 					<FieldError>{errors.description}</FieldError>
 				</Field>
-				<Button type="submit" className="self-start" disabled={busy}>
-					{busy ? (
-						<Loader2Icon data-icon="inline-start" className="animate-spin" />
-					) : (
-						<PlusIcon data-icon="inline-start" />
-					)}
-					{m.create_skill()}
-				</Button>
 				<FieldError>{errors[""]}</FieldError>
 			</FieldGroup>
-		</form>
+		</SheetForm>
 	);
 }
 
@@ -399,86 +413,92 @@ function SkillEditor({
 	}
 
 	if (!files)
-		return error ? (
-			<FieldError>{error}</FieldError>
-		) : (
-			<Loader2Icon className="animate-spin text-muted-foreground" />
+		return (
+			<div className="p-4">
+				{error ? (
+					<FieldError>{error}</FieldError>
+				) : (
+					<Loader2Icon className="animate-spin text-muted-foreground" />
+				)}
+			</div>
 		);
 	return (
-		<div className="flex flex-col gap-3 rounded-md border p-3">
-			<div className="flex flex-col gap-3 md:flex-row">
-				<ul className="flex shrink-0 flex-col gap-1 md:w-56">
-					{files.map((f) => (
-						<li key={f.path}>
-							<Button
-								size="sm"
-								variant={f.path === open ? "secondary" : "ghost"}
-								className="w-full justify-start truncate font-mono"
-								onClick={() => setOpen(f.path)}
-							>
-								{f.path}
-							</Button>
-						</li>
-					))}
-				</ul>
-				<div className="flex min-w-0 flex-1 flex-col gap-2">
-					{file && (
-						<>
-							{file.text === undefined ? (
-								<p className="text-sm text-muted-foreground">
-									{m.skill_binary_file({ size: file.size })}
-								</p>
-							) : (
-								<Textarea
-									aria-label={file.path}
-									className="min-h-64 font-mono text-xs"
-									value={file.text}
-									onChange={(e) =>
-										setFiles(
-											files.map((f) =>
-												f.path === file.path
-													? { ...f, text: e.target.value }
-													: f,
-											),
-										)
+		<>
+			<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+				<div className="flex flex-col gap-3 md:flex-row">
+					<ul className="flex shrink-0 flex-col gap-1 md:w-56">
+						{files.map((f) => (
+							<li key={f.path}>
+								<Button
+									size="sm"
+									variant={f.path === open ? "secondary" : "ghost"}
+									className="w-full justify-start truncate font-mono"
+									onClick={() => setOpen(f.path)}
+								>
+									{f.path}
+								</Button>
+							</li>
+						))}
+					</ul>
+					<div className="flex min-w-0 flex-1 flex-col gap-2">
+						{file && (
+							<>
+								{file.text === undefined ? (
+									<p className="text-sm text-muted-foreground">
+										{m.skill_binary_file({ size: file.size })}
+									</p>
+								) : (
+									<Textarea
+										aria-label={file.path}
+										className="min-h-64 font-mono text-xs"
+										value={file.text}
+										onChange={(e) =>
+											setFiles(
+												files.map((f) =>
+													f.path === file.path
+														? { ...f, text: e.target.value }
+														: f,
+												),
+											)
+										}
+									/>
+								)}
+								<Button
+									size="sm"
+									variant="outline"
+									className="self-start"
+									onClick={() =>
+										setFiles(files.filter((f) => f.path !== file.path))
 									}
-								/>
-							)}
-							<Button
-								size="sm"
-								variant="outline"
-								className="self-start"
-								onClick={() =>
-									setFiles(files.filter((f) => f.path !== file.path))
-								}
-							>
-								{m.delete()}
-							</Button>
-						</>
-					)}
+								>
+									{m.delete()}
+								</Button>
+							</>
+						)}
+					</div>
 				</div>
+				<form
+					className="flex gap-2"
+					onSubmit={(e) => {
+						e.preventDefault();
+						add();
+					}}
+				>
+					<Input
+						className="font-mono"
+						placeholder={m.skill_new_file()}
+						aria-label={m.skill_new_file()}
+						value={newPath}
+						onChange={(e) => setNewPath(e.target.value)}
+					/>
+					<Button type="submit" variant="outline">
+						<PlusIcon data-icon="inline-start" />
+						{m.add_skill_file()}
+					</Button>
+				</form>
+				<FieldError>{error}</FieldError>
 			</div>
-			<form
-				className="flex gap-2"
-				onSubmit={(e) => {
-					e.preventDefault();
-					add();
-				}}
-			>
-				<Input
-					className="font-mono"
-					placeholder={m.skill_new_file()}
-					aria-label={m.skill_new_file()}
-					value={newPath}
-					onChange={(e) => setNewPath(e.target.value)}
-				/>
-				<Button type="submit" variant="outline">
-					<PlusIcon data-icon="inline-start" />
-					{m.add_skill_file()}
-				</Button>
-			</form>
-			<FieldError>{error}</FieldError>
-			<div className="flex gap-2">
+			<SheetFooter className="flex-row border-t">
 				<Button disabled={busy} onClick={() => void save()}>
 					{busy && (
 						<Loader2Icon data-icon="inline-start" className="animate-spin" />
@@ -488,7 +508,7 @@ function SkillEditor({
 				<Button variant="ghost" disabled={busy} onClick={onClose}>
 					{m.cancel()}
 				</Button>
-			</div>
-		</div>
+			</SheetFooter>
+		</>
 	);
 }

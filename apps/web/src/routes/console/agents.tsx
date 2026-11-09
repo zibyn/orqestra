@@ -7,23 +7,22 @@ import {
 	toolName,
 } from "@orqestra/config/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { Loader2Icon, PlusIcon, TriangleAlertIcon } from "lucide-react";
+import { PlusIcon, TriangleAlertIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { MessageResponse } from "#/components/ai-elements/message";
-import { ConsolePage } from "#/components/ConsolePage";
+import {
+	ConsolePage,
+	DeleteButton,
+	FormSheet,
+	Item,
+	ItemList,
+	SheetForm,
+	useSheet,
+} from "#/components/ConsolePage";
 import { Picker } from "#/components/Picker";
 import { Alert, AlertDescription } from "#/components/ui/alert";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
-import {
-	Card,
-	CardAction,
-	CardContent,
-	CardDescription,
-	CardFooter,
-	CardHeader,
-	CardTitle,
-} from "#/components/ui/card";
 import {
 	FieldContent,
 	FieldDescription,
@@ -51,44 +50,43 @@ type Listed = Data["agents"][number];
 
 function Agents() {
 	const { agents, availableTools, availableSkills } = Route.useLoaderData();
-	const [editing, setEditing] = useState<string | "new">();
+	const sheet = useSheet<Listed | undefined>();
 
 	return (
 		<ConsolePage
 			title={m.console_agents()}
 			description={m.agents_hint()}
 			action={
-				editing !== "new" && (
-					<Button onClick={() => setEditing("new")}>
-						<PlusIcon data-icon="inline-start" />
-						{m.new_agent()}
-					</Button>
-				)
+				<Button onClick={() => sheet.show(undefined)}>
+					<PlusIcon data-icon="inline-start" />
+					{m.new_agent()}
+				</Button>
 			}
 		>
-			{editing === "new" && <AgentForm onDone={() => setEditing(undefined)} />}
-			{agents.map((agent) =>
-				editing === agent.id ? (
-					<AgentForm
-						key={agent.id}
-						agent={agent}
-						onDone={() => setEditing(undefined)}
-					/>
-				) : (
-					<AgentCard
+			<ItemList>
+				{agents.map((agent) => (
+					<AgentItem
 						key={agent.id}
 						agent={agent}
 						availableTools={availableTools}
 						availableSkills={availableSkills}
-						onEdit={() => setEditing(agent.id)}
+						onEdit={() => sheet.show(agent)}
 					/>
-				),
-			)}
+				))}
+			</ItemList>
+			<FormSheet
+				open={sheet.open}
+				onClose={sheet.close}
+				className="sm:max-w-2xl"
+				title={sheet.item?.definition.name ?? m.new_agent()}
+			>
+				<AgentForm agent={sheet.item} onDone={sheet.close} />
+			</FormSheet>
 		</ConsolePage>
 	);
 }
 
-function AgentCard({
+function AgentItem({
 	agent,
 	availableTools,
 	availableSkills,
@@ -123,9 +121,9 @@ function AgentCard({
 	];
 
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle className="flex flex-wrap items-center gap-2">
+		<Item
+			title={
+				<>
 					{def.name}
 					<Badge variant="outline" className="font-mono">
 						{agent.id}
@@ -134,17 +132,17 @@ function AgentCard({
 					{!def.pickable && (
 						<Badge variant="secondary">{m.agent_template_only()}</Badge>
 					)}
-				</CardTitle>
-				<CardDescription>{def.description}</CardDescription>
-				<CardAction className="flex gap-2">
+				</>
+			}
+			description={def.description}
+			actions={
+				<>
 					<Button size="sm" variant="outline" onClick={onEdit}>
 						{m.edit()}
 					</Button>
 					{!def.default && (
-						<Button
-							size="sm"
-							variant="destructive"
-							disabled={busy}
+						<DeleteButton
+							busy={busy}
 							onClick={async () => {
 								if (!confirm(m.delete_agent_confirm())) return;
 								setBusy(true);
@@ -157,47 +155,38 @@ function AgentCard({
 									setBusy(false);
 								}
 							}}
-						>
-							{busy && (
-								<Loader2Icon
-									data-icon="inline-start"
-									className="animate-spin"
-								/>
-							)}
-							{m.delete()}
-						</Button>
+						/>
 					)}
-				</CardAction>
-			</CardHeader>
-			<CardContent>
-				<div className="flex flex-wrap items-center gap-1.5">
-					<span className="mr-1 text-muted-foreground">{m.agent_models()}</span>
-					{agent.models.map((model) => (
-						<Badge
-							key={model}
-							variant={model === agent.defaultModel ? "default" : "secondary"}
-							className="font-mono"
-						>
-							{model}
-							{model === agent.defaultModel && ` · ${m.default_marker()}`}
-						</Badge>
-					))}
-				</div>
-				{issues.length > 0 && (
-					<Alert variant="destructive">
-						<TriangleAlertIcon />
-						<AlertDescription>
-							<ul className="flex flex-col gap-1">
-								{issues.map((issue) => (
-									<li key={issue}>{issue}</li>
-								))}
-							</ul>
-						</AlertDescription>
-					</Alert>
-				)}
-				<FieldError>{error}</FieldError>
-			</CardContent>
-		</Card>
+				</>
+			}
+		>
+			<div className="flex flex-wrap items-center gap-1.5 text-sm">
+				<span className="mr-1 text-muted-foreground">{m.agent_models()}</span>
+				{agent.models.map((model) => (
+					<Badge
+						key={model}
+						variant={model === agent.defaultModel ? "default" : "secondary"}
+						className="font-mono"
+					>
+						{model}
+						{model === agent.defaultModel && ` · ${m.default_marker()}`}
+					</Badge>
+				))}
+			</div>
+			{issues.length > 0 && (
+				<Alert variant="destructive">
+					<TriangleAlertIcon />
+					<AlertDescription>
+						<ul className="flex flex-col gap-1">
+							{issues.map((issue) => (
+								<li key={issue}>{issue}</li>
+							))}
+						</ul>
+					</AlertDescription>
+				</Alert>
+			)}
+			<FieldError>{error}</FieldError>
+		</Item>
 	);
 }
 
@@ -275,258 +264,232 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 	}
 
 	return (
-		<Card>
-			<CardHeader className="border-b">
-				<CardTitle>{agent ? agent.definition.name : m.new_agent()}</CardTitle>
-			</CardHeader>
-			<form
-				className="flex flex-col gap-(--card-spacing)"
-				onSubmit={(e) => {
-					e.preventDefault();
-					void save();
-				}}
-			>
-				<CardContent>
-					<FieldGroup className="gap-6">
-						<div className="grid gap-6 md:grid-cols-2">
-							<Field
-								id={fieldId("name")}
-								label={m.agent_name()}
-								error={fieldError("name")}
-							>
-								<Input
-									id={fieldId("name")}
-									required
-									value={def.name}
-									onChange={(e) => {
-										update({ name: e.target.value });
-										if (!agent && !idEdited) setId(slugify(e.target.value));
-									}}
-								/>
-							</Field>
-							<Field
-								id={fieldId("id")}
-								label={m.agent_id()}
-								error={fieldError("id")}
-							>
-								<Input
-									id={fieldId("id")}
-									required
-									disabled={!!agent}
-									pattern="[a-z0-9][a-z0-9\-]*"
-									value={id}
-									onChange={(e) => {
-										setId(e.target.value);
-										setIdEdited(true);
-									}}
-								/>
-							</Field>
-						</div>
-						<Field
-							id={fieldId("description")}
-							label={m.agent_description()}
-							hint={m.agent_description_hint()}
-							error={fieldError("description")}
-						>
-							<Textarea
-								id={fieldId("description")}
-								required
-								value={def.description}
-								onChange={(e) => update({ description: e.target.value })}
-							/>
-						</Field>
-						<UiField>
-							<div className="flex items-center justify-between">
-								<FieldLabel htmlFor={fieldId("instructions")}>
-									{m.agent_instructions()}
-								</FieldLabel>
-								<div className="flex gap-1">
-									<Button
-										type="button"
-										size="sm"
-										variant={preview ? "ghost" : "secondary"}
-										aria-pressed={!preview}
-										onClick={() => setPreview(false)}
-									>
-										{m.edit()}
-									</Button>
-									<Button
-										type="button"
-										size="sm"
-										variant={preview ? "secondary" : "ghost"}
-										aria-pressed={preview}
-										onClick={() => setPreview(true)}
-									>
-										{m.preview()}
-									</Button>
-								</div>
-							</div>
-							{preview ? (
-								<div className="min-h-16 rounded-md border px-2.5 py-2">
-									<MessageResponse>{def.instructions}</MessageResponse>
-								</div>
-							) : (
-								<Textarea
-									id={fieldId("instructions")}
-									className="min-h-48 font-mono"
-									value={def.instructions}
-									onChange={(e) => update({ instructions: e.target.value })}
-								/>
-							)}
-						</UiField>
-						<div className="grid gap-6 md:grid-cols-2">
-							<Toggles
-								label={m.agent_models()}
-								hint={m.agent_models_hint()}
-								error={fieldError("models")}
-								items={modelChoices.map((x) => ({
-									value: x.ref,
-									label: x.name,
-								}))}
-								checked={def.models ?? []}
-								onToggle={(ref, on) => {
-									const models = toggle(def.models, ref, on);
-									update({
-										models,
-										defaultModel:
-											models &&
-											def.defaultModel &&
-											!models.includes(def.defaultModel)
-												? undefined
-												: def.defaultModel,
-									});
-								}}
-								idPrefix={fieldId("model")}
-							/>
-							<Picker
-								label={m.agent_default_model()}
-								error={fieldError("defaultModel")}
-								value={def.defaultModel ?? AUTO}
-								onChange={(v) =>
-									update({ defaultModel: v === AUTO ? undefined : v })
-								}
-								items={[
-									{ value: AUTO, label: m.automatic() },
-									...modelChoices
-										.filter((x) => !def.models || def.models.includes(x.ref))
-										.map((x) => ({ value: x.ref, label: x.name })),
-								]}
-							/>
-							<Toggles
-								label={m.agent_thinking_allowed()}
-								hint={m.agent_thinking_allowed_hint()}
-								error={fieldError("thinking.allowed")}
-								items={thinkingLevel.options.map((l) => ({
-									value: l,
-									label: l,
-								}))}
-								checked={def.thinking?.allowed ?? []}
-								onToggle={(level, on) =>
-									update({
-										thinking: {
-											...def.thinking,
-											allowed: toggle(def.thinking?.allowed, level, on),
-										},
-									})
-								}
-								idPrefix={fieldId("thinking")}
-							/>
-							<Picker
-								label={m.agent_thinking_default()}
-								error={fieldError("thinking.default")}
-								value={def.thinking?.default ?? AUTO}
-								onChange={(v) =>
-									update({
-										thinking: {
-											...def.thinking,
-											default: v === AUTO ? undefined : (v as AgentThinking),
-										},
-									})
-								}
-								items={[
-									{ value: AUTO, label: m.automatic() },
-									...(def.thinking?.allowed ?? thinkingLevel.options).map(
-										(l) => ({
-											value: l,
-											label: l,
-										}),
-									),
-								]}
-							/>
-						</div>
-						<Toggles
-							label={m.agent_tools()}
-							error={fieldError("tools")}
-							items={[
-								...toolName.options.map((t) => ({ value: t, label: t })),
-								...mcpServers.map((s) => ({
-									value: mcpToolRef(s.id),
-									label: m.mcp_server_tool({ name: s.name }),
-								})),
-							]}
-							checked={def.tools ?? toolName.options}
-							onToggle={(tool, on) => {
-								const tools = on
-									? [...(def.tools ?? toolName.options), tool]
-									: (def.tools ?? toolName.options).filter((t) => t !== tool);
-								// Search and Scrape without MCP Servers is what omitting `tools` means
-								update({
-									tools:
-										toolName.options.every((t) => tools.includes(t)) &&
-										!tools.some(mcpServerOf)
-											? undefined
-											: tools,
-								});
+		<SheetForm onSubmit={() => void save()} busy={busy} submitLabel={m.save()}>
+			<FieldGroup className="gap-6">
+				<div className="grid gap-6 md:grid-cols-2">
+					<Field
+						id={fieldId("name")}
+						label={m.agent_name()}
+						error={fieldError("name")}
+					>
+						<Input
+							id={fieldId("name")}
+							required
+							value={def.name}
+							onChange={(e) => {
+								update({ name: e.target.value });
+								if (!agent && !idEdited) setId(slugify(e.target.value));
 							}}
-							idPrefix={fieldId("tool")}
 						/>
-						<Toggles
-							label={m.agent_skills()}
-							hint={m.agent_skills_hint()}
-							error={fieldError("skills")}
-							items={skillChoices.map((name) => ({
-								value: name,
-								label: availableSkills.includes(name)
-									? name
-									: m.skill_unavailable_label({ name }),
-							}))}
-							checked={def.skills ?? []}
-							onToggle={(name, on) =>
-								update({ skills: toggle(def.skills, name, on) })
-							}
-							idPrefix={fieldId("skill")}
+					</Field>
+					<Field
+						id={fieldId("id")}
+						label={m.agent_id()}
+						error={fieldError("id")}
+					>
+						<Input
+							id={fieldId("id")}
+							required
+							disabled={!!agent}
+							pattern="[a-z0-9][a-z0-9\-]*"
+							value={id}
+							onChange={(e) => {
+								setId(e.target.value);
+								setIdEdited(true);
+							}}
 						/>
-						<SwitchField
-							id={fieldId("pickable")}
-							label={m.agent_pickable()}
-							hint={m.agent_pickable_hint()}
-							error={fieldError("pickable")}
-							checked={def.pickable ?? true}
-							onChange={(pickable) => update({ pickable })}
+					</Field>
+				</div>
+				<Field
+					id={fieldId("description")}
+					label={m.agent_description()}
+					hint={m.agent_description_hint()}
+					error={fieldError("description")}
+				>
+					<Textarea
+						id={fieldId("description")}
+						required
+						value={def.description}
+						onChange={(e) => update({ description: e.target.value })}
+					/>
+				</Field>
+				<UiField>
+					<div className="flex items-center justify-between">
+						<FieldLabel htmlFor={fieldId("instructions")}>
+							{m.agent_instructions()}
+						</FieldLabel>
+						<div className="flex gap-1">
+							<Button
+								type="button"
+								size="sm"
+								variant={preview ? "ghost" : "secondary"}
+								aria-pressed={!preview}
+								onClick={() => setPreview(false)}
+							>
+								{m.edit()}
+							</Button>
+							<Button
+								type="button"
+								size="sm"
+								variant={preview ? "secondary" : "ghost"}
+								aria-pressed={preview}
+								onClick={() => setPreview(true)}
+							>
+								{m.preview()}
+							</Button>
+						</div>
+					</div>
+					{preview ? (
+						<div className="min-h-16 rounded-md border px-2.5 py-2">
+							<MessageResponse>{def.instructions}</MessageResponse>
+						</div>
+					) : (
+						<Textarea
+							id={fieldId("instructions")}
+							className="min-h-48 font-mono"
+							value={def.instructions}
+							onChange={(e) => update({ instructions: e.target.value })}
 						/>
-						<SwitchField
-							id={fieldId("default")}
-							label={m.agent_default()}
-							error={fieldError("default")}
-							checked={def.default ?? false}
-							onChange={(on) => update({ default: on })}
-						/>
-						<FieldError>{errors[""]}</FieldError>
-					</FieldGroup>
-				</CardContent>
-				<CardFooter className="gap-2 border-t">
-					<Button type="submit" disabled={busy}>
-						{busy && (
-							<Loader2Icon data-icon="inline-start" className="animate-spin" />
-						)}
-						{m.save()}
-					</Button>
-					<Button type="button" variant="outline" onClick={onDone}>
-						{m.cancel()}
-					</Button>
-				</CardFooter>
-			</form>
-		</Card>
+					)}
+				</UiField>
+				<div className="grid gap-6 md:grid-cols-2">
+					<Toggles
+						label={m.agent_models()}
+						hint={m.agent_models_hint()}
+						error={fieldError("models")}
+						items={modelChoices.map((x) => ({
+							value: x.ref,
+							label: x.name,
+						}))}
+						checked={def.models ?? []}
+						onToggle={(ref, on) => {
+							const models = toggle(def.models, ref, on);
+							update({
+								models,
+								defaultModel:
+									models &&
+									def.defaultModel &&
+									!models.includes(def.defaultModel)
+										? undefined
+										: def.defaultModel,
+							});
+						}}
+						idPrefix={fieldId("model")}
+					/>
+					<Picker
+						label={m.agent_default_model()}
+						error={fieldError("defaultModel")}
+						value={def.defaultModel ?? AUTO}
+						onChange={(v) =>
+							update({ defaultModel: v === AUTO ? undefined : v })
+						}
+						items={[
+							{ value: AUTO, label: m.automatic() },
+							...modelChoices
+								.filter((x) => !def.models || def.models.includes(x.ref))
+								.map((x) => ({ value: x.ref, label: x.name })),
+						]}
+					/>
+					<Toggles
+						label={m.agent_thinking_allowed()}
+						hint={m.agent_thinking_allowed_hint()}
+						error={fieldError("thinking.allowed")}
+						items={thinkingLevel.options.map((l) => ({
+							value: l,
+							label: l,
+						}))}
+						checked={def.thinking?.allowed ?? []}
+						onToggle={(level, on) =>
+							update({
+								thinking: {
+									...def.thinking,
+									allowed: toggle(def.thinking?.allowed, level, on),
+								},
+							})
+						}
+						idPrefix={fieldId("thinking")}
+					/>
+					<Picker
+						label={m.agent_thinking_default()}
+						error={fieldError("thinking.default")}
+						value={def.thinking?.default ?? AUTO}
+						onChange={(v) =>
+							update({
+								thinking: {
+									...def.thinking,
+									default: v === AUTO ? undefined : (v as AgentThinking),
+								},
+							})
+						}
+						items={[
+							{ value: AUTO, label: m.automatic() },
+							...(def.thinking?.allowed ?? thinkingLevel.options).map((l) => ({
+								value: l,
+								label: l,
+							})),
+						]}
+					/>
+				</div>
+				<Toggles
+					label={m.agent_tools()}
+					error={fieldError("tools")}
+					items={[
+						...toolName.options.map((t) => ({ value: t, label: t })),
+						...mcpServers.map((s) => ({
+							value: mcpToolRef(s.id),
+							label: m.mcp_server_tool({ name: s.name }),
+						})),
+					]}
+					checked={def.tools ?? toolName.options}
+					onToggle={(tool, on) => {
+						const tools = on
+							? [...(def.tools ?? toolName.options), tool]
+							: (def.tools ?? toolName.options).filter((t) => t !== tool);
+						// Search and Scrape without MCP Servers is what omitting `tools` means
+						update({
+							tools:
+								toolName.options.every((t) => tools.includes(t)) &&
+								!tools.some(mcpServerOf)
+									? undefined
+									: tools,
+						});
+					}}
+					idPrefix={fieldId("tool")}
+				/>
+				<Toggles
+					label={m.agent_skills()}
+					hint={m.agent_skills_hint()}
+					error={fieldError("skills")}
+					items={skillChoices.map((name) => ({
+						value: name,
+						label: availableSkills.includes(name)
+							? name
+							: m.skill_unavailable_label({ name }),
+					}))}
+					checked={def.skills ?? []}
+					onToggle={(name, on) =>
+						update({ skills: toggle(def.skills, name, on) })
+					}
+					idPrefix={fieldId("skill")}
+				/>
+				<SwitchField
+					id={fieldId("pickable")}
+					label={m.agent_pickable()}
+					hint={m.agent_pickable_hint()}
+					error={fieldError("pickable")}
+					checked={def.pickable ?? true}
+					onChange={(pickable) => update({ pickable })}
+				/>
+				<SwitchField
+					id={fieldId("default")}
+					label={m.agent_default()}
+					error={fieldError("default")}
+					checked={def.default ?? false}
+					onChange={(on) => update({ default: on })}
+				/>
+				<FieldError>{errors[""]}</FieldError>
+			</FieldGroup>
+		</SheetForm>
 	);
 }
 

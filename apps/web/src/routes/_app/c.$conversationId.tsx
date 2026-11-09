@@ -194,7 +194,7 @@ function ConversationView() {
 						{running && !live && (
 							<Loader2Icon
 								aria-label={m.generating()}
-								className="size-4 animate-spin text-muted-foreground"
+								className="size-4 animate-spin text-signal"
 							/>
 						)}
 						{conversation.status === "failed" && (
@@ -413,7 +413,9 @@ function ToolCallView({
 					<span className="font-medium text-foreground">{call.name}</span>{" "}
 					{Object.values(call.arguments).map(String).join(" · ")}
 				</span>
-				{!result && <Loader2Icon className="size-3.5 animate-spin" />}
+				{!result && (
+					<Loader2Icon className="size-3.5 animate-spin text-signal" />
+				)}
 			</summary>
 			{result && (
 				<pre
@@ -448,7 +450,7 @@ function SubagentView({ run }: { run: SubagentTranscript }) {
 				{running ? (
 					<Loader2Icon
 						aria-label={m.generating()}
-						className="ml-auto size-3.5 shrink-0 animate-spin"
+						className="ml-auto size-3.5 shrink-0 animate-spin text-signal"
 					/>
 				) : (
 					<span
@@ -588,7 +590,7 @@ function SubagentPanel({
 						(loaded.isFetching && !loaded.data)) && (
 						<Loader2Icon
 							aria-label={m.generating()}
-							className="size-4 animate-spin text-muted-foreground"
+							className="size-4 animate-spin text-signal"
 						/>
 					)}
 				</div>

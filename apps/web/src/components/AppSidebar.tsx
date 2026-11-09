@@ -45,7 +45,7 @@ export function AppSidebar({
 	conversations: { id: string; title: string | null; background: boolean }[];
 }) {
 	return (
-		<Sidebar>
+		<Sidebar variant="inset">
 			<SidebarHeader>
 				<Button
 					variant="secondary"
@@ -124,7 +124,7 @@ function ConversationItem({
 				{conversation.background && (
 					<Loader2Icon
 						aria-label={m.background_subagents()}
-						className="ml-auto animate-spin text-muted-foreground"
+						className="ml-auto animate-spin text-signal"
 					/>
 				)}
 			</SidebarMenuButton>

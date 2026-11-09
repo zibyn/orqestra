@@ -5,7 +5,6 @@ import {
 	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { MessageSquareIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import { Composer } from "#/components/Composer";
 import { sendMessage, startConversation } from "#/lib/conversation-fns";
@@ -27,23 +26,23 @@ function NewConversation() {
 	const router = useRouter();
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col">
-			<div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
-				<MessageSquareIcon className="size-8 text-muted-foreground" />
-				<h1 className="text-lg font-medium">{m.empty_title()}</h1>
-				<p className="text-sm text-muted-foreground">
-					{!agentId ? (
-						user.admin ? (
+		// the greeting and the Composer are one block, centred a little above the middle
+		<div className="flex min-h-0 flex-1 flex-col justify-center pb-[12svh]">
+			<div className="flex flex-col items-center gap-3 px-4 pb-8 text-center">
+				<h1 className="text-3xl font-semibold sm:text-4xl">
+					{m.empty_title()}
+				</h1>
+				{!agentId && (
+					<p className="text-sm text-muted-foreground">
+						{user.admin ? (
 							<Link to="/console/providers" className="text-link underline">
 								{m.no_models_admin()}
 							</Link>
 						) : (
 							m.no_models_member()
-						)
-					) : (
-						m.empty_hint()
-					)}
-				</p>
+						)}
+					</p>
+				)}
 			</div>
 			{agentId && (
 				<Composer

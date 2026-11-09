@@ -11,7 +11,6 @@
   "sign_out": "退出登录",
   "toggle_sidebar": "切换侧边栏",
   "empty_title": "今天想做点什么？",
-  "empty_hint": "在下方输入消息，开始新的会话。",
   "composer_placeholder": "给 Agent 发消息…",
   "composer_skills": "Skill",
   "skill_used": "使用了 Skill：{name}",
@@ -146,7 +145,7 @@
   "skills_hint": "按 Agent Skills 标准组织的能力：一个包含 SKILL.md 的目录，以及可选的脚本、参考资料和资源文件。以 zip 上传或直接在这里编写，每次上传或编辑都生成一个新版本。",
   "upload_skill": "上传 Skill",
   "no_skills_title": "还没有 Skill",
-  "no_skills": "上传一个 zip，SKILL.md 放在根目录或唯一的顶层目录下；或者在下方新建一个。",
+  "no_skills": "上传一个 zip，SKILL.md 放在根目录或唯一的顶层目录下；或者新建一个。",
   "orrery": "Orrery",
   "skill_enabled": "启用",
   "delete_skill_confirm": "删除这个 Skill 及其所有版本？它会从所有 Agent Definition 中移除。",
@@ -214,5 +213,12 @@
   "remove_attachment": "移除 {name}",
   "attachments": "附件",
   "attachment_too_large": "{name} 超过 {limit}。",
-  "attachment_failed": "{name} 上传失败。"
+  "attachment_failed": "{name} 上传失败。",
+  "skill_versions": "版本历史",
+  "no_providers_title": "还没有提供商",
+  "no_providers": "添加一个提供商并填入 API key，再启用它的模型。",
+  "no_mcp_servers_title": "还没有 MCP Server",
+  "no_mcp_servers": "添加一个 MCP Server，它的 Tools 就能分给 Agent 使用。",
+  "no_search_providers_title": "还没有 Search Provider",
+  "no_search_providers": "添加一个 Search Provider 来提供 Search 和 Scrape Tool。"
 }

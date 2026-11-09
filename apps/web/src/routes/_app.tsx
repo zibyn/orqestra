@@ -31,7 +31,7 @@ function AppLayout() {
 	return (
 		<SidebarProvider>
 			<AppSidebar user={user} conversations={conversations} />
-			<SidebarInset className="h-svh">
+			<SidebarInset className="h-svh overflow-hidden md:h-[calc(100svh-1rem)]">
 				<header className="flex h-12 shrink-0 items-center px-2">
 					<SidebarTrigger aria-label={m.toggle_sidebar()} />
 				</header>

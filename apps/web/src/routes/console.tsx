@@ -156,7 +156,7 @@ function Console() {
 				<SidebarRail />
 			</Sidebar>
 			<SidebarInset>
-				<header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+				<header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
 					<SidebarTrigger className="-ml-1" aria-label={m.toggle_sidebar()} />
 					<Separator
 						orientation="vertical"
@@ -180,7 +180,7 @@ function Console() {
 						</BreadcrumbList>
 					</Breadcrumb>
 				</header>
-				<div className="flex flex-1 flex-col p-4 md:p-8">
+				<div className="flex flex-1 flex-col px-4 py-6 md:px-10 md:py-10">
 					<Outlet />
 				</div>
 			</SidebarInset>

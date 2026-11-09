@@ -1,19 +1,24 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { Loader2Icon, TriangleAlertIcon } from "lucide-react";
-import { useState } from "react";
-import { ConsolePage } from "#/components/ConsolePage";
+import {
+	BoxesIcon,
+	Loader2Icon,
+	PlusIcon,
+	TriangleAlertIcon,
+} from "lucide-react";
+import { type ReactNode, useState } from "react";
+import {
+	ConsolePage,
+	DeleteButton,
+	FormSheet,
+	Item,
+	ItemList,
+	SheetForm,
+	useSheet,
+} from "#/components/ConsolePage";
 import { Picker } from "#/components/Picker";
 import { Alert, AlertDescription } from "#/components/ui/alert";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
-import {
-	Card,
-	CardAction,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "#/components/ui/card";
 import {
 	Field,
 	FieldDescription,
@@ -46,150 +51,197 @@ type Configured = Data["configured"][number];
 
 function Providers() {
 	const { catalog, configured } = Route.useLoaderData();
+	const router = useRouter();
+	// a Provider id to edit, or undefined to add one
+	const sheet = useSheet<string | undefined>();
+	const [busy, setBusy] = useState<string>();
+	const [error, setError] = useState("");
 	const unconfigured = catalog.filter(
 		(c) => !configured.some((p) => p.id === c.id),
 	);
+	const editing = configured.find((p) => p.id === sheet.item);
+	const editingCatalog = catalog.find((c) => c.id === sheet.item);
 
 	return (
-		<ConsolePage title={m.providers()} description={m.providers_hint()}>
-			{configured.map((p) => (
-				<ConfiguredProvider
-					key={p.id}
-					provider={p}
-					catalog={catalog.find((c) => c.id === p.id)}
-				/>
-			))}
-			{unconfigured.length > 0 && (
-				<Card>
-					<CardHeader>
-						<CardTitle>{m.add_provider()}</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<ProviderForm choices={unconfigured} />
-					</CardContent>
-				</Card>
-			)}
+		<ConsolePage
+			title={m.providers()}
+			description={m.providers_hint()}
+			action={
+				unconfigured.length > 0 && (
+					<Button onClick={() => sheet.show(undefined)}>
+						<PlusIcon data-icon="inline-start" />
+						{m.add_provider()}
+					</Button>
+				)
+			}
+		>
+			<ItemList
+				empty={{
+					icon: BoxesIcon,
+					title: m.no_providers_title(),
+					hint: m.no_providers(),
+				}}
+			>
+				{configured.map((p) => {
+					const known = catalog.find((c) => c.id === p.id);
+					return (
+						<Item
+							key={p.id}
+							title={
+								<>
+									{known?.name ?? p.id}
+									<Badge variant="outline" className="font-mono">
+										{p.id}
+									</Badge>
+								</>
+							}
+							description={`${m.models()}: ${p.enabledModels.length}`}
+							actions={
+								<>
+									{known && (
+										<Button
+											size="sm"
+											variant="outline"
+											onClick={() => sheet.show(p.id)}
+										>
+											{m.edit()}
+										</Button>
+									)}
+									<DeleteButton
+										busy={busy === p.id}
+										disabled={!!busy}
+										onClick={async () => {
+											if (!confirm(m.delete_provider_confirm())) return;
+											setBusy(p.id);
+											try {
+												await deleteProvider({ data: p.id });
+												setError("");
+												await router.invalidate();
+											} catch (e) {
+												setError(errorText(e));
+											} finally {
+												setBusy(undefined);
+											}
+										}}
+									/>
+								</>
+							}
+						>
+							{!p.keyReadable && (
+								<Alert variant="destructive">
+									<TriangleAlertIcon />
+									<AlertDescription>
+										{m.provider_key_unreadable()}
+									</AlertDescription>
+								</Alert>
+							)}
+							{!known && (
+								<Alert variant="destructive">
+									<TriangleAlertIcon />
+									<AlertDescription>
+										{m.provider_not_in_catalog()}
+									</AlertDescription>
+								</Alert>
+							)}
+						</Item>
+					);
+				})}
+			</ItemList>
+			<FieldError>{error}</FieldError>
+			<FormSheet
+				open={sheet.open}
+				onClose={sheet.close}
+				title={editingCatalog?.name ?? m.add_provider()}
+			>
+				{editing && editingCatalog ? (
+					<ProviderForm
+						key={editing.id}
+						choices={[editingCatalog]}
+						existing={editing}
+						onSaved={sheet.close}
+					>
+						<ModelToggles provider={editing} catalog={editingCatalog} />
+					</ProviderForm>
+				) : (
+					unconfigured.length > 0 && (
+						// once added, the sheet goes on to its Models
+						<ProviderForm choices={unconfigured} onSaved={sheet.show} />
+					)
+				)}
+			</FormSheet>
 		</ConsolePage>
 	);
 }
 
-function ConfiguredProvider({
+/** The Catalog's Models of `provider`, each switched on or off as soon as it is toggled. */
+function ModelToggles({
 	provider,
 	catalog,
 }: {
 	provider: Configured;
-	catalog?: CatalogProvider;
+	catalog: CatalogProvider;
 }) {
 	const router = useRouter();
 	const [busy, setBusy] = useState<string>();
 	const [error, setError] = useState("");
 
-	async function act(key: string, action: () => Promise<unknown>) {
-		setBusy(key);
-		try {
-			await action();
-			setError("");
-			await router.invalidate();
-		} catch (e) {
-			setError(errorText(e));
-		} finally {
-			setBusy(undefined);
-		}
-	}
-
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle className="flex items-center gap-2">
-					{catalog?.name ?? provider.id}
-					<Badge variant="outline" className="font-mono">
-						{provider.id}
-					</Badge>
-				</CardTitle>
-				<CardDescription>
-					{m.models()}: {provider.enabledModels.length}
-				</CardDescription>
-				<CardAction>
-					<Button
-						size="sm"
-						variant="destructive"
-						disabled={busy === "delete"}
-						onClick={() => {
-							if (confirm(m.delete_provider_confirm()))
-								void act("delete", () => deleteProvider({ data: provider.id }));
-						}}
-					>
-						{busy === "delete" && (
-							<Loader2Icon data-icon="inline-start" className="animate-spin" />
-						)}
-						{m.delete()}
-					</Button>
-				</CardAction>
-			</CardHeader>
-			<CardContent className="gap-6">
-				{!provider.keyReadable && (
-					<Alert variant="destructive">
-						<TriangleAlertIcon />
-						<AlertDescription>{m.provider_key_unreadable()}</AlertDescription>
-					</Alert>
-				)}
-				{catalog ? (
-					<div className="grid gap-8 lg:grid-cols-2">
-						<ProviderForm choices={[catalog]} existing={provider} />
-						<FieldSet>
-							<FieldLegend variant="label">{m.models()}</FieldLegend>
-							<div className="flex max-h-80 flex-col gap-3 overflow-y-auto">
-								{catalog.models.map((model) => {
-									const id = `${provider.id}/${model.id}`;
-									return (
-										<Field key={model.id} orientation="horizontal">
-											<Switch
-												id={id}
-												checked={provider.enabledModels.includes(model.id)}
-												disabled={busy === id}
-												onCheckedChange={(enabled) =>
-													act(id, () =>
-														setModelEnabled({
-															data: {
-																providerId: provider.id,
-																modelId: model.id,
-																enabled,
-															},
-														}),
-													)
-												}
-											/>
-											<FieldLabel htmlFor={id} className="font-normal">
-												{model.name}
-												<span className="font-mono text-xs text-muted-foreground">
-													{model.id}
-												</span>
-											</FieldLabel>
-										</Field>
-									);
-								})}
-							</div>
-						</FieldSet>
-					</div>
-				) : (
-					<Alert variant="destructive">
-						<TriangleAlertIcon />
-						<AlertDescription>{m.provider_not_in_catalog()}</AlertDescription>
-					</Alert>
-				)}
-				<FieldError>{error}</FieldError>
-			</CardContent>
-		</Card>
+		<FieldSet>
+			<FieldLegend variant="label">{m.models()}</FieldLegend>
+			<div className="flex flex-col gap-3 rounded-lg border p-3">
+				{catalog.models.map((model) => {
+					const id = `${provider.id}/${model.id}`;
+					return (
+						<Field key={model.id} orientation="horizontal">
+							<Switch
+								id={id}
+								checked={provider.enabledModels.includes(model.id)}
+								disabled={busy === id}
+								onCheckedChange={async (enabled) => {
+									setBusy(id);
+									try {
+										await setModelEnabled({
+											data: {
+												providerId: provider.id,
+												modelId: model.id,
+												enabled,
+											},
+										});
+										setError("");
+										await router.invalidate();
+									} catch (e) {
+										setError(errorText(e));
+									} finally {
+										setBusy(undefined);
+									}
+								}}
+							/>
+							<FieldLabel htmlFor={id} className="font-normal">
+								{model.name}
+								<span className="font-mono text-xs text-muted-foreground">
+									{model.id}
+								</span>
+							</FieldLabel>
+						</Field>
+					);
+				})}
+			</div>
+			<FieldError>{error}</FieldError>
+		</FieldSet>
 	);
 }
 
-/** Adds a Provider (pick it from `choices`) or edits `existing`; the API key is write-only. */
+/** Adds a Provider (pick it from `choices`) or edits `existing`; the API key is write-only. `children` go below the fields. */
 function ProviderForm({
 	choices,
 	existing,
+	onSaved,
+	children,
 }: {
 	choices: CatalogProvider[];
 	existing?: Configured;
+	onSaved: (id: string) => void;
+	children?: ReactNode;
 }) {
 	const router = useRouter();
 	const [providerId, setProviderId] = useState(choices[0].id);
@@ -222,9 +274,8 @@ function ProviderForm({
 				const error = firstError(await saveProvider({ data: values }));
 				if (error) setResult({ ok: false, text: error });
 				else {
-					setApiKey("");
-					setResult(undefined);
 					await router.invalidate();
+					onSaved(providerId);
 				}
 			}
 		} catch (e) {
@@ -235,11 +286,23 @@ function ProviderForm({
 	}
 
 	return (
-		<form
-			onSubmit={(e) => {
-				e.preventDefault();
-				void run("save");
-			}}
+		<SheetForm
+			onSubmit={() => void run("save")}
+			busy={busy === "save"}
+			submitLabel={existing ? m.save() : m.add_provider()}
+			extra={
+				<Button
+					type="button"
+					variant="outline"
+					disabled={!!busy || !modelId}
+					onClick={() => void run("test")}
+				>
+					{busy === "test" && (
+						<Loader2Icon data-icon="inline-start" className="animate-spin" />
+					)}
+					{m.test_connection()}
+				</Button>
+			}
 		>
 			<FieldGroup className="gap-5">
 				{!existing && (
@@ -285,37 +348,14 @@ function ProviderForm({
 						items={catalog.models.map((x) => ({ value: x.id, label: x.name }))}
 					/>
 				)}
-				<div className="flex flex-wrap gap-2">
-					<Button
-						type="submit"
-						// one primary action per view: adding a Provider
-						variant={existing ? "outline" : "default"}
-						disabled={!!busy}
-					>
-						{busy === "save" && (
-							<Loader2Icon data-icon="inline-start" className="animate-spin" />
-						)}
-						{existing ? m.save() : m.add_provider()}
-					</Button>
-					<Button
-						type="button"
-						variant="outline"
-						disabled={!!busy || !modelId}
-						onClick={() => void run("test")}
-					>
-						{busy === "test" && (
-							<Loader2Icon data-icon="inline-start" className="animate-spin" />
-						)}
-						{m.test_connection()}
-					</Button>
-				</div>
 				{result &&
 					(result.ok ? (
 						<FieldDescription>{result.text}</FieldDescription>
 					) : (
 						<FieldError>{result.text}</FieldError>
 					))}
+				{children}
 			</FieldGroup>
-		</form>
+		</SheetForm>
 	);
 }

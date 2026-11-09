@@ -11,7 +11,6 @@
   "sign_out": "Sign out",
   "toggle_sidebar": "Toggle sidebar",
   "empty_title": "What can I help with?",
-  "empty_hint": "Type a message below to start a new conversation.",
   "composer_placeholder": "Message the Agent…",
   "composer_skills": "Skills",
   "skill_used": "Used Skill: {name}",
@@ -146,7 +145,7 @@
   "skills_hint": "Know-how in the Agent Skills format: a folder with a SKILL.md and any scripts, references and assets. Upload it as a zip or write it here; every upload or edit makes a new version.",
   "upload_skill": "Upload Skill",
   "no_skills_title": "No Skills yet",
-  "no_skills": "Upload a zip with a SKILL.md at its root or in its only top-level folder, or create one below.",
+  "no_skills": "Upload a zip with a SKILL.md at its root or in its only top-level folder, or create a new one.",
   "orrery": "Orrery",
   "skill_enabled": "Enabled",
   "delete_skill_confirm": "Delete this Skill with all its versions? It is removed from every Agent Definition.",
@@ -214,5 +213,12 @@
   "remove_attachment": "Remove {name}",
   "attachments": "Attachments",
   "attachment_too_large": "{name} is larger than {limit}.",
-  "attachment_failed": "{name} could not be uploaded."
+  "attachment_failed": "{name} could not be uploaded.",
+  "skill_versions": "Versions",
+  "no_providers_title": "No Providers yet",
+  "no_providers": "Add a Provider with its API key, then enable its Models.",
+  "no_mcp_servers_title": "No MCP Servers yet",
+  "no_mcp_servers": "Add an MCP Server so its Tools can be given to Agents.",
+  "no_search_providers_title": "No Search Providers yet",
+  "no_search_providers": "Add a Search Provider to serve the Search and Scrape Tools."
 }
