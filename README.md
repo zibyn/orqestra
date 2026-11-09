@@ -16,7 +16,7 @@ pnpm dev
 - `packages/db` — Drizzle schema + client. `pnpm db:push` etc.
 - `packages/conversations` — the Conversation lifecycle (Runs, Inbox, Subagents, Notifications); the only code that reads or writes those tables. The web app calls its User side; the worker serves Runs through it (`serveRuns`).
 
-- `packages/config` — the Catalog (pi's built-in Providers and Models), and everything Admins configure in the database (Providers, Models, Search Providers, MCP Servers, the Sandbox Provider, Agent Definitions); used by both web and worker.
+- `packages/config` — the Catalog (pi's built-in Providers and Models), and everything Admins configure in the database (Providers, Models, Search Providers, MCP Servers, the Sandbox Provider, Skills, Agent Definitions); used by both web and worker.
 
 Env vars live in the root `.env.local`, shared by all packages. `ORQESTRA_ENCRYPTION_KEY` is required by web and worker: it encrypts Provider API keys in the database (`openssl rand -base64 32`). Changing it makes stored keys unreadable; re-enter them in `/console/providers`.
 
