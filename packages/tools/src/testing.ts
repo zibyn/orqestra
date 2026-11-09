@@ -12,11 +12,13 @@ type Ran = {
 	stderr?: string;
 	exit_code?: number;
 	cause?: string;
+	/** Keeps running until canceled. */
+	running?: boolean;
 };
 
 /**
  * Sandboxes become ready on the first wait, keep their files across a stop and start (`stop` plays Idle Stop),
- * and unpack uploaded tars into their files. Commands answer what `exec` says. `down` makes every call fail
+ * and unpack uploaded tars into their files. Commands answer what `exec` says. Polling a command with an aborted signal throws, as fetch does. `down` makes every call fail
  * as an unreachable orrery does. `calls` lists the calls made, as `method id…`.
  */
 export function memoryOrrery({
@@ -101,23 +103,29 @@ export function memoryOrrery({
 			}
 			const e: Exec = {
 				id: `ex${++n}`,
-				state: "finished",
-				result: {
-					cause: ran.cause ?? "exited",
-					exit_code: ran.cause ? undefined : (ran.exit_code ?? 0),
-				},
+				state: ran.running ? "running" : "finished",
+				result: ran.running
+					? null
+					: {
+							cause: ran.cause ?? "exited",
+							exit_code: ran.cause ? undefined : (ran.exit_code ?? 0),
+						},
 				log_truncated: false,
 			};
 			execs.set(e.id, { exec: e, frames });
 			return { ...e, state: "running", result: null };
 		},
-		getExec: async (id) => {
+		getExec: async (id, o) => {
 			call("getExec", id);
+			o?.signal?.throwIfAborted();
 			return execs.get(id)?.exec as Exec;
 		},
 		cancelExec: async (id) => {
 			call("cancelExec", id);
-			return execs.get(id)?.exec as Exec;
+			const e = execs.get(id)?.exec as Exec;
+			if (e.state === "running")
+				Object.assign(e, { state: "finished", result: { cause: "canceled" } });
+			return e;
 		},
 		execOutput: async (id, after = 0) => {
 			call("execOutput", id, after);

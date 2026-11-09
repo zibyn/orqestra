@@ -97,6 +97,13 @@ const conversations = createConversations({
 	],
 });
 const userId = "u1";
+// one that deletes Sandboxes in `o`
+const sandboxed = (o: ReturnType<typeof memoryOrrery>) =>
+	createConversations({
+		config: async () => ({ ...config, sandboxProvider: provider }),
+		skillFiles: async () => [],
+		orrery: () => o.client,
+	});
 
 // Reads SSE events from a stream until `until` returns true
 async function collect(
@@ -1161,7 +1168,15 @@ describe.skipIf(!url)(
 				() => get(id),
 				(v) => v?.status === "failed" && v.subagents[0]?.outcome === "running",
 			);
-			await conversations.retry(userId, id);
+			const { ensureSandbox } = await import("./index.ts");
+			const o = memoryOrrery();
+			const [sub] = await db
+				.select({ id: schema.conversation.id })
+				.from(schema.conversation)
+				.where(sql`${schema.conversation.parentId} = ${id}`);
+			await ensureSandbox(sub.id, o.client, provider);
+			await sandboxed(o).retry(userId, id);
+			expect(o.state("sb1")).toBe("deleted");
 			const view = await waitFor(
 				() => get(id),
 				(v) => v?.status === "idle",
@@ -1422,6 +1437,53 @@ describe.skipIf(!url)(
 				.from(schema.conversation)
 				.where(sql`${schema.conversation.id} = ${conv.id}`);
 			expect(row.sandboxId).toBe("sb1");
+		});
+
+		describe("Sandboxes go with their Conversation", () => {
+			const setup = async () => {
+				const { ensureSandbox } = await import("./index.ts");
+				const o = memoryOrrery();
+				const withSandboxes = sandboxed(o);
+				const [parent] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: "faux" })
+					.returning();
+				const [child] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: "faux", parentId: parent.id })
+					.returning();
+				const sandboxes = [
+					(await ensureSandbox(parent.id, o.client, provider)).id,
+					(await ensureSandbox(child.id, o.client, provider)).id,
+				];
+				return { o, withSandboxes, parent, child, sandboxes };
+			};
+			const rows = () =>
+				db.select({ id: schema.conversation.id }).from(schema.conversation);
+
+			it("gives a Subagent's Conversation a Sandbox of its own, and deletes both with the Conversation", async () => {
+				const { o, withSandboxes, parent, sandboxes } = await setup();
+				expect(sandboxes).toEqual(["sb1", "sb2"]);
+				await withSandboxes.delete(userId, parent.id);
+				expect(await rows()).toEqual([]);
+				expect(sandboxes.map(o.state)).toEqual(["deleted", "deleted"]);
+			});
+
+			it("deletes the Conversation when orrery cannot be reached, and logs the Sandboxes left behind", async () => {
+				const { o, withSandboxes, parent } = await setup();
+				o.down = true;
+				const log = vi.spyOn(console, "error").mockImplementation(() => {});
+				try {
+					await withSandboxes.delete(userId, parent.id);
+					expect(await rows()).toEqual([]);
+					expect(log.mock.calls.map((c) => c[0])).toEqual([
+						expect.stringContaining("sb1"),
+						expect.stringContaining("sb2"),
+					]);
+				} finally {
+					log.mockRestore();
+				}
+			});
 		});
 
 		// last: these swap the worker
