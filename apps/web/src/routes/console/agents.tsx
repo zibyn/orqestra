@@ -50,7 +50,7 @@ type Data = Awaited<ReturnType<typeof listAgents>>;
 type Listed = Data["agents"][number];
 
 function Agents() {
-	const { agents, availableTools } = Route.useLoaderData();
+	const { agents, availableTools, availableSkills } = Route.useLoaderData();
 	const [editing, setEditing] = useState<string | "new">();
 
 	return (
@@ -79,6 +79,7 @@ function Agents() {
 						key={agent.id}
 						agent={agent}
 						availableTools={availableTools}
+						availableSkills={availableSkills}
 						onEdit={() => setEditing(agent.id)}
 					/>
 				),
@@ -90,10 +91,12 @@ function Agents() {
 function AgentCard({
 	agent,
 	availableTools,
+	availableSkills,
 	onEdit,
 }: {
 	agent: Listed;
 	availableTools: Data["availableTools"];
+	availableSkills: Data["availableSkills"];
 	onEdit: () => void;
 }) {
 	const router = useRouter();
@@ -113,6 +116,9 @@ function AgentCard({
 				? m.mcp_server_unavailable({ server })
 				: m.tool_unavailable({ tool });
 		}),
+		...(def.skills ?? [])
+			.filter((skill) => !availableSkills.includes(skill))
+			.map((skill) => m.skill_unavailable({ skill })),
 	];
 
 	return (
@@ -211,7 +217,8 @@ const empty: AgentDefinitionInput = {
 /** Creates an Agent, or edits `agent`; its id is fixed once created. */
 function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 	const router = useRouter();
-	const { enabledModels, mcpServers } = Route.useLoaderData();
+	const { enabledModels, mcpServers, skills, availableSkills } =
+		Route.useLoaderData();
 	const [def, setDef] = useState<AgentDefinitionInput>(
 		agent?.definition ?? empty,
 	);
@@ -235,6 +242,11 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 		...(def.models ?? [])
 			.filter((ref) => !enabledModels.some((e) => e.ref === ref))
 			.map((ref) => ({ ref, name: ref })),
+	];
+	// likewise a Skill deleted meanwhile, so the Admin can see and drop it
+	const skillChoices = [
+		...skills,
+		...(def.skills ?? []).filter((name) => !skills.includes(name)),
 	];
 	const toggle = <T,>(list: T[] | undefined, item: T, on: boolean) => {
 		const next = on
@@ -466,6 +478,22 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 								});
 							}}
 							idPrefix={fieldId("tool")}
+						/>
+						<Toggles
+							label={m.agent_skills()}
+							hint={m.agent_skills_hint()}
+							error={fieldError("skills")}
+							items={skillChoices.map((name) => ({
+								value: name,
+								label: availableSkills.includes(name)
+									? name
+									: m.skill_unavailable_label({ name }),
+							}))}
+							checked={def.skills ?? []}
+							onToggle={(name, on) =>
+								update({ skills: toggle(def.skills, name, on) })
+							}
+							idPrefix={fieldId("skill")}
 						/>
 						<SwitchField
 							id={fieldId("pickable")}

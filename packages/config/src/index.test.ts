@@ -6,6 +6,7 @@ import {
 	resolveThinking,
 	resolveTurn,
 	type Settings,
+	turnSkills,
 } from "./index";
 
 const general = {
@@ -320,6 +321,69 @@ describe("loadConfig", () => {
 				],
 			});
 			expect(config.defaultAgent.tools).toEqual(["search", "scrape"]);
+		});
+	});
+
+	describe("Skills", () => {
+		const skill = (name: string, enabled = true) => ({
+			name,
+			enabled,
+			versionId: 1,
+			description: `${name} things`,
+			disableModelInvocation: false,
+		});
+		const orrery = {
+			url: "http://orrery.internal",
+			token: "orr_1_s",
+			snapshot: null,
+			cpu: 2,
+			memory: 2147483648,
+		};
+		const load = (sandboxProvider?: Settings["sandboxProvider"]) =>
+			loadConfig({
+				...withAgents({
+					general: agentWith({ skills: ["pdf", "off", "gone"] }),
+					template: agentWith({
+						default: false,
+						pickable: false,
+						skills: ["off"],
+					}),
+					plain: agentWith({ default: false }),
+				}),
+				skills: [skill("pdf"), skill("off", false), skill("unused")],
+				sandboxProvider,
+			});
+
+		it("keeps an Agent's `skills` as written, none when omitted", async () => {
+			const config = await load(orrery);
+			expect(config.agents.map((a) => [a.id, a.skills])).toEqual([
+				["general", ["pdf", "off", "gone"]],
+				["template", ["off"]],
+				["plain", []],
+			]);
+		});
+
+		it("offers a Run only the enabled Skills the Agent allows", async () => {
+			const config = await load(orrery);
+			expect(turnSkills(config, config.defaultAgent)).toEqual([
+				{
+					name: "pdf",
+					versionId: 1,
+					description: "pdf things",
+					disableModelInvocation: false,
+				},
+			]);
+		});
+
+		it("offers none without a Sandbox Provider", async () => {
+			const config = await load();
+			expect(turnSkills(config, config.defaultAgent)).toEqual([]);
+		});
+
+		it("gives the general worker no Skill, a Subagent from a template the template's", async () => {
+			const config = await load(orrery);
+			expect(resolveTurn(config, null)?.agent.skills).toEqual([]);
+			expect(resolveTurn(config, "template")?.agent.skills).toEqual(["off"]);
 		});
 	});
 

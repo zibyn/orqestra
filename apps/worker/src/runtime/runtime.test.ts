@@ -51,6 +51,7 @@ const agent = (fields: Partial<AgentDefinition>): AgentDefinition => ({
 	pickable: true,
 	allModels: false,
 	tools: ["search", "scrape"],
+	skills: [],
 	unavailableModels: [],
 	...fields,
 });
