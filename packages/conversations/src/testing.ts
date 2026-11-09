@@ -11,6 +11,7 @@ import {
 	replaceOnce,
 	tooMany,
 } from "./memories.ts";
+import type { Recall } from "./recall.ts";
 import type { Ended } from "./runs.ts";
 import type { RunHandle, StreamEvent, Transcript, Turn } from "./serve.ts";
 
@@ -31,6 +32,7 @@ export function memoryRun({
 	renamed = false,
 	subagents = { start: unavailable, message: unavailable, stop: unavailable },
 	memories = [],
+	recall = { search: async () => [], open: async () => undefined },
 }: {
 	transcript: Transcript;
 	turn: Turn;
@@ -41,6 +43,8 @@ export function memoryRun({
 	subagents?: RunHandle["subagents"];
 	/** The User's Memories as the Run begins. */
 	memories?: Pick<Memory, "path" | "description" | "body">[];
+	/** The User's past Conversations; none by default. */
+	recall?: Recall;
 }) {
 	const { memories: userMemories, store } = memoryMemories(memories);
 	const pending = [...inbox];
@@ -93,6 +97,7 @@ export function memoryRun({
 				{ signal: stopper.signal },
 			),
 		memories: userMemories,
+		recall,
 		subagents,
 	};
 	return {

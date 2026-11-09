@@ -54,6 +54,12 @@ export {
 	type Memory,
 	MemoryError,
 } from "./memories.ts";
+export {
+	MAX_RECALL_RESULTS,
+	MAX_SNIPPET,
+	type Recall,
+	type Recalled,
+} from "./recall.ts";
 export type { ConversationEvent, Ended } from "./runs.ts";
 export { MAX_SUBAGENTS } from "./runs.ts";
 export { ensureSandbox } from "./sandbox.ts";

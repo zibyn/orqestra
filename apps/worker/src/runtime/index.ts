@@ -4,7 +4,7 @@ import { messageText, type OrqestraConfig, turnSkills } from "@orqestra/config";
 import type { RunHandle } from "@orqestra/conversations";
 import { type openToolbox, orrery as orreryClient } from "@orqestra/tools";
 import { prepareContext } from "./compaction.ts";
-import { memoryPrompt, memoryTools } from "./memory.ts";
+import { memoryPrompt, memoryTools, recallTool } from "./memory.ts";
 import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
 import { generateTitle } from "./title.ts";
 import {
@@ -85,7 +85,9 @@ export async function runAgent(
 				tools: [
 					...toolbox.tools,
 					...sandbox,
-					...(memory ? memoryTools(run.memories) : []),
+					...(memory
+						? [...memoryTools(run.memories), recallTool(run.recall)]
+						: []),
 					...(sub ? [] : subagentTools(config, run.subagents)),
 				],
 				messages,
