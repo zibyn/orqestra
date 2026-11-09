@@ -5,7 +5,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./shared": "./src/shared.ts",
-    "./live": "./src/live.ts"
+    "./live": "./src/live.ts",
+    "./test-zip": "./src/test-zip.ts"
   },
   "scripts": {
     "test": "vitest run"

@@ -2,18 +2,23 @@ import { thinkingLevel } from "@orqestra/config/shared";
 import { ConversationError, type Conversations } from "@orqestra/conversations";
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { type SessionPlugin, signedIn } from "./session.ts";
+import type { SignedIn } from "./app.ts";
 
 const id = z.object({ id: z.uuid() });
-const notFound = { errors: { id: { code: "not_found" } } } as const;
+const notFound = { errors: { conversation: { code: "not_found" } } } as const;
 
 /** Everything a User does with their Conversations; another User's reads as not found. */
 export const conversationRoutes = (
-	session: SessionPlugin,
+	signedIn: SignedIn,
 	conversations: Conversations,
 ) =>
 	new Elysia()
-		.use(signedIn(session))
+		.use(signedIn)
+		.resolve(({ user, status }) =>
+			user
+				? { user }
+				: status(401, { errors: { session: { code: "unauthorized" } } }),
+		)
 		.onError(({ error, status }) => {
 			if (!(error instanceof ConversationError)) return;
 			// sent to a Conversation that is not the User's

@@ -20,7 +20,9 @@
   "devDependencies": {
     "@earendil-works/pi-ai": "1.4.0",
     "@orqestra/db": "workspace:*",
+    "@orqestra/tools": "workspace:*",
     "@types/bun": "latest",
+    "drizzle-orm": "^0.45.4",
     "jose": "^6.2.15",
     "typescript": "^6.0.2"
   }

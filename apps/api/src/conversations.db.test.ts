@@ -71,7 +71,7 @@ function app(user: User | null) {
 	};
 }
 
-const notFound = { errors: { id: { code: "not_found" } } };
+const notFound = { errors: { conversation: { code: "not_found" } } };
 
 describe.skipIf(!url)("Conversations through the api", () => {
 	// sending queues a Run: a worker that does nothing takes it (and sets up BullMQ's schema)

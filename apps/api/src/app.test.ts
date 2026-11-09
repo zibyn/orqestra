@@ -15,7 +15,7 @@ function app(user: typeof ada | null, cookies: string[] = []) {
 		new Response(`auth ${new URL(request.url).pathname}`, {
 			headers: { "set-cookie": "polaris.tx=t; Path=/" },
 		});
-	// these tests reach no Conversation
+	// no route here reaches Conversations; the *.db.test.ts use the real ones
 	const api = createApp({ session, auth, conversations: {} as Conversations });
 	// handle needs its app as this
 	return { handle: (request: Request) => api.handle(request), reads };
