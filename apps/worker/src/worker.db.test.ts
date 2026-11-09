@@ -24,12 +24,15 @@ import { openToolbox } from "@orqestra/tools";
 const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
-const { config } = await import("@orqestra/config/live");
+const { config, skillFiles } = await import("@orqestra/config/live");
 const { createConversations } = await import("@orqestra/conversations");
 const { startAgentWorker } = await import("./worker.ts");
 const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
-const conversations = createConversations({ config: config.current });
+const conversations = createConversations({
+	config: config.current,
+	skillFiles,
+});
 const faux = fauxProvider({
 	provider: "faux",
 	models: [{ id: "faux-1", reasoning: true }],

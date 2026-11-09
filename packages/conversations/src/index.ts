@@ -4,7 +4,10 @@ import {
 	type OrqestraConfig,
 	resolveThinking,
 	resolveTurn,
+	skillBlock,
+	skillInstructions,
 	type ThinkingLevel,
+	turnSkills,
 } from "@orqestra/config";
 import { db } from "@orqestra/db";
 import {
@@ -21,7 +24,7 @@ import {
 	type SandboxProvider,
 	workspacePath,
 } from "@orqestra/tools";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import {
 	AGENT_RUNS_QUEUE,
@@ -85,13 +88,57 @@ const ownedSubagent = async (userId: string, id: string) => {
 
 export function createConversations({
 	config,
+	skillFiles,
 	orrery = orreryClient,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
-	/** The Sandbox Provider's client; tests pass one kept in memory. */
+	/** A Skill version's files, read when a User invokes it. */
+	skillFiles: (
+		versionId: number,
+	) => Promise<{ path: string; content: Uint8Array }[]>;
+	/** The Sandbox Provider's client; tests pass a fake. */
 	orrery?: (provider: SandboxProvider) => Orrery;
 }) {
+	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
+	async function expandSkill(
+		cfg: OrqestraConfig,
+		agent: Parameters<typeof turnSkills>[1],
+		text: string,
+	) {
+		const invoked = text.match(/^\/skill:(\S+)\s*([\s\S]*)$/);
+		if (!invoked) return text;
+		const [, name, args] = invoked;
+		const skill = turnSkills(cfg, agent).find((s) => s.name === name);
+		const md = skill
+			? (await skillFiles(skill.versionId)).find((f) => f.path === "SKILL.md")
+			: undefined;
+		if (!md) throw new ConversationError("This Skill is unavailable");
+		return skillBlock(
+			name,
+			skillInstructions(new TextDecoder().decode(md.content)),
+			args.trim(),
+		);
+	}
+
+	/** Deletes the Sandboxes of deleted Conversations; one orrery does not delete is logged and left to its Idle Stop. */
+	async function deleteSandboxes(ids: (string | null)[]) {
+		const sandboxes = ids.filter((id): id is string => !!id);
+		if (!sandboxes.length) return;
+		const provider = (await config()).sandboxProvider;
+		const client = provider && orrery(provider);
+		await Promise.all(
+			sandboxes.map((id) =>
+				(client
+					? client.deleteSandbox(id, { signal: AbortSignal.timeout(10_000) })
+					: Promise.reject(new Error("no Sandbox Provider is configured"))
+				).catch((error) =>
+					console.error(`Sandbox ${id} is left to orrery's Idle Stop`, error),
+				),
+			),
+		);
+	}
+
 	return {
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
@@ -110,6 +157,11 @@ export function createConversations({
 					default: a.default,
 					pickable: a.pickable,
 					defaultModel: a.defaultModel,
+					// the User may invoke those the Agent may not
+					skills: turnSkills(cfg, a).map(({ name, description }) => ({
+						name,
+						description,
+					})),
 					models: a.models.map((ref) => {
 						const model = cfg.models.find((m) => modelRef(m) === ref);
 						return {
@@ -229,6 +281,7 @@ export function createConversations({
 			// existing Conversations keep their Agent even after it stops being pickable
 			if (!existing && !turn.agent.pickable)
 				throw new ConversationError("This Agent cannot be picked");
+			const content = await expandSkill(cfg, turn.agent, input.text);
 
 			const conversationId = await db.transaction(async (tx) => {
 				let id = existing?.id;
@@ -248,7 +301,7 @@ export function createConversations({
 				}
 				await tx.insert(inbox).values({
 					conversationId: id,
-					message: { role: "user", content: input.text, timestamp: Date.now() },
+					message: { role: "user", content, timestamp: Date.now() },
 					model: modelRef(turn.model),
 					thinkingLevel: turn.thinking,
 					wake: true,
@@ -279,13 +332,14 @@ export function createConversations({
 					sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
 				);
 				return (
-					await tx.execute<{ id: string }>(
-						sql`delete from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id}) returning id`,
+					await tx.execute<{ id: string; sandboxId: string | null }>(
+						sql`delete from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id}) returning id, sandbox_id as "sandboxId"`,
 					)
 				).rows;
 			});
 			// their Runs stop; with their Conversation gone they save nothing more
 			await requestStop(dropped.map((d) => d.id));
+			await deleteSandboxes(dropped.map((d) => d.sandboxId));
 			await enqueue(id);
 		},
 
@@ -330,9 +384,14 @@ export function createConversations({
 				.select({ id: conversation.id })
 				.from(conversation)
 				.where(eq(conversation.parentId, id));
-			// its Run and its Subagents' stop first, then they go (cascade); a Run that outlives its Conversation saves nothing more
+			// its Run and its Subagents' stop first, then they go; a Run that outlives its Conversation saves nothing more
 			await requestStop([id, ...children.map((c) => c.id)]);
-			await db.delete(conversation).where(eq(conversation.id, id));
+			// its Subagents' rows too, so the Sandbox ids are those last stored: a Run claims one under the row's lock
+			const deleted = await db
+				.delete(conversation)
+				.where(or(eq(conversation.id, id), eq(conversation.parentId, id)))
+				.returning({ sandboxId: conversation.sandboxId });
+			await deleteSandboxes(deleted.map((d) => d.sandboxId));
 		},
 
 		/**

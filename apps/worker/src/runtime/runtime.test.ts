@@ -673,4 +673,23 @@ describe("runAgent with Skills", () => {
 		expect(resultText(result)).toContain("ECONNREFUSED");
 		expect(m.over).toBe(true);
 	});
+
+	it("cancels the command running when the Run is stopped", async () => {
+		script([
+			fauxAssistantMessage(fauxToolCall("bash", { command: "sleep 1000" })),
+		]);
+		const o = memoryOrrery({
+			exec: (command, fs) =>
+				command === "sleep 1000" ? { running: true } : shell(command, fs),
+		});
+		const { m, deps } = setup(o);
+		const ran = runAgent(m.run, deps);
+		while (!o.calls.includes("createExec sb1 sleep 1000"))
+			await new Promise((resolve) => setTimeout(resolve, 1));
+		m.stop();
+		// however the handler ends, serveRuns ends a stopped Run as stopped
+		await ran.catch(() => {});
+
+		expect(o.calls.filter((c) => c.startsWith("cancelExec"))).toHaveLength(1);
+	});
 });

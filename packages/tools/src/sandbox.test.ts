@@ -69,6 +69,8 @@ describe("readySandbox", () => {
 			woke: true,
 		});
 		expect(kept.id).toBe("sb2");
+		// a failed one holds its Workspace until deleted
+		expect(o.calls).toContain("deleteSandbox sb1");
 	});
 
 	it("fails with orrery's error when orrery cannot be reached", async () => {
@@ -106,6 +108,20 @@ describe("runCommand", () => {
 			exit: null,
 			cause: "oom_killed",
 		});
+	});
+
+	it("cancels the command when aborted", async () => {
+		const o = memoryOrrery({ exec: () => ({ running: true }) });
+		const { id } = await readySandbox(o.client, provider, stored().claim);
+		const stop = new AbortController();
+		const ran = runCommand(o.client, id, "sleep 1000", {
+			signal: stop.signal,
+			pollMs: 1,
+		});
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		stop.abort();
+		await expect(ran).rejects.toThrow();
+		expect(o.calls.filter((c) => c.startsWith("cancelExec"))).toHaveLength(1);
 	});
 });
 

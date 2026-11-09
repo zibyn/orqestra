@@ -65,13 +65,45 @@ const agent = (id: string, model: string): AgentDefinition => ({
 	unavailableModels: [],
 });
 const fauxAgent = agent("faux", "faux/faux-1");
+const skilled = {
+	...agent("skilled", "faux/faux-1"),
+	skills: ["pdf", "manual", "gone"],
+};
 const config = {
-	agents: [fauxAgent, agent("small", "faux/faux-small")],
+	agents: [fauxAgent, agent("small", "faux/faux-small"), skilled],
 	models: faux.models,
 	defaultAgent: fauxAgent,
+	// `gone` is listed by `skilled` but disabled or deleted, so it is missing here
+	skills: {
+		pdf: { versionId: 1, description: "PDFs", disableModelInvocation: false },
+		manual: {
+			versionId: 2,
+			description: "By hand",
+			disableModelInvocation: true,
+		},
+	},
+	sandboxProvider: provider,
 } as unknown as OrqestraConfig;
-const conversations = createConversations({ config: async () => config });
+/** Each Skill version's SKILL.md, as the test has it now. */
+const skillMds = new Map<number, string>();
+const conversations = createConversations({
+	config: async () => config,
+	skillFiles: async (versionId) => [
+		{ path: "scripts/run.py", content: new TextEncoder().encode("print()") },
+		{
+			path: "SKILL.md",
+			content: new TextEncoder().encode(skillMds.get(versionId) ?? ""),
+		},
+	],
+});
 const userId = "u1";
+// one that deletes Sandboxes in `o`
+const sandboxed = (o: ReturnType<typeof memoryOrrery>) =>
+	createConversations({
+		config: async () => ({ ...config, sandboxProvider: provider }),
+		skillFiles: async () => [],
+		orrery: () => o.client,
+	});
 
 // Reads SSE events from a stream until `until` returns true
 async function collect(
@@ -1136,7 +1168,15 @@ describe.skipIf(!url)(
 				() => get(id),
 				(v) => v?.status === "failed" && v.subagents[0]?.outcome === "running",
 			);
-			await conversations.retry(userId, id);
+			const { ensureSandbox } = await import("./index.ts");
+			const o = memoryOrrery();
+			const [sub] = await db
+				.select({ id: schema.conversation.id })
+				.from(schema.conversation)
+				.where(sql`${schema.conversation.parentId} = ${id}`);
+			await ensureSandbox(sub.id, o.client, provider);
+			await sandboxed(o).retry(userId, id);
+			expect(o.state("sb1")).toBe("deleted");
 			const view = await waitFor(
 				() => get(id),
 				(v) => v?.status === "idle",
@@ -1198,6 +1238,58 @@ describe.skipIf(!url)(
 			await send("again", id);
 			await waitFor(() => get(id), idle(4));
 			expect((await get(id))?.title).toBe("Renamed");
+		});
+
+		it("snapshots the SKILL.md body of a Skill the User invokes into the message, untouched by later versions", async () => {
+			skillMds.set(
+				1,
+				"---\nname: pdf\ndescription: PDFs\n---\n\n# PDF\n\nUse pypdf.\n",
+			);
+			script({ parent: [say("ok")] });
+			const id = await conversations.send(userId, {
+				agentId: "skilled",
+				text: "/skill:pdf merge a.pdf and b.pdf",
+			});
+			await waitFor(() => get(id), idle(2));
+			skillMds.set(1, "---\nname: pdf\ndescription: PDFs\n---\nChanged.");
+			const [question] = (await get(id))?.messages ?? [];
+			expect(messageText(question.message)).toBe(
+				'<skill name="pdf" location="/workspace/.skills/pdf/SKILL.md">\nReferences are relative to /workspace/.skills/pdf.\n\n# PDF\n\nUse pypdf.\n</skill>\n\nmerge a.pdf and b.pdf',
+			);
+		});
+
+		it("lets the User invoke a Skill the Agent may not invoke itself, without further text", async () => {
+			skillMds.set(2, "---\nname: manual\n---\nBy hand.");
+			script({ parent: [say("ok")] });
+			const id = await conversations.send(userId, {
+				agentId: "skilled",
+				text: "/skill:manual",
+			});
+			await waitFor(() => get(id), idle(2));
+			const [question] = (await get(id))?.messages ?? [];
+			expect(messageText(question.message)).toBe(
+				'<skill name="manual" location="/workspace/.skills/manual/SKILL.md">\nReferences are relative to /workspace/.skills/manual.\n\nBy hand.\n</skill>',
+			);
+		});
+
+		it("refuses a Skill the Agent does not allow or that is unavailable", async () => {
+			for (const [agentId, text] of [
+				["skilled", "/skill:gone do it"],
+				["faux", "/skill:pdf do it"],
+			])
+				await expect(
+					conversations.send(userId, { agentId, text }),
+				).rejects.toThrow("This Skill is unavailable");
+			expect(await conversations.list(userId)).toEqual([]);
+		});
+
+		it("offers each Agent's available Skills for the User to invoke, those the Agent may not invoke included", async () => {
+			const options = await conversations.agentOptions();
+			expect(options.find((a) => a.id === "skilled")?.skills).toEqual([
+				{ name: "pdf", description: "PDFs" },
+				{ name: "manual", description: "By hand" },
+			]);
+			expect(options.find((a) => a.id === "faux")?.skills).toEqual([]);
 		});
 
 		it("hides a Conversation from everyone but its owner", async () => {
@@ -1350,10 +1442,7 @@ describe.skipIf(!url)(
 		describe("downloading a file from a Conversation's Sandbox", () => {
 			const setup = async () => {
 				const o = memoryOrrery();
-				const files = createConversations({
-					config: async () => ({ ...config, sandboxProvider: provider }),
-					orrery: () => o.client,
-				});
+				const files = sandboxed(o);
 				const [conv] = await db
 					.insert(schema.conversation)
 					.values({ userId, agentId: "faux" })
@@ -1431,6 +1520,53 @@ describe.skipIf(!url)(
 				expect(
 					await files.openFile(userId, conv.id, "out/report.pdf", signal),
 				).toEqual({ error: "unavailable" });
+			});
+		});
+
+		describe("Sandboxes go with their Conversation", () => {
+			const setup = async () => {
+				const { ensureSandbox } = await import("./index.ts");
+				const o = memoryOrrery();
+				const withSandboxes = sandboxed(o);
+				const [parent] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: "faux" })
+					.returning();
+				const [child] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: "faux", parentId: parent.id })
+					.returning();
+				const sandboxes = [
+					(await ensureSandbox(parent.id, o.client, provider)).id,
+					(await ensureSandbox(child.id, o.client, provider)).id,
+				];
+				return { o, withSandboxes, parent, child, sandboxes };
+			};
+			const rows = () =>
+				db.select({ id: schema.conversation.id }).from(schema.conversation);
+
+			it("gives a Subagent's Conversation a Sandbox of its own, and deletes both with the Conversation", async () => {
+				const { o, withSandboxes, parent, sandboxes } = await setup();
+				expect(sandboxes).toEqual(["sb1", "sb2"]);
+				await withSandboxes.delete(userId, parent.id);
+				expect(await rows()).toEqual([]);
+				expect(sandboxes.map(o.state)).toEqual(["deleted", "deleted"]);
+			});
+
+			it("deletes the Conversation when orrery cannot be reached, and logs the Sandboxes left behind", async () => {
+				const { o, withSandboxes, parent } = await setup();
+				o.down = true;
+				const log = vi.spyOn(console, "error").mockImplementation(() => {});
+				try {
+					await withSandboxes.delete(userId, parent.id);
+					expect(await rows()).toEqual([]);
+					expect(log.mock.calls.map((c) => c[0])).toEqual([
+						expect.stringContaining("sb1"),
+						expect.stringContaining("sb2"),
+					]);
+				} finally {
+					log.mockRestore();
+				}
 			});
 		});
 

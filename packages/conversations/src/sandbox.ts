@@ -56,7 +56,6 @@ export const ensureSandbox = (
 					.for("update");
 				if (!row) throw new Error("The Conversation is gone");
 				if (row.sandboxId && row.sandboxId !== replacing) return row.sandboxId;
-				// shortcut: a Sandbox replaced as gone is not deleted; #32 deletes Sandboxes with their Conversation
 				const id = await create();
 				await tx
 					.update(conversation)

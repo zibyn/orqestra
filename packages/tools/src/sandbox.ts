@@ -82,8 +82,12 @@ export async function readySandbox(
 			throw new Error(
 				`The new Sandbox is ${state ?? "gone"}: ${sandbox?.cause ?? ""}`,
 			);
+		const gone = id;
 		id = await claim(id, create);
 		woke = true;
+		// a failed one holds its Workspace until deleted; if this fails, it is left for good
+		if (state === "failed")
+			await client.deleteSandbox(gone, { signal }).catch(() => {});
 	}
 }
 
