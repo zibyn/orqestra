@@ -1,4 +1,6 @@
+import type { Conversations } from "@orqestra/conversations";
 import { Elysia } from "elysia";
+import { z } from "zod";
 import type { User } from "./identity.ts";
 import { memoryRoutes } from "./memories.ts";
 
@@ -27,8 +29,18 @@ export type SignedIn = Elysia<
 	}
 >;
 
+const unauthorized = { errors: { session: { code: "unauthorized" } } };
+
 /** The api; production passes Polaris (see polaris.ts), tests a fake. */
-export function createApp({ session, auth }: { session: Session; auth: Auth }) {
+export function createApp({
+	session,
+	auth,
+	conversations,
+}: {
+	session: Session;
+	auth: Auth;
+	conversations: Conversations;
+}) {
 	return new Elysia()
 		.all("/auth/*", ({ request }) => auth(request))
 		.group("/api", (api) =>
@@ -41,9 +53,25 @@ export function createApp({ session, auth }: { session: Session; auth: Auth }) {
 				})
 				.get(
 					"/session",
-					({ user, status }) =>
-						user ??
-						status(401, { errors: { session: { code: "unauthorized" } } }),
+					({ user, status }) => user ?? status(401, unauthorized),
+				)
+				// a Conversation's live events as server-sent events, until the client goes; see conversations.subscribe
+				.get(
+					"/conversations/:id/events",
+					async ({ user, params, request, set, status }) => {
+						if (!user) return status(401, unauthorized);
+						const id = z.uuid().safeParse(params.id);
+						const stream =
+							id.success &&
+							(await conversations.subscribe(user.id, id.data, request.signal));
+						if (!stream)
+							return status(404, {
+								errors: { conversation: { code: "not_found" } },
+							});
+						set.headers["content-type"] = "text/event-stream";
+						set.headers["cache-control"] = "no-cache";
+						return new Response(stream);
+					},
 				)
 				.use(memoryRoutes),
 		);

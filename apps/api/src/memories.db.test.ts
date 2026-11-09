@@ -1,4 +1,5 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
+import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { memory } from "@orqestra/db/schema";
 import { createApp, type User } from "./app.ts";
@@ -14,6 +15,7 @@ function call(user: User | null, method: string, path: string, body?: unknown) {
 	const api = createApp({
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(null, { status: 404 }),
+		conversations: {} as Conversations,
 	});
 	return api.handle(
 		new Request(`http://localhost/api${path}`, {
@@ -42,7 +44,6 @@ describe.skipIf(!url)("/api/memories", () => {
 			{ userId: bob.id, path: "bob/pets", description: "Pets", body: "a dog" },
 		]);
 	});
-	afterAll(() => db.$client.end());
 
 	it("lists the User's own Memories, their switch and the limits", async () => {
 		const response = await call(ada, "GET", "/memories");

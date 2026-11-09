@@ -15,7 +15,7 @@ loadEnv({ path: ["../../.env.local", "../../.env"], quiet: true });
 // As Caddy does in Compose: /api/* and /auth/* go to the api, ahead of Start's handler (Vite's own proxy comes after it).
 // shortcut: web still serves the /api routes excluded here until they move to the api; drop each as it does
 const toApi =
-	/^\/(auth\/|api\/(?!(skills|conversations\/[^/]+\/(events|files|uploads))([?#]|$)))/;
+	/^\/(auth\/|api\/(?!(skills|conversations\/[^/]+\/(files|uploads))([?#]|$)))/;
 const apiProxy = (): Plugin => ({
 	name: "orqestra:api-proxy",
 	configureServer(server) {

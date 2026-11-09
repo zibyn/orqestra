@@ -17,6 +17,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@orqestra/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@orqestra/conversations':
         specifier: workspace:*
         version: link:../../packages/conversations
@@ -36,6 +39,9 @@ importers:
       '@types/bun':
         specifier: latest
         version: 1.4.4
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       jose:
         specifier: ^6.2.15
         version: 6.2.15
