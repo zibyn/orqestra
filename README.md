@@ -1,34 +1,102 @@
-Welcome to your new TanStack Start app!
+# Orqestra
 
-# Getting Started
+[![CI](https://github.com/zibyn/orqestra/actions/workflows/ci.yml/badge.svg)](https://github.com/zibyn/orqestra/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/zibyn/orqestra)](https://github.com/zibyn/orqestra/releases)
 
-To run this application:
+Orqestra 是一个自托管平台：登录的 User 与 AI Agent 对话，身份交给外部的身份提供方 Polaris 管理。
+
+## 功能
+
+- **Agent**：Admin 在控制台定义 Agent（指令、可用 Model、Tool、Skill），User 选一个开始对话。
+- **Subagent**：Agent 可以把任务交给后台运行的 Subagent，完成后结果自动交回。
+- **Provider 与 Model**：内置 pi 的 Provider 目录，填 API Key 即可启用；密钥在数据库中加密保存。
+- **Tool**：Search / Scrape（Tavily、Firecrawl、DeepSeek）、MCP Server。
+- **Skill**：遵循 Agent Skills 标准，脚本在 [orrery](https://github.com/zibyn/orrery) 的 Sandbox 里执行。
+- **配置热加载**：控制台保存后 web 与 worker 自动重新加载，无需重启。
+
+## 架构
+
+| 组件 | 说明 |
+| --- | --- |
+| `apps/web` | TanStack Start 应用（Node，Nitro 构建），提供界面和 API |
+| `apps/worker` | BullMQ worker（Bun），执行 Agent 的 Run；队列存在 Postgres 的 `bullmq` schema |
+| `packages/db` | Drizzle schema、client 与迁移 |
+| `packages/conversations` | Conversation 生命周期（Run、Inbox、Subagent、Notification），唯一读写这些表的代码 |
+| `packages/config` | Catalog（pi 内置的 Provider 与 Model）以及 Admin 在数据库中配置的一切 |
+| `packages/tools` | Agent 可用的 Tool |
+
+web 和 worker 共用一个 PostgreSQL。领域术语见 [`GLOSSARY.md`](GLOSSARY.md)，架构决策见 [`docs/adr/`](docs/adr/)。
+
+## 使用 Docker Compose 部署
+
+需要 Docker（含 Compose v2）和一个配置好的 Polaris 实例（见[配置 Polaris 登录](#配置-polaris-登录)）。
+
+```bash
+git clone https://github.com/zibyn/orqestra.git && cd orqestra
+cp .env.example .env   # 填写各项，密钥用 openssl rand -base64 32 生成
+docker compose up -d
+```
+
+Compose 启动四个服务：`postgres`、`migrate`（执行数据库迁移后退出）、`web`（默认端口 3000，可用 `PORT` 修改）和 `worker`。默认拉取 `ghcr.io/zibyn/orqestra-web` 与 `ghcr.io/zibyn/orqestra-worker` 的 `latest` 镜像；用 `ORQESTRA_VERSION=0.1.0` 固定版本，或用 `docker compose up -d --build` 从源码构建。
+
+升级：`docker compose pull && docker compose up -d`，迁移会在 web 和 worker 启动前自动执行。
+
+### 环境变量
+
+| 变量 | 必填 | 说明 |
+| --- | --- | --- |
+| `ORQESTRA_URL` | 是 | Orqestra 的访问地址，不带结尾斜杠 |
+| `ORQESTRA_ENCRYPTION_KEY` | 是 | 加密数据库中的 API Key（32 字节 base64）；更换后已存的 Key 无法读取，需在 `/console/providers` 重新填写 |
+| `POLARIS_ISSUER` | 是 | Polaris 实例地址 |
+| `POLARIS_CLIENT_ID` / `POLARIS_CLIENT_SECRET` | 是 | Polaris 上的 Web Application |
+| `POLARIS_AUDIENCE` | 是 | access token 的 `aud`，即 Orqestra 在 Polaris 上的 API 标识 |
+| `POLARIS_SECRET` | 是 | 加密会话 Cookie（至少 32 字符）；更换后所有人需重新登录 |
+| `DATABASE_URL` | Compose 外必填 | PostgreSQL 连接串；Compose 根据 `POSTGRES_PASSWORD` 自动生成 |
+| `POSTGRES_PASSWORD` | 否 | Compose 内置 Postgres 的密码，默认 `orqestra` |
+| `WORKER_CONCURRENCY` / `SUBAGENT_CONCURRENCY` / `PROVIDER_CONCURRENCY` | 否 | worker 并发度（正整数） |
+
+## 本地开发
+
+需要 Node 24、[pnpm](https://pnpm.io) 11、[Bun](https://bun.sh) 1.4 和 PostgreSQL。
 
 ```bash
 pnpm install
-pnpm dev
+cp .env.example .env.local   # 填写，并设置 DATABASE_URL
+pnpm db:migrate
+pnpm dev                     # 同时启动 web（http://localhost:3000）和 worker
 ```
 
-## Workspace layout
+| 命令 | 说明 |
+| --- | --- |
+| `pnpm web` / `pnpm worker` | 只启动 web 或 worker |
+| `pnpm build` | 构建 web（输出在 `apps/web/.output`，`node apps/web/.output/server/index.mjs` 运行） |
+| `pnpm test` | 运行所有测试；`*.db.test.ts` 需要设置 `TEST_DATABASE_URL`，指向一个已迁移、可随时清空的数据库 |
+| `pnpm lint` / `pnpm format` / `pnpm check` | Biome 检查与格式化 |
+| `pnpm db:generate` / `pnpm db:migrate` / `pnpm db:studio` | Drizzle 迁移与数据库管理 |
 
-- `apps/web` — TanStack Start app (Node). Run shadcn/paraglide commands from here.
-- `apps/worker` — BullMQ worker on the Postgres backend (Bun, uses `DATABASE_URL`; tables in the `bullmq` schema). `pnpm worker`.
-- `packages/db` — Drizzle schema + client. `pnpm db:push` etc.
-- `packages/conversations` — the Conversation lifecycle (Runs, Inbox, Subagents, Notifications); the only code that reads or writes those tables. The web app calls its User side; the worker serves Runs through it (`serveRuns`).
+环境变量放在根目录的 `.env.local`，所有 package 共用。shadcn、paraglide 等命令在 `apps/web` 下运行。
 
-- `packages/config` — the Catalog (pi's built-in Providers and Models), and everything Admins configure in the database (Providers, Models, Search Providers, MCP Servers, the Sandbox Provider, Skills, Agent Definitions); used by both web and worker.
+## 配置
 
-Env vars live in the root `.env.local`, shared by all packages. `ORQESTRA_ENCRYPTION_KEY` is required by web and worker: it encrypts Provider API keys in the database (`openssl rand -base64 32`). Changing it makes stored keys unreadable; re-enter them in `/console/providers`.
+### 配置 Polaris 登录
 
-## 如何配置 Provider 与 Model
+Orqestra 不保存自己的用户：Polaris 管理 User 池并负责登录（见 [ADR 0003](docs/adr/0003-polaris-owns-the-user-pool.md)）。在 Polaris 控制台中：
+
+1. 为 Orqestra 创建一个 API（标识如 `orqestra`，填入 `POLARIS_AUDIENCE`，即 access token 的 `aud`）、一个 Permission `orqestra:admin`，以及 Role，如 `admin`（带该 Permission）和 `member`（不带）。
+2. 创建一个 Web Application：`client_secret_basic`，开启 refresh token，redirect URI 为 `{ORQESTRA_URL}/auth/callback`，post logout redirect URI 为 `{ORQESTRA_URL}`，默认 API 选上面那个，并开启 `requireRole`，只让在该 API 上有 Role 的 User 登录。
+3. 给 User 分配 Role。
+
+从 better-auth 版本升级：先备份数据库，再 `pnpm db:migrate`。用 Polaris 登录过的 User 的对话会迁移到其 Polaris `sub`；只用密码登录的用户的对话会保留但隐藏，需要手动把 `user_id` 改为对应的 `sub`。
+
+### 配置 Provider 与 Model
 
 Admin 在 `/console/providers` 里从目录（pi 内置的 Provider 列表）选择 Provider，填写 API Key 和 `baseUrl`（默认填好目录中的地址，需要时改成自己的端点），再勾选要启用的 Model。保存后 web 和 worker 自动重新加载，无需重启；正在进行的 Run 不受影响。
 
-## 如何配置 Search 与 Scrape
+### 配置 Search 与 Scrape
 
 Agent 可以调用 Search（搜索网页）和 Scrape（读取一个网页，返回 Markdown）两个 Tool，由外部的 Search Provider（Tavily、Firecrawl、DeepSeek）提供。Admin 在 `/console/search` 添加 Search Provider 并填写 API Key（与 Provider 一样加密保存、只写不读）和 `baseUrl`（默认填好官方地址；自部署的 Firecrawl 或经过反向代理时改成自己的地址），再分别为 Search 和 Scrape 选一个。没有可用 Search Provider 的 Tool 不可用，Agent 照常运行但不带它。
 
-## 如何配置 Sandbox Provider（orrery）
+### 配置 Sandbox Provider（orrery）
 
 Skill 的脚本在 [orrery](https://github.com/zibyn/orrery) 的 Sandbox 里执行。Admin 在 `/console/sandbox` 填写 orrery 的 API 地址（不带 `/api/v1`）、API Token（加密保存、只写不读）、Snapshot（可选，留空用 orrery 默认的 Platform Snapshot），以及每个 Sandbox 的 CPU 和内存（默认 2 CPU、2 GiB）。最多配置一个；没有配置时所有 Skill 都不可用。保存时会用该 Token 请求一次 orrery 的 `GET /api/v1/users/me`，失败时显示原因（无法连接、Token 无效等），配置照常保存。所有 User 的 Sandbox 都在这个 Token 所属的 orrery User 下运行。
 
@@ -56,7 +124,7 @@ orrery snapshot build orqestra-skills -f Dockerfile
 
 再次运行同一条命令即生成新版本，orrery 构建成功后自动把 current 指向它；新建的 Sandbox 使用 current 版本。
 
-## 如何添加一个 Agent
+### 添加 Agent
 
 Admin 在 `/console/agents` 新建、编辑、删除 Agent，保存后 web 和 worker 自动重新加载，正在进行的 Run 不受影响。数据库里没有任何 Agent 时会自动写入 General。
 
@@ -66,256 +134,14 @@ Admin 在 `/console/agents` 新建、编辑、删除 Agent，保存后 web 和 w
 - 恰好一个默认 Agent，且必须是用户可选的；默认 Agent 不能删除。删除 Agent 后它的对话变为只读。
 - 关闭“用户可选”的 Agent 只作为子智能体（Subagent）模板。Agent 可通过 `subagent` Tool 把任务交给 Subagent，Subagent 从空白上下文开始，只把最终结果交回。
 
-# Building For Production
+## 发布
 
-To build this application for production:
-
-```bash
-pnpm build
-```
-
-## Styling
-
-This project uses [Tailwind CSS](https://tailwindcss.com/) for styling.
-
-### Removing Tailwind CSS
-
-If you prefer not to use Tailwind CSS:
-
-1. Remove the demo pages in `src/routes/demo/`
-2. Replace the Tailwind import in `src/styles.css` with your own styles
-3. Remove `tailwindcss()` from the plugins array in `vite.config.ts`
-4. Remove `@tailwindcss/vite` and `tailwindcss` from `package.json`
-
-## Linting & Formatting
-
-This project uses [Biome](https://biomejs.dev/) for linting and formatting. The following scripts are available:
-
+推送 `v*` tag 会触发 [Release workflow](.github/workflows/release.yml)：构建并推送 web 与 worker 镜像到 GHCR，并创建 GitHub Release。
 
 ```bash
-pnpm lint
-pnpm format
-pnpm check
+git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
 ```
 
+## 贡献
 
-## Deploy with Nitro
-
-This project uses Nitro as a generic server adapter, so it can run on any Node-compatible host.
-
-```bash
-npm run build
-node dist/server/index.mjs
-```
-
-The build output is a self-contained Node server. To deploy, push the `dist/` directory to your host (Render, Fly.io, your own VPS, etc.) and run the server command above.
-
-For host-specific presets (Vercel, Netlify, Cloudflare, AWS Lambda, etc.) and tuning, see https://v3.nitro.build/deploy.
-
-
-# Paraglide i18n
-
-This add-on wires up ParaglideJS for localized routing and message formatting.
-
-- Messages live in `project.inlang/messages`.
-- URLs are localized through the Paraglide Vite plugin and router `rewrite` hooks.
-- Run the dev server or build to regenerate the `src/paraglide` outputs.
-
-
-## Shadcn
-
-Add components using the latest version of [Shadcn](https://ui.shadcn.com/).
-
-```bash
-pnpm dlx shadcn@latest add button
-```
-
-
-## T3Env
-
-- You can use T3Env to add type safety to your environment variables.
-- Add Environment variables to the `src/env.mjs` file.
-- Use the environment variables in your code.
-
-### Usage
-
-```ts
-import { env } from "#/env";
-
-console.log(env.VITE_APP_TITLE);
-```
-
-
-
-
-
-## Sign-in with Polaris
-
-Orqestra keeps no users of its own: Polaris owns the User pool and signs everyone in (`docs/adr/0003-polaris-owns-the-user-pool.md`). In Polaris' console:
-
-1. Create an API for Orqestra (its identifier, e.g. `orqestra`, goes in `POLARIS_AUDIENCE`: the `aud` of the access tokens), a Permission `orqestra:admin`, and Roles such as `admin` (with that Permission) and `member` (without).
-2. Create a Web Application: `client_secret_basic`, refresh tokens on, redirect URI `{ORQESTRA_URL}/auth/callback`, post logout redirect URI `{ORQESTRA_URL}`, default API the one above, and `requireRole` on so only Users with a Role at it can sign in.
-3. Give Users their Role.
-
-Then set in `.env.local`:
-
-```bash
-ORQESTRA_URL=https://orqestra.example.com
-POLARIS_ISSUER=https://auth.example.com
-POLARIS_CLIENT_ID=...
-POLARIS_CLIENT_SECRET=...
-POLARIS_AUDIENCE=orqestra
-POLARIS_SECRET=$(openssl rand -base64 32)  # encrypts the session cookie; changing it signs everyone out
-```
-
-Upgrading from the better-auth version: back up the database, then `pnpm db:migrate`. Conversations of Users who had signed in with Polaris move to their Polaris `sub`; those of password-only users are kept but hidden until their `user_id` is set to the person's `sub` by hand.
-
-## Routing
-
-This project uses [TanStack Router](https://tanstack.com/router) with file-based routing. Routes are managed as files in `src/routes`.
-
-### Adding A Route
-
-To add a new route to your application just add a new file in the `./src/routes` directory.
-
-TanStack will automatically generate the content of the route file for you.
-
-Now that you have two routes you can use a `Link` component to navigate between them.
-
-### Adding Links
-
-To use SPA (Single Page Application) navigation you will need to import the `Link` component from `@tanstack/react-router`.
-
-```tsx
-import { Link } from "@tanstack/react-router";
-```
-
-Then anywhere in your JSX you can use it like so:
-
-```tsx
-<Link to="/about">About</Link>
-```
-
-This will create a link that will navigate to the `/about` route.
-
-More information on the `Link` component can be found in the [Link documentation](https://tanstack.com/router/v1/docs/framework/react/api/router/linkComponent).
-
-### Using A Layout
-
-In the File Based Routing setup the layout is located in `src/routes/__root.tsx`. Anything you add to the root route will appear in all the routes. The route content will appear in the JSX where you render `{children}` in the `shellComponent`.
-
-Here is an example layout that includes a header:
-
-```tsx
-import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
-
-export const Route = createRootRoute({
-  head: () => ({
-    meta: [
-      { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'My App' },
-    ],
-  }),
-  shellComponent: ({ children }) => (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        <header>
-          <nav>
-            <Link to="/">Home</Link>
-            <Link to="/about">About</Link>
-          </nav>
-        </header>
-        {children}
-        <Scripts />
-      </body>
-    </html>
-  ),
-})
-```
-
-More information on layouts can be found in the [Layouts documentation](https://tanstack.com/router/latest/docs/framework/react/guide/routing-concepts#layouts).
-
-## Server Functions
-
-TanStack Start provides server functions that allow you to write server-side code that seamlessly integrates with your client components.
-
-```tsx
-import { createServerFn } from '@tanstack/react-start'
-
-const getServerTime = createServerFn({
-  method: 'GET',
-}).handler(async () => {
-  return new Date().toISOString()
-})
-
-// Use in a component
-function MyComponent() {
-  const [time, setTime] = useState('')
-  
-  useEffect(() => {
-    getServerTime().then(setTime)
-  }, [])
-  
-  return <div>Server time: {time}</div>
-}
-```
-
-## API Routes
-
-You can create API routes by using the `server` property in your route definitions:
-
-```tsx
-import { createFileRoute } from '@tanstack/react-router'
-import { json } from '@tanstack/react-start'
-
-export const Route = createFileRoute('/api/hello')({
-  server: {
-    handlers: {
-      GET: () => json({ message: 'Hello, World!' }),
-    },
-  },
-})
-```
-
-## Data Fetching
-
-There are multiple ways to fetch data in your application. You can use TanStack Query to fetch data from a server. But you can also use the `loader` functionality built into TanStack Router to load the data for a route before it's rendered.
-
-For example:
-
-```tsx
-import { createFileRoute } from '@tanstack/react-router'
-
-export const Route = createFileRoute('/people')({
-  loader: async () => {
-    const response = await fetch('https://swapi.dev/api/people')
-    return response.json()
-  },
-  component: PeopleComponent,
-})
-
-function PeopleComponent() {
-  const data = Route.useLoaderData()
-  return (
-    <ul>
-      {data.results.map((person) => (
-        <li key={person.name}>{person.name}</li>
-      ))}
-    </ul>
-  )
-}
-```
-
-Loaders simplify your data fetching logic dramatically. Check out more information in the [Loader documentation](https://tanstack.com/router/latest/docs/framework/react/guide/data-loading#loader-parameters).
-
-
-
-# Learn More
-
-You can learn more about all of the offerings from TanStack in the [TanStack documentation](https://tanstack.com).
-
-For TanStack Start specific documentation, visit [TanStack Start](https://tanstack.com/start).
+Issue 和 Pull Request 请提交到 [zibyn/orqestra](https://github.com/zibyn/orqestra/issues)。提交前运行 `pnpm lint` 和 `pnpm test`。

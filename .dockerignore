@@ -1,0 +1,13 @@
+**/node_modules
+**/.output
+**/.nitro
+**/.tanstack
+**/dist
+.git
+.github
+.claude
+.vscode
+.env
+.env.*
+!.env.example
+*.local
