@@ -59,6 +59,7 @@ const agent = (id: string, model: string): AgentDefinition => ({
 	pickable: true,
 	allModels: false,
 	tools: ["search", "scrape"],
+	skills: [],
 	unavailableModels: [],
 });
 const fauxAgent = agent("faux", "faux/faux-1");
