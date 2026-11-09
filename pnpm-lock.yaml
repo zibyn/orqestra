@@ -245,6 +245,9 @@ importers:
       '@orqestra/db':
         specifier: workspace:*
         version: link:../db
+      '@orqestra/tools':
+        specifier: workspace:*
+        version: link:../tools
       bullmq:
         specifier: ^6.5.0
         version: 6.5.0(ioredis@6.0.0)(pg@8.23.1)
