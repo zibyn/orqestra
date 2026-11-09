@@ -12,7 +12,7 @@ Orqestra 是一个自托管平台：登录的 User 与 AI Agent 对话，身份�
 - **Provider 与 Model**：内置 pi 的 Provider 目录，填 API Key 即可启用；密钥在数据库中加密保存。
 - **Tool**：Search / Scrape（Tavily、Firecrawl、DeepSeek）、MCP Server。
 - **Skill**：遵循 Agent Skills 标准，脚本在 [orrery](https://github.com/zibyn/orrery) 的 Sandbox 里执行。
-- **配置热加载**：控制台保存后 web 与 worker 自动重新加载，无需重启。
+- **配置热加载**：控制台保存后 api 与 worker 自动重新加载，无需重启。
 
 ## 架构
 
@@ -26,7 +26,7 @@ Orqestra 是一个自托管平台：登录的 User 与 AI Agent 对话，身份�
 | `packages/config` | Catalog（pi 内置的 Provider 与 Model）以及 Admin 在数据库中配置的一切 |
 | `packages/tools` | Agent 可用的 Tool |
 
-web 和 worker 共用一个 PostgreSQL。领域术语见 [`GLOSSARY.md`](GLOSSARY.md)，架构决策见 [`docs/adr/`](docs/adr/)。
+api 和 worker 共用一个 PostgreSQL；web 只渲染界面，经 api 读写数据，不连数据库、不持有密钥。领域术语见 [`GLOSSARY.md`](GLOSSARY.md)，架构决策见 [`docs/adr/`](docs/adr/)。
 
 ## 使用 Docker Compose 部署
 
@@ -40,7 +40,7 @@ docker compose up -d
 
 Compose 启动六个服务：`postgres`、`migrate`（执行数据库迁移后退出）、`api`、`web`、`worker` 和 `caddy`（唯一对外端口，默认 3000，可用 `PORT` 修改；`/api/*`、`/auth/*` 转给 api，其余转给 web）。默认拉取 `ghcr.io/zibyn/orqestra-api`、`ghcr.io/zibyn/orqestra-web`、`ghcr.io/zibyn/orqestra-worker` 与 `ghcr.io/zibyn/orqestra-migrate` 的 `latest` 镜像；用 `ORQESTRA_VERSION=0.1.0` 固定版本，或用 `docker compose up -d --build` 从源码构建。
 
-升级：`docker compose pull && docker compose up -d`，迁移会在 api、web 和 worker 启动前自动执行。
+升级：`docker compose pull && docker compose up -d`，迁移会在 api 和 worker 启动前自动执行。
 
 ### 环境变量
 
@@ -91,7 +91,7 @@ Orqestra 不保存自己的用户：Polaris 管理 User 池并负责登录（见
 
 ### 配置 Provider 与 Model
 
-Admin 在 `/console/providers` 里从目录（pi 内置的 Provider 列表）选择 Provider，填写 API Key 和 `baseUrl`（默认填好目录中的地址，需要时改成自己的端点），再勾选要启用的 Model。保存后 web 和 worker 自动重新加载，无需重启；正在进行的 Run 不受影响。
+Admin 在 `/console/providers` 里从目录（pi 内置的 Provider 列表）选择 Provider，填写 API Key 和 `baseUrl`（默认填好目录中的地址，需要时改成自己的端点），再勾选要启用的 Model。保存后 api 和 worker 自动重新加载，无需重启；正在进行的 Run 不受影响。
 
 ### 配置 Search 与 Scrape
 
@@ -127,7 +127,7 @@ orrery snapshot build orqestra-skills -f Dockerfile
 
 ### 添加 Agent
 
-Admin 在 `/console/agents` 新建、编辑、删除 Agent，保存后 web 和 worker 自动重新加载，正在进行的 Run 不受影响。数据库里没有任何 Agent 时会自动写入 General。
+Admin 在 `/console/agents` 新建、编辑、删除 Agent，保存后 api 和 worker 自动重新加载，正在进行的 Run 不受影响。数据库里没有任何 Agent 时会自动写入 General。
 
 - id 新建时由名称生成，可手动修改，创建后不可改。
 - Models 不选表示所有已启用的 Model；引用了未启用或已不存在的 Model 只会警告，一个 Model 都不剩的 Agent 不可用。

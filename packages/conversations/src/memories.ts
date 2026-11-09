@@ -1,7 +1,7 @@
+import type { MemoryChange } from "@orqestra/config/shared";
 import { db, type Tx } from "@orqestra/db";
 import { conversation, memory, memorySetting } from "@orqestra/db/schema";
 import { and, desc, eq, type SQL, sql } from "drizzle-orm";
-import type { MemoryChange } from "./shared.ts";
 
 /** Memories one User may have. */
 export const MAX_MEMORIES = 500;
@@ -192,7 +192,7 @@ async function upsert(
 	return true;
 }
 
-export { MEMORY_CHANGES } from "./shared.ts";
+export { MEMORY_CHANGES } from "@orqestra/config/shared";
 
 type Content = Pick<Memory, "description" | "body">;
 /** The `details` a Memory Tool's result keeps. */

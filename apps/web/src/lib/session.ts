@@ -2,11 +2,10 @@ import { treaty } from "@elysiajs/eden";
 import type { App } from "@orqestra/api";
 import { appendResponseHeader, getRequest } from "@tanstack/react-start/server";
 import { env } from "#/env";
-import { type Api, sessionUser } from "#/lib/api";
+import type { Api } from "#/lib/api";
 import { sessionFirst } from "#/lib/session-first";
 
-// Server only: server function handlers, server routes and api()'s server side use it. It lives
-// apart from the createServerFn files, as an exported plain function there stays in the client bundle.
+// Server only: api()'s server side, for SSR.
 
 const clients = new WeakMap<Request, Api>();
 
@@ -37,23 +36,4 @@ export function requestApi() {
 	return serverApi(getRequest(), (cookie) =>
 		appendResponseHeader("set-cookie", cookie),
 	);
-}
-
-/** The signed-in User, or null. */
-export function readUser(
-	request: Request,
-	setCookie: (cookie: string) => void,
-) {
-	return sessionUser(serverApi(request, setCookie));
-}
-
-/** readUser for a server function's own request and response. */
-export function currentUser() {
-	return sessionUser(requestApi());
-}
-
-export async function requireUserId() {
-	const user = await currentUser();
-	if (!user) throw new Error("Unauthorized");
-	return user.id;
 }

@@ -12,6 +12,7 @@ import {
 	type ThinkingLevel,
 	turnSkills,
 } from "@orqestra/config";
+import type { MemoryChange } from "@orqestra/config/shared";
 import { db } from "@orqestra/db";
 import {
 	compaction,
@@ -43,7 +44,6 @@ import {
 } from "./runs.ts";
 import { ensureSandbox, SandboxGone, wakeSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
-import type { MemoryChange } from "./shared.ts";
 import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
 
 export { MAX_UPLOAD_BYTES } from "@orqestra/config";

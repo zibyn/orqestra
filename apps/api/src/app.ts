@@ -12,6 +12,7 @@ import { sandboxProvider } from "./sandbox-provider.ts";
 import { searchProviders } from "./search-providers.ts";
 import { skills } from "./skills.ts";
 
+export type { ConversationEvent } from "@orqestra/conversations";
 export type { User };
 
 /**

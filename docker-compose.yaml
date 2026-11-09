@@ -11,8 +11,6 @@ x-app: &app
   env_file: .env
   environment:
     DATABASE_URL: postgres://orqestra:${POSTGRES_PASSWORD:-orqestra}@postgres:5432/orqestra
-    # where web's SSR reaches the api
-    API_URL: http://api:3001
   restart: unless-stopped
 
 services:
@@ -61,12 +59,15 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
 
+  # Only renders pages: no database or secrets, just where its SSR reaches the api
   web:
-    <<: *app
+    <<: *logging
     image: ghcr.io/zibyn/orqestra-web:${ORQESTRA_VERSION:-latest}
     build: { context: ., target: web }
-    depends_on:
-      migrate: { condition: service_completed_successfully }
+    environment:
+      API_URL: http://api:3001
+    restart: unless-stopped
+    depends_on: [api]
 
   worker:
     <<: *app

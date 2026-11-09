@@ -5,10 +5,6 @@ export const env = createEnv({
 	server: {
 		// Where SSR reaches the api; the browser reaches it at this origin, through Caddy or Vite's proxy
 		API_URL: z.url().default("http://localhost:3001"),
-		// Encrypts Provider API keys in the database; `openssl rand -base64 32`
-		ORQESTRA_ENCRYPTION_KEY: z.base64().refine((s) => atob(s).length === 32, {
-			message: "must be 32 bytes of base64 (openssl rand -base64 32)",
-		}),
 	},
 
 	/**
