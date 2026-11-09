@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { fauxProvider } from "@earendil-works/pi-ai";
 import type { AgentDefinition, OrqestraConfig } from "@orqestra/config";
 import { createConversations } from "@orqestra/conversations";
@@ -100,7 +100,6 @@ describe.skipIf(skip)("a Conversation's uploads and files", () => {
 		o = memoryOrrery();
 		await db.execute(sql`truncate conversation cascade`);
 	});
-	afterAll(() => db.$client.end());
 
 	it("takes an upload into the Sandbox, and serves it back once the Agent attaches it", async () => {
 		const id = await newConversation();

@@ -75,7 +75,7 @@ const app = createApp({
 		POLARIS_AUDIENCE: "orqestra",
 		POLARIS_SECRET: "a".repeat(32),
 	}),
-	// these tests reach no Conversation
+	// only /api/session and /auth/* are reached here
 	conversations: {} as Conversations,
 });
 const handle = (request: Request) => app.handle(request);
