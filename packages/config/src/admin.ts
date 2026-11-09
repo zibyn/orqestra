@@ -38,7 +38,12 @@ import {
 	toolName,
 } from "./index.ts";
 import { decryptSecret, sealSecret, secretReadable } from "./secret.ts";
-import { parseSkillZip } from "./skill-zip.ts";
+import {
+	checkSkill,
+	parseSkillZip,
+	type SkillFiles,
+	skillName,
+} from "./skill-zip.ts";
 
 // What Admins edit in /console, by GLOSSARY entity: inputs, rules across fields and entities, and the management views.
 // Secrets only go in; a view tells whether they can still be decrypted.
@@ -101,6 +106,16 @@ export const skillEnabledInput = z.object({
 export const skillCurrentInput = z.object({
 	name: z.string(),
 	versionId: z.number().int(),
+});
+export const skillCreateInput = z.object({
+	name: z.string(),
+	description: z.string(),
+});
+export const skillEditInput = z.object({
+	name: z.string(),
+	base: z.number().int(),
+	// without `text`: kept as it is in version `base`
+	files: z.array(z.object({ path: z.string(), text: z.string().optional() })),
 });
 export const sandboxProviderInput = z.object({
 	url: httpUrl,
@@ -389,6 +404,56 @@ export const skillFiles = (versionId: number) =>
 		.where(eq(skillFile.versionId, versionId))
 		.orderBy(skillFile.path);
 
+/** Adds the Skill as its new current version, adding the Skill itself when it is new; one that exists needs `replace`. */
+async function addVersion(
+	tx: Tx,
+	{ name, description, disableModelInvocation, files }: SkillFiles,
+	replace: boolean,
+): Promise<SaveErrors> {
+	const inserted = await tx
+		.insert(skill)
+		.values({ name })
+		.onConflictDoNothing()
+		.returning({ name: skill.name });
+	if (!inserted.length && !replace) return { name: { code: "skill_exists" } };
+	// locks the Skill, so two saves cannot take the same number
+	await tx
+		.select({ name: skill.name })
+		.from(skill)
+		.where(eq(skill.name, name))
+		.for("update");
+	const [{ last }] = await tx
+		.select({ last: max(skillVersion.number) })
+		.from(skillVersion)
+		.where(eq(skillVersion.skillName, name));
+	const [version] = await tx
+		.insert(skillVersion)
+		.values({
+			skillName: name,
+			number: (last ?? 0) + 1,
+			description,
+			disableModelInvocation,
+		})
+		.returning({ id: skillVersion.id });
+	await tx
+		.insert(skillFile)
+		.values(files.map((f) => ({ versionId: version.id, ...f })));
+	await tx
+		.update(skill)
+		.set({ currentVersionId: version.id })
+		.where(eq(skill.name, name));
+	return {};
+}
+
+function asText(content: Uint8Array) {
+	try {
+		const text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+		return text.includes("\0") ? undefined : text;
+	} catch {
+		return undefined;
+	}
+}
+
 const skills = ({ write }: Deps) => ({
 	/** Every Skill with its versions, newest first; `description` is the current version's. */
 	async list() {
@@ -425,44 +490,73 @@ const skills = ({ write }: Deps) => ({
 	): Promise<{ errors: SaveErrors; name?: string }> {
 		const parsed = parseSkillZip(zip);
 		if ("error" in parsed) return { errors: { file: parsed.error } };
-		const { name, description, disableModelInvocation, files } = parsed.skill;
-		const errors = await write(async (tx): Promise<SaveErrors> => {
-			const inserted = await tx
-				.insert(skill)
-				.values({ name })
-				.onConflictDoNothing()
-				.returning({ name: skill.name });
-			if (!inserted.length && !replace)
-				return { name: { code: "skill_exists" } };
-			// locks the Skill, so two uploads cannot take the same number
-			await tx
-				.select({ name: skill.name })
-				.from(skill)
-				.where(eq(skill.name, name))
-				.for("update");
-			const [{ last }] = await tx
-				.select({ last: max(skillVersion.number) })
-				.from(skillVersion)
-				.where(eq(skillVersion.skillName, name));
-			const [version] = await tx
-				.insert(skillVersion)
-				.values({
-					skillName: name,
-					number: (last ?? 0) + 1,
-					description,
-					disableModelInvocation,
-				})
-				.returning({ id: skillVersion.id });
-			await tx
-				.insert(skillFile)
-				.values(files.map((f) => ({ versionId: version.id, ...f })));
-			await tx
-				.update(skill)
-				.set({ currentVersionId: version.id })
-				.where(eq(skill.name, name));
-			return {};
-		});
+		const { name } = parsed.skill;
+		const errors = await write((tx) => addVersion(tx, parsed.skill, replace));
 		return { errors, name };
+	},
+
+	/** A new Skill written in the console: its first version is a SKILL.md with only the frontmatter. */
+	async create(
+		name: string,
+		description: string,
+	): Promise<{ errors: SaveErrors }> {
+		// checked before it goes into the YAML, where a line break could add keys
+		if (!skillName.test(name))
+			return { errors: { name: { code: "skill_name_invalid" } } };
+		// a JSON string is a YAML double-quoted scalar
+		const md = `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n`;
+		const checked = checkSkill(
+			[{ path: "SKILL.md", content: new TextEncoder().encode(md) }],
+			name,
+		);
+		if ("error" in checked)
+			return {
+				errors: {
+					[checked.error.code === "skill_description_invalid"
+						? "description"
+						: "name"]: checked.error,
+				},
+			};
+		return {
+			errors: await write((tx) => addVersion(tx, checked.skill, false)),
+		};
+	},
+
+	/** A version's files for the console editor: `text` only for those that are UTF-8 text, the rest can only be kept or dropped. */
+	files: async (versionId: number) =>
+		(await skillFiles(versionId)).map(({ path, content }) => {
+			const text = asText(content);
+			return {
+				path,
+				size: content.length,
+				...(text !== undefined && { text }),
+			};
+		}),
+
+	/** Saves the Skill's files as a new current version: those with `text` as written, those without kept as they are in version `base`. */
+	async edit(
+		name: string,
+		base: number,
+		files: { path: string; text?: string }[],
+	): Promise<{ errors: SaveErrors }> {
+		const [version] = await db
+			.select({ id: skillVersion.id })
+			.from(skillVersion)
+			.where(and(eq(skillVersion.id, base), eq(skillVersion.skillName, name)));
+		if (!version) throw new Error("Skill version not found");
+		const old = new Map(
+			(await skillFiles(base)).map((f) => [f.path, f.content]),
+		);
+		const contents: SkillFiles["files"] = [];
+		for (const { path, text } of files) {
+			const content =
+				text === undefined ? old.get(path) : new TextEncoder().encode(text);
+			if (!content) return { errors: { file: { code: "not_found" } } };
+			contents.push({ path, content });
+		}
+		const checked = checkSkill(contents, name);
+		if ("error" in checked) return { errors: { file: checked.error } };
+		return { errors: await write((tx) => addVersion(tx, checked.skill, true)) };
 	},
 
 	async setEnabled(name: string, enabled: boolean) {
