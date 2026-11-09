@@ -9,7 +9,11 @@ import {
 	type ModelThinkingLevel,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+	ModelRegistry,
+	ModelRuntime,
+	stripFrontmatter,
+} from "@earendil-works/pi-coding-agent";
 import type { McpServer, SandboxProvider, ToolService } from "@orqestra/tools";
 import type { z } from "zod";
 import {
@@ -419,3 +423,7 @@ export const turnSkills = (
 				return skill ? [{ name, ...skill }] : [];
 			})
 		: [];
+
+/** A SKILL.md's instructions, without its frontmatter. */
+export const skillInstructions = (skillMd: string) =>
+	stripFrontmatter(skillMd).trim();

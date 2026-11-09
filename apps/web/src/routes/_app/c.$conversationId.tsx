@@ -4,7 +4,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import { messageText } from "@orqestra/config/shared";
+import { messageText, parseSkillBlock } from "@orqestra/config/shared";
 import type { ConversationEvent } from "@orqestra/conversations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -34,6 +34,7 @@ import {
 } from "#/components/ai-elements/message";
 import { Reasoning } from "#/components/ai-elements/reasoning";
 import { type Choice, Composer } from "#/components/Composer";
+import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Separator } from "#/components/ui/separator";
 import {
@@ -174,7 +175,7 @@ function ConversationView() {
 									) : row.message.role === "user" ? (
 										<Message from="user">
 											<MessageContent>
-												{messageText(row.message)}
+												<UserText message={row.message} />
 											</MessageContent>
 										</Message>
 									) : row.message.role === "assistant" ? (
@@ -226,7 +227,7 @@ function ConversationView() {
 							) : (
 								<Message key={`queued-${row.id}`} from="user">
 									<MessageContent className="opacity-60">
-										{messageText(row.message)}
+										<UserText message={row.message} />
 									</MessageContent>
 									<span className="text-xs text-muted-foreground">
 										{m.queued()}
@@ -279,6 +280,19 @@ function ConversationView() {
 }
 
 type Results = Map<string, ToolResultMessage>;
+
+/** A User's message; one that invoked a Skill shows its name, not the instructions put in for it. */
+function UserText({ message }: { message: PiMessage }) {
+	const text = messageText(message);
+	const skill = parseSkillBlock(text);
+	if (!skill) return text;
+	return (
+		<div className="flex flex-col items-start gap-1.5">
+			<Badge variant="outline">{m.skill_used({ name: skill.name })}</Badge>
+			{skill.text}
+		</div>
+	);
+}
 
 const toolResults = (messages: PiMessage[]): Results =>
 	new Map(
