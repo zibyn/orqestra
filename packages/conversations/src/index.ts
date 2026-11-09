@@ -17,7 +17,11 @@ import {
 	message,
 	subagent,
 } from "@orqestra/db/schema";
-import { orrery as orreryClient } from "@orqestra/tools";
+import {
+	OrreryError,
+	orrery as orreryClient,
+	workspacePath,
+} from "@orqestra/tools";
 import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import {
@@ -34,7 +38,7 @@ import {
 	stopSubagents,
 } from "./runs.ts";
 
-import { ensureSandbox } from "./sandbox.ts";
+import { ensureSandbox, SandboxGone, wakeSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
 
@@ -458,6 +462,53 @@ export function createConversations({
 				.where(or(eq(conversation.id, id), eq(conversation.parentId, id)))
 				.returning({ sandboxId: conversation.sandboxId });
 			await deleteSandboxes(deleted.map((d) => d.sandboxId));
+		},
+
+		/**
+		 * A file in the Sandbox of the user's Conversation, a Subagent's included, streamed from orrery as it arrives.
+		 * Starts the Sandbox if Idle Stop stopped it, but never creates one. `path` is absolute or relative to /workspace.
+		 */
+		async openFile(
+			userId: string,
+			id: string,
+			path: string,
+			signal: AbortSignal,
+		): Promise<
+			| {
+					file: {
+						name: string;
+						size?: number;
+						body: ReadableStream<Uint8Array>;
+					};
+			  }
+			| { error: "not_found" | "no_file" | "gone" | "unavailable" }
+		> {
+			// a Subagent's Conversation carries its parent's userId
+			if (!(await owned(userId, id))) return { error: "not_found" };
+			const relative = workspacePath(path);
+			if (!relative) return { error: "no_file" };
+			const provider = (await config()).sandboxProvider;
+			if (!provider) return { error: "unavailable" };
+			const client = orrery(provider);
+			try {
+				const { id: sandbox } = await wakeSandbox(id, client, provider, {
+					signal,
+				});
+				const file = await client.openFile(sandbox, relative, { signal });
+				return {
+					file: {
+						name: relative.slice(relative.lastIndexOf("/") + 1),
+						...file,
+					},
+				};
+			} catch (error) {
+				if (error instanceof SandboxGone) return { error: "gone" };
+				if (error instanceof OrreryError && error.code === "not_found")
+					return { error: "no_file" };
+				if (!signal.aborted)
+					console.error("A file could not be read from its Sandbox:", error);
+				return { error: "unavailable" };
+			}
 		},
 
 		/** A Subagent's transcript, loaded when its panel opens; undefined when it is not the user's. */

@@ -1439,6 +1439,90 @@ describe.skipIf(!url)(
 			expect(row.sandboxId).toBe("sb1");
 		});
 
+		describe("downloading a file from a Conversation's Sandbox", () => {
+			const setup = async () => {
+				const o = memoryOrrery();
+				const files = sandboxed(o);
+				const [conv] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: "faux" })
+					.returning();
+				const [sub] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: null, parentId: conv.id })
+					.returning();
+				// a Sandbox for each, holding a report, which Idle Stop has stopped
+				for (const c of [conv, sub]) {
+					const { id } = await o.client.createSandbox(provider);
+					await o.client.getSandbox(id, { waitFor: "ready" });
+					o.files(id).set("out/report.pdf", new TextEncoder().encode(c.id));
+					o.stop(id);
+					await db
+						.update(schema.conversation)
+						.set({ sandboxId: id })
+						.where(sql`${schema.conversation.id} = ${c.id}`);
+				}
+				return { o, files, conv, sub };
+			};
+			const signal = new AbortController().signal;
+
+			it("streams it to the Conversation's owner, a Subagent's too, starting its stopped Sandbox", async () => {
+				const { o, files, conv, sub } = await setup();
+				for (const c of [conv, sub]) {
+					const got = await files.openFile(
+						userId,
+						c.id,
+						"/workspace/out/report.pdf",
+						signal,
+					);
+					if (!("file" in got)) throw new Error(got.error);
+					expect(got.file.name).toBe("report.pdf");
+					expect(got.file.size).toBe(c.id.length);
+					expect(await new Response(got.file.body).text()).toBe(c.id);
+				}
+				expect(
+					o.calls.filter((c) => c.startsWith("startSandbox")),
+				).toHaveLength(2);
+				expect(o.calls.filter((c) => c.startsWith("readFile"))).toEqual([]);
+			});
+
+			it("refuses anyone but the owner, and paths outside /workspace, without reaching the Sandbox", async () => {
+				const { o, files, conv, sub } = await setup();
+				const before = o.calls.length;
+				for (const c of [conv, sub])
+					expect(
+						await files.openFile("u2", c.id, "out/report.pdf", signal),
+					).toEqual({ error: "not_found" });
+				expect(
+					await files.openFile(userId, conv.id, "../etc/passwd", signal),
+				).toEqual({ error: "no_file" });
+				expect(o.calls.length).toBe(before);
+			});
+
+			it("says why when the file, the Sandbox or orrery is not there", async () => {
+				const { o, files, conv, sub } = await setup();
+				expect(
+					await files.openFile(userId, conv.id, "out/missing.pdf", signal),
+				).toEqual({ error: "no_file" });
+				const [row] = await db
+					.select({ sandboxId: schema.conversation.sandboxId })
+					.from(schema.conversation)
+					.where(sql`${schema.conversation.id} = ${sub.id}`);
+				await o.client.deleteSandbox(row.sandboxId as string);
+				expect(
+					await files.openFile(userId, sub.id, "out/report.pdf", signal),
+				).toEqual({ error: "gone" });
+				// a gone Sandbox is not replaced by a download
+				expect(
+					o.calls.filter((c) => c.startsWith("createSandbox")),
+				).toHaveLength(2);
+				o.down = true;
+				expect(
+					await files.openFile(userId, conv.id, "out/report.pdf", signal),
+				).toEqual({ error: "unavailable" });
+			});
+		});
+
 		describe("Sandboxes go with their Conversation", () => {
 			const setup = async () => {
 				const { ensureSandbox } = await import("./index.ts");

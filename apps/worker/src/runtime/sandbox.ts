@@ -12,6 +12,7 @@ import {
 	runCommand,
 	type SandboxProvider,
 	tar,
+	workspacePath,
 } from "@orqestra/tools";
 
 /** Characters of a command's stdout or stderr the model gets; the start of longer output is cut. */
@@ -56,6 +57,9 @@ function explain(error: unknown) {
 const text = (t: string) => [{ type: "text" as const, text: t }];
 // infers `execute`'s params from `parameters`, then fits the Agent's untyped Tool list
 const tool = <T extends TSchema>(t: AgentTool<T>) => t as unknown as AgentTool;
+
+/** `s` as one single-quoted bash word. */
+const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 
 const tail = (s: string) =>
 	s.length > MAX_STREAM_CHARS
@@ -129,8 +133,8 @@ export function sandboxTools(
 				}),
 			}),
 			execute: async (_id, { path }) => {
-				const relative = path.replace(/^\/workspace(\/|$)/, "");
-				if (relative.startsWith("/"))
+				const relative = workspacePath(path);
+				if (!relative)
 					throw new Error("read reaches only /workspace: use bash elsewhere");
 				const id = await ready();
 				const bytes = await client
@@ -175,6 +179,47 @@ export function sandboxTools(
 					`<stderr>\n${tail(r.stderr)}\n</stderr>`,
 				];
 				return { content: text(lines.join("\n")), details: undefined };
+			},
+		}),
+		tool({
+			name: "attach",
+			label: "Attach",
+			description:
+				"Attach a file in your sandbox under /workspace to your reply, for the user to download. It is not copied: attach it once it is final, and keep it in place.",
+			parameters: Type.Object({
+				path: Type.String({
+					description: "An existing file; absolute, or relative to /workspace",
+				}),
+			}),
+			execute: async (_id, { path }) => {
+				const refused = new Error(
+					`${path} is not an existing file under /workspace`,
+				);
+				const relative = workspacePath(path);
+				if (!relative) throw refused;
+				const id = await ready();
+				// resolved, so a symlink cannot lead out of /workspace
+				const r = await runCommand(
+					client,
+					id,
+					`f=$(realpath -e -- ${quote(`/workspace/${relative}`)}) && case "$f" in /workspace/?*) ;; *) exit 3;; esac && [ -f "$f" ] && stat -c %s -- "$f" && printf %s "$f"`,
+					{ signal },
+				).catch((error) => {
+					throw explain(error);
+				});
+				if (r.exit !== 0) throw refused;
+				const [size, file] = r.stdout.split("\n");
+				const attachment = {
+					path: file,
+					name: file.slice(file.lastIndexOf("/") + 1),
+					size: Number(size),
+				};
+				return {
+					content: text(
+						`Attached ${attachment.path} (${attachment.size} bytes): the user sees it under your reply.`,
+					),
+					details: { attachment },
+				};
 			},
 		}),
 	];

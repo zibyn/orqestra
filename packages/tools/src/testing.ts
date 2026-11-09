@@ -148,6 +148,16 @@ export function memoryOrrery({
 				throw new OrreryError(404, "not_found", `no such directory: ${path}`);
 			return [...new Set(names)].map((name) => ({ name, type: "file" }));
 		},
+		openFile: async (id, path) => {
+			call("openFile", id, path);
+			const file = ready(id).files.get(path);
+			if (!file)
+				throw new OrreryError(404, "not_found", `no such file: ${path}`);
+			return {
+				body: new Response(file).body as ReadableStream<Uint8Array>,
+				size: file.length,
+			};
+		},
 		writeFile: async (id, path, data) => {
 			call("writeFile", id, path);
 			const files = ready(id).files;

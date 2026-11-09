@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type ClaimSandbox, readySandbox, runCommand } from "./sandbox.ts";
+import {
+	type ClaimSandbox,
+	readySandbox,
+	runCommand,
+	workspacePath,
+} from "./sandbox.ts";
 import { memoryOrrery } from "./testing.ts";
 
 const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 * 1024 ** 3 };
@@ -117,5 +122,23 @@ describe("runCommand", () => {
 		stop.abort();
 		await expect(ran).rejects.toThrow();
 		expect(o.calls.filter((c) => c.startsWith("cancelExec"))).toHaveLength(1);
+	});
+});
+
+describe("workspacePath", () => {
+	it("answers a path under /workspace relative to it, and nothing for any other", () => {
+		expect(workspacePath("/workspace/out/report.pdf")).toBe("out/report.pdf");
+		expect(workspacePath("out//./a/../report.pdf")).toBe("out/report.pdf");
+		for (const outside of [
+			"/workspace",
+			"/workspace/",
+			"/etc/passwd",
+			"/workspace/../etc/passwd",
+			"../etc/passwd",
+			"/workspacex/a",
+			"a\0b",
+			"",
+		])
+			expect(workspacePath(outside)).toBeUndefined();
 	});
 });

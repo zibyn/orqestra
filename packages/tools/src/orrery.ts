@@ -118,18 +118,31 @@ export function orrery({
 			json,
 			body,
 			signal,
+			stream,
 		}: {
 			query?: Record<string, string | number | undefined>;
 			json?: unknown;
 			body?: Body;
 			signal?: AbortSignal;
+			/** The timeout bounds only the wait for the response to start, not reading its body. */
+			stream?: boolean;
 		} = {},
 	) {
 		const params = new URLSearchParams();
 		for (const [k, v] of Object.entries(query ?? {}))
 			if (v !== undefined) params.set(k, String(v));
 		const search = params.size ? `?${params}` : "";
-		const timeout = AbortSignal.timeout(timeoutMs);
+		const started = new AbortController();
+		const timer = stream
+			? setTimeout(
+					() =>
+						started.abort(
+							new DOMException("The operation timed out.", "TimeoutError"),
+						),
+					timeoutMs,
+				)
+			: undefined;
+		const timeout = stream ? started.signal : AbortSignal.timeout(timeoutMs);
 		const response = await fetch(`${base}${path}${search}`, {
 			method,
 			headers: {
@@ -140,7 +153,7 @@ export function orrery({
 			// fetch needs it for a streamed body; TS's RequestInit lacks it
 			...(body instanceof ReadableStream && { duplex: "half" }),
 			signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
-		} as RequestInit);
+		} as RequestInit).finally(() => clearTimeout(timer));
 		if (!response.ok) {
 			const text = await response.text().catch(() => "");
 			let problem: { code?: string; detail?: string } = {};
@@ -218,6 +231,19 @@ export function orrery({
 					})
 				).arrayBuffer(),
 			),
+		/** A file's bytes as they arrive, and its size when orrery sends one: for files too large to hold in memory. */
+		openFile: async (sandbox: string, path: string, o: Opts = {}) => {
+			const response = await send("GET", files(sandbox, "/content"), {
+				query: { path },
+				stream: true,
+				...o,
+			});
+			const length = response.headers.get("content-length");
+			return {
+				body: response.body ?? new ReadableStream<Uint8Array>(),
+				size: length === null ? undefined : Number(length),
+			};
+		},
 		/** Written to a temporary file, then renamed over `path`; one that fails midway leaves nothing. */
 		writeFile: async (
 			sandbox: string,
