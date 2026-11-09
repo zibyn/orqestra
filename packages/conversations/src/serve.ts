@@ -93,8 +93,6 @@ export type StreamEvent =
 export type RunHandle = {
 	conversationId: string;
 	isSubagent: boolean;
-	/** The Run's top-level Conversation is Incognito: no memory, for its Subagents too. */
-	incognito: boolean;
 	/** The Agent, Model and thinking level replying; a Subagent without instructions of its own gets the general worker's. */
 	turn: Turn;
 	transcript: Transcript;
@@ -309,7 +307,6 @@ async function open(
 	return {
 		conversationId,
 		isSubagent: !!sub,
-		incognito,
 		turn,
 		transcript: {
 			messages: rows.map((r) => ({
@@ -387,8 +384,8 @@ async function open(
 		// an Incognito Conversation's Runs, its Subagents' too, have no memory
 		memories:
 			!incognito && (await memoryOn(conv.userId))
-			? memoriesOf(conv.userId, conversationId)
-			: undefined,
+				? memoriesOf(conv.userId, conversationId)
+				: undefined,
 		// a Subagent works within its parent's Conversation, so that is not a past one either
 		recall: recallOf(conv.userId, conv.parentId ?? conversationId),
 		subagents: subagentsOf(cfg, conv, turn, saved),

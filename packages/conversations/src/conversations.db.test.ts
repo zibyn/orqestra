@@ -1379,13 +1379,13 @@ describe.skipIf(!url)(
 		it("keeps a Conversation Incognito from its start on, for its Runs and its Subagents', and marks it", async () => {
 			const seen: boolean[] = [];
 			const note: Step = ({ run }) => {
-				seen.push(run.incognito && !run.memories);
+				seen.push(!run.memories);
 				return "ok";
 			};
 			script({
 				parent: [
 					({ run }) => {
-						seen.push(run.incognito && !run.memories);
+						seen.push(!run.memories);
 						return [start("look")];
 					},
 					say("started"),
@@ -1418,9 +1418,17 @@ describe.skipIf(!url)(
 			const started = await conversations.start(userId, "faux", {
 				incognito: true,
 			});
-			script({ parent: [say("plain")] });
+			script({
+				parent: [
+					({ run }) => {
+						seen.push(!run.memories);
+						return "plain";
+					},
+				],
+			});
 			const plain = await send("hi");
 			await waitFor(() => get(plain), idle(2));
+			expect(seen.at(-1)).toBe(false);
 			expect(
 				Object.fromEntries(
 					(await conversations.list(userId)).map((c) => [c.id, c.incognito]),

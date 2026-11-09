@@ -1,6 +1,7 @@
 import { db, type Tx } from "@orqestra/db";
 import { conversation, memory, memorySetting } from "@orqestra/db/schema";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, type SQL, sql } from "drizzle-orm";
+import type { MemoryChange } from "./shared.ts";
 
 /** Memories one User may have. */
 export const MAX_MEMORIES = 500;
@@ -8,6 +9,8 @@ export const MAX_MEMORIES = 500;
 export const MAX_MEMORY_BODY = 4096;
 /** Characters of a Memory's description. */
 export const MAX_MEMORY_DESCRIPTION = 150;
+/** Characters of a Memory's path. */
+export const MAX_MEMORY_PATH = 100;
 /** Memories one grep returns. */
 export const MAX_GREP_RESULTS = 50;
 
@@ -46,6 +49,15 @@ export type Memories = {
 /** Refuses a Memory over the limits; shared with the in-memory Memories of `memoryRun`. */
 export function checkMemory(path: string, description: string, body: string) {
 	if (!path.trim()) throw new MemoryError("The path must not be empty.");
+	// each Memory is one line of the Memory Index
+	if (/[\r\n]/.test(path + description))
+		throw new MemoryError(
+			"The path and the description must each be one line.",
+		);
+	if (path.length > MAX_MEMORY_PATH)
+		throw new MemoryError(
+			`The path has ${path.length} characters; at most ${MAX_MEMORY_PATH} are allowed.`,
+		);
 	if (description.length > MAX_MEMORY_DESCRIPTION)
 		throw new MemoryError(
 			`The description has ${description.length} characters; at most ${MAX_MEMORY_DESCRIPTION} are allowed.`,
@@ -155,39 +167,67 @@ const atFor = (userId: string, path: string) =>
 const findFor = async (tx: Tx | typeof db, userId: string, path: string) =>
 	(await tx.select(columns).from(memory).where(atFor(userId, path)))[0];
 
-/** The Memory Tools whose calls change a Memory, and the `details` their results keep. */
-export const MEMORY_CHANGES = ["memory_write", "memory_edit", "memory_delete"];
+/** Creates or replaces User `userId`'s Memory at `path`; false, writing nothing, when that would create one past MAX_MEMORIES. */
+async function upsert(
+	tx: Tx,
+	userId: string,
+	path: string,
+	exists: boolean,
+	set: Pick<typeof memory.$inferInsert, "description" | "body"> & {
+		conversationId: string | SQL | null;
+	},
+) {
+	if (!exists) {
+		const [{ n }] = await tx
+			.select({ n: sql<number>`count(*)::int` })
+			.from(memory)
+			.where(eq(memory.userId, userId));
+		if (n >= MAX_MEMORIES) return false;
+	}
+	const values = { ...set, updatedAt: new Date() };
+	await tx
+		.insert(memory)
+		.values({ userId, path, ...values })
+		.onConflictDoUpdate({ target: [memory.userId, memory.path], set: values });
+	return true;
+}
+
+export { MEMORY_CHANGES } from "./shared.ts";
+
+type Content = Pick<Memory, "description" | "body">;
+/** The `details` a Memory Tool's result keeps. */
 type Change = {
 	path: string;
-	before?: Pick<Memory, "description" | "body">;
+	before?: Content & Pick<Memory, "conversationId">;
 	/** memory_write's */
-	after?: Pick<Memory, "description" | "body">;
+	after?: Content;
 	/** memory_edit's */
 	old?: string;
 	new?: string;
 };
+/** The Memory as each Memory Tool's call left it, none once deleted. */
+const left: Record<MemoryChange, (change: Change) => Content | undefined> = {
+	memory_write: (c) => c.after,
+	memory_edit: ({ before, old, new: replacement }) =>
+		before && {
+			description: before.description,
+			body: replaceOnce(before.body, old ?? "", replacement ?? ""),
+		},
+	memory_delete: () => undefined,
+};
 
 /**
- * Reverses one Memory Tool call of User `userId` from the `before` its result kept, writing it down as from `conversationId`;
+ * Reverses one Memory Tool call of User `userId` from the `before` its result kept, from the Conversation that wrote it then;
  * `markUndone` runs in the same transaction. Refuses with "changed" when the Memory is no longer as that call left it.
  */
 export function undoChange(
 	userId: string,
-	conversationId: string,
-	toolName: string,
+	toolName: MemoryChange,
 	change: Change,
 	markUndone: (tx: Tx) => Promise<unknown>,
 ) {
 	const { path, before } = change;
-	const after =
-		toolName === "memory_write"
-			? change.after
-			: toolName === "memory_edit" && before
-				? {
-						description: before.description,
-						body: replaceOnce(before.body, change.old ?? "", change.new ?? ""),
-					}
-				: undefined;
+	const after = left[toolName](change);
 	return lockedFor(
 		userId,
 		async (tx): Promise<"changed" | "full" | undefined> => {
@@ -197,28 +237,15 @@ export function undoChange(
 				: !now;
 			if (!same) return "changed";
 			if (!before) await tx.delete(memory).where(atFor(userId, path));
-			else {
-				if (!now) {
-					const [{ n }] = await tx
-						.select({ n: sql<number>`count(*)::int` })
-						.from(memory)
-						.where(eq(memory.userId, userId));
-					if (n >= MAX_MEMORIES) return "full";
-				}
-				const values = {
+			else if (
+				!(await upsert(tx, userId, path, !!now, {
 					description: before.description,
 					body: before.body,
-					conversationId,
-					updatedAt: new Date(),
-				};
-				await tx
-					.insert(memory)
-					.values({ userId, path, ...values })
-					.onConflictDoUpdate({
-						target: [memory.userId, memory.path],
-						set: values,
-					});
-			}
+					// null once that Conversation is deleted, as it would have been
+					conversationId: sql`(select ${conversation.id} from ${conversation} where ${conversation.id} = ${before.conversationId})`,
+				}))
+			)
+				return "full";
 			await markUndone(tx);
 		},
 	);
@@ -242,26 +269,14 @@ export function memoriesOf(userId: string, conversationId: string): Memories {
 			checkMemory(path, description, body);
 			return locked(async (tx) => {
 				const before = await find(tx, path);
-				if (!before) {
-					const [{ n }] = await tx
-						.select({ n: sql<number>`count(*)::int` })
-						.from(memory)
-						.where(eq(memory.userId, userId));
-					if (n >= MAX_MEMORIES) throw tooMany();
-				}
-				const values = {
-					description,
-					body,
-					conversationId,
-					updatedAt: new Date(),
-				};
-				await tx
-					.insert(memory)
-					.values({ userId, path, ...values })
-					.onConflictDoUpdate({
-						target: [memory.userId, memory.path],
-						set: values,
-					});
+				if (
+					!(await upsert(tx, userId, path, !!before, {
+						description,
+						body,
+						conversationId,
+					}))
+				)
+					throw tooMany();
 				return { before };
 			});
 		},

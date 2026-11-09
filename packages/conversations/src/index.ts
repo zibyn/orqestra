@@ -43,6 +43,7 @@ import {
 } from "./runs.ts";
 import { ensureSandbox, SandboxGone, wakeSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
+import type { MemoryChange } from "./shared.ts";
 import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
 
 export { MAX_UPLOAD_BYTES } from "@orqestra/config";
@@ -566,14 +567,16 @@ export function createConversations({
 					),
 				);
 			const result = row?.message as
-				| { toolName: string; details?: { undone?: boolean; path: string } }
+				| {
+						toolName: MemoryChange;
+						details?: { undone?: boolean; path: string };
+				  }
 				| undefined;
 			if (!result?.details || !MEMORY_CHANGES.includes(result.toolName))
 				return { error: "not_found" };
 			if (result.details.undone) return { error: "undone" };
 			const error = await undoChange(
 				userId,
-				id,
 				result.toolName,
 				result.details,
 				async (tx) => {
@@ -596,7 +599,9 @@ export function createConversations({
 				if (e instanceof AlreadyUndone) return "undone" as const;
 				throw e;
 			});
-			return error ? { error } : {};
+			if (error) return { error };
+			await saved(id);
+			return {};
 		},
 
 		/** A Subagent's transcript, loaded when its panel opens; undefined when it is not the user's. */

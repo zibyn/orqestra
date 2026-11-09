@@ -868,6 +868,19 @@ describe("runAgent with memory", () => {
 		expect(p).toContain(`${500 - listed} more memories are not listed`);
 	});
 
+	it("cuts a Memory Index in Chinese at about 2k tokens too, a token about a character", async () => {
+		answer();
+		const many = Array.from({ length: 500 }, (_, i) => ({
+			path: `notes/${i}`,
+			description: "长".repeat(100),
+			body: "b",
+		}));
+		await runAgent(run("remembers", { memories: many }).run, memDeps);
+		const listed = prompt(context).match(/^- notes\//gm)?.length ?? 0;
+		expect(listed).toBeGreaterThan(10);
+		expect(listed).toBeLessThanOrEqual(20);
+	});
+
 	it("keeps the Memory Index after compacting", async () => {
 		const old = fauxAssistantMessage("b".repeat(2000));
 		old.usage.totalTokens = 1500;
