@@ -1,6 +1,13 @@
 import type { SaveErrors } from "@orqestra/config/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { BookOpenIcon, Loader2Icon, PlusIcon, UploadIcon } from "lucide-react";
+import {
+	BookOpenIcon,
+	FileIcon,
+	Loader2Icon,
+	PlusIcon,
+	Trash2Icon,
+	UploadIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
 	ConsolePage,
@@ -20,6 +27,12 @@ import {
 	FieldLabel,
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
+import {
+	InputGroup,
+	InputGroupAddon,
+	InputGroupButton,
+	InputGroupInput,
+} from "#/components/ui/input-group";
 import { SheetFooter } from "#/components/ui/sheet";
 import { Switch } from "#/components/ui/switch";
 import {
@@ -428,78 +441,97 @@ function SkillEditor({
 		);
 	return (
 		<>
-			<div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-				<div className="flex flex-col gap-3 md:flex-row">
-					<ul className="flex shrink-0 flex-col gap-1 md:w-56">
-						{files.map((f) => (
-							<li key={f.path}>
+			{/* a container, so the panes sit side by side by the sheet's width, not the screen's */}
+			<div className="@container flex min-h-0 flex-1 flex-col gap-3 p-4">
+				<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border @xl:flex-row">
+					<div className="flex max-h-48 shrink-0 flex-col border-b @xl:max-h-none @xl:w-60 @xl:border-r @xl:border-b-0">
+						<ul
+							aria-label={m.edit_skill_files()}
+							className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto p-2"
+						>
+							{files.map((f) => (
+								<li key={f.path}>
+									<Button
+										size="sm"
+										variant={f.path === open ? "secondary" : "ghost"}
+										aria-current={f.path === open || undefined}
+										className="w-full justify-start font-mono font-normal"
+										onClick={() => setOpen(f.path)}
+									>
+										<FileIcon data-icon="inline-start" />
+										<span className="truncate">{f.path}</span>
+									</Button>
+								</li>
+							))}
+						</ul>
+						<form
+							className="border-t p-2"
+							onSubmit={(e) => {
+								e.preventDefault();
+								add();
+							}}
+						>
+							<InputGroup>
+								<InputGroupInput
+									className="font-mono text-xs"
+									placeholder={m.skill_new_file()}
+									aria-label={m.skill_new_file()}
+									value={newPath}
+									onChange={(e) => setNewPath(e.target.value)}
+								/>
+								<InputGroupAddon align="inline-end">
+									<InputGroupButton
+										type="submit"
+										size="icon-xs"
+										aria-label={m.add_skill_file()}
+									>
+										<PlusIcon />
+									</InputGroupButton>
+								</InputGroupAddon>
+							</InputGroup>
+						</form>
+					</div>
+					{file && (
+						<div className="flex min-h-64 min-w-0 flex-1 flex-col">
+							<div className="flex items-center gap-2 border-b py-1.5 pr-1.5 pl-3">
+								<span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+									{file.path}
+								</span>
 								<Button
-									size="sm"
-									variant={f.path === open ? "secondary" : "ghost"}
-									className="w-full justify-start truncate font-mono"
-									onClick={() => setOpen(f.path)}
-								>
-									{f.path}
-								</Button>
-							</li>
-						))}
-					</ul>
-					<div className="flex min-w-0 flex-1 flex-col gap-2">
-						{file && (
-							<>
-								{file.text === undefined ? (
-									<p className="text-sm text-muted-foreground">
-										{m.skill_binary_file({ size: file.size })}
-									</p>
-								) : (
-									<Textarea
-										aria-label={file.path}
-										className="min-h-64 font-mono text-xs"
-										value={file.text}
-										onChange={(e) =>
-											setFiles(
-												files.map((f) =>
-													f.path === file.path
-														? { ...f, text: e.target.value }
-														: f,
-												),
-											)
-										}
-									/>
-								)}
-								<Button
-									size="sm"
-									variant="outline"
-									className="self-start"
+									size="icon-sm"
+									variant="ghost"
+									aria-label={`${m.delete()} ${file.path}`}
 									onClick={() =>
 										setFiles(files.filter((f) => f.path !== file.path))
 									}
 								>
-									{m.delete()}
+									<Trash2Icon />
 								</Button>
-							</>
-						)}
-					</div>
+							</div>
+							{file.text === undefined ? (
+								<p className="p-3 text-sm text-muted-foreground">
+									{m.skill_binary_file({ size: file.size })}
+								</p>
+							) : (
+								<Textarea
+									aria-label={file.path}
+									// fills the pane: no own border or auto-grow
+									className="min-h-0 flex-1 resize-none rounded-none border-0 font-mono text-xs shadow-none field-sizing-fixed focus-visible:ring-0 md:text-xs dark:bg-transparent"
+									value={file.text}
+									onChange={(e) =>
+										setFiles(
+											files.map((f) =>
+												f.path === file.path
+													? { ...f, text: e.target.value }
+													: f,
+											),
+										)
+									}
+								/>
+							)}
+						</div>
+					)}
 				</div>
-				<form
-					className="flex gap-2"
-					onSubmit={(e) => {
-						e.preventDefault();
-						add();
-					}}
-				>
-					<Input
-						className="font-mono"
-						placeholder={m.skill_new_file()}
-						aria-label={m.skill_new_file()}
-						value={newPath}
-						onChange={(e) => setNewPath(e.target.value)}
-					/>
-					<Button type="submit" variant="outline">
-						<PlusIcon data-icon="inline-start" />
-						{m.add_skill_file()}
-					</Button>
-				</form>
 				<FieldError>{error}</FieldError>
 			</div>
 			<SheetFooter className="flex-row border-t">
