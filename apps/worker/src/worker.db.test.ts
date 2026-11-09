@@ -18,6 +18,7 @@ import {
 import type { AgentDefinition } from "@orqestra/config";
 import type { ConversationEvent } from "@orqestra/conversations";
 import { openToolbox } from "@orqestra/tools";
+import { memoryOrrery } from "@orqestra/tools/testing";
 
 // Smoke tests of the assembled worker: the runtime replying through the real @orqestra/conversations
 // (lifecycle scenarios are tested there, runtime ones in src/runtime): needs TEST_DATABASE_URL, which src/test-env.ts sets up
@@ -53,7 +54,19 @@ const fauxAgent: AgentDefinition = {
 	skills: [],
 	unavailableModels: [],
 };
+// a template whose Subagents get a Sandbox: it may use a Skill
+const skilledAgent: AgentDefinition = {
+	...fauxAgent,
+	id: "skilled",
+	instructions: "You carry out one task with a Skill.",
+	pickable: false,
+	skills: ["notes"],
+};
 const userId = "u1";
+// a command that runs until it is canceled
+const orrery = memoryOrrery({
+	exec: (command) => (command === "sleep 1000" ? { running: true } : {}),
+});
 
 // Reads SSE events from a stream until `until` returns true
 async function collect(
@@ -132,7 +145,18 @@ describe.skipIf(!url)(
 			const loaded = await config.current();
 			loaded.registry.registerProvider(faux.provider);
 			loaded.models.push(...faux.models);
-			loaded.agents.push(fauxAgent);
+			loaded.agents.push(fauxAgent, skilledAgent);
+			loaded.sandboxProvider = {
+				url: "http://orrery",
+				token: "t",
+				cpu: 1,
+				memory: 1,
+			};
+			loaded.skills.notes = {
+				versionId: 0,
+				description: "Takes notes",
+				disableModelInvocation: false,
+			};
 			loaded.tools.search = {
 				provider: "tavily",
 				apiKey: "k",
@@ -141,6 +165,7 @@ describe.skipIf(!url)(
 			// faux replies are one shared queue, so runs go one at a time
 			stopWorker = await startAgentWorker(config.current, {
 				concurrency: 1,
+				orrery: () => orrery.client,
 				// Search answers with no results
 				toolbox: (services, allowed, options) =>
 					openToolbox(services, allowed, {
@@ -267,6 +292,43 @@ describe.skipIf(!url)(
 			expect(notified).toContain('status=\\"partial\\"');
 			expect(notified).toContain("what I found");
 			expect(view?.subagents[0].outcome).toBe("partial");
+		});
+
+		it("cancels the command a Subagent runs when the User stops the parent", async () => {
+			script({
+				parent: [
+					fauxAssistantMessage(
+						fauxToolCall("subagent", {
+							tasks: [{ brief: "wait", template: "skilled" }],
+						}),
+					),
+					fauxAssistantMessage("Waiting"),
+				],
+				sub: [
+					fauxAssistantMessage(fauxToolCall("bash", { command: "sleep 1000" })),
+				],
+			});
+			const id = await conversations.send(userId, {
+				agentId: "faux",
+				text: "wait",
+			});
+			const calls = (prefix: string) =>
+				Promise.resolve(orrery.calls.filter((c) => c.startsWith(prefix)));
+			await waitFor(
+				() => calls("createExec"),
+				(c) => c.some((x) => x.endsWith(" sleep 1000")),
+			);
+			await conversations.stop(userId, id);
+			const canceled = await waitFor(
+				() => calls("cancelExec"),
+				(c) => c.length > 0,
+			);
+			expect(canceled).toHaveLength(1);
+			const view = await waitFor(
+				() => conversations.get(userId, id),
+				(v) => v?.subagents[0]?.outcome === "stopped",
+			);
+			expect(view?.subagents[0].outcome).toBe("stopped");
 		});
 	},
 );
