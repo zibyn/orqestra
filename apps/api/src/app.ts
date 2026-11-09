@@ -3,6 +3,7 @@ import { Elysia } from "elysia";
 import { z } from "zod";
 import { download, upload } from "./files.ts";
 import type { User } from "./identity.ts";
+import { memoryRoutes } from "./memories.ts";
 import { skills } from "./skills.ts";
 
 export type { User };
@@ -90,7 +91,8 @@ export function createApp({
 							? download(conversations, user.id, params.id, request)
 							: status(401, unauthorized);
 					},
-				),
+				)
+				.use(memoryRoutes(user)),
 		);
 }
 

@@ -13,6 +13,7 @@
   "dependencies": {
     "@orqestra/config": "workspace:*",
     "@orqestra/conversations": "workspace:*",
+    "@orqestra/db": "workspace:*",
     "@zibyn/polaris": "^0.1.3",
     "elysia": "1.4.30",
     "zod": "^4.3.6"

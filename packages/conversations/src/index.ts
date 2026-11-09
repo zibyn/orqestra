@@ -48,6 +48,7 @@ import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
 
 export { MAX_UPLOAD_BYTES } from "@orqestra/config";
 export {
+	checkMemory,
 	MAX_MEMORIES,
 	MAX_MEMORY_BODY,
 	MAX_MEMORY_DESCRIPTION,
