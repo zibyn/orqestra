@@ -10,7 +10,7 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { McpServer, ToolService } from "@orqestra/tools";
+import type { McpServer, SandboxProvider, ToolService } from "@orqestra/tools";
 import type { z } from "zod";
 import {
 	agentDefinition,
@@ -78,6 +78,14 @@ export interface Settings {
 		enabled: boolean;
 		headers: { name: string; value: string | undefined }[];
 	}[];
+	/** Omitted when none is configured; `token` is undefined when it cannot be decrypted, `snapshot` null means orrery's default. */
+	sandboxProvider?: {
+		url: string;
+		token: string | undefined;
+		snapshot: string | null;
+		cpu: number;
+		memory: number;
+	};
 }
 
 export interface OrqestraConfig {
@@ -91,6 +99,8 @@ export interface OrqestraConfig {
 	tools: Partial<Record<ToolName, ToolService>>;
 	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
 	mcpServers: Record<string, McpServer>;
+	/** Undefined when none is configured or its token cannot be decrypted: every Skill is then unavailable. */
+	sandboxProvider?: SandboxProvider;
 	/** pi's streamSimple with the Provider's configured API key. */
 	streamSimple: StreamSimple;
 }
@@ -232,6 +242,11 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 			mcpServers[id] = { name, url, headers: Object.fromEntries(plain) };
 	}
 
+	const stored = settings.sandboxProvider;
+	const sandboxProvider = stored?.token
+		? { ...stored, token: stored.token, snapshot: stored.snapshot ?? undefined }
+		: undefined;
+
 	return {
 		registry,
 		models,
@@ -239,6 +254,7 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		defaultAgent: defaults[0],
 		tools,
 		mcpServers,
+		sandboxProvider,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);
 			if (provider && provider.apiKey === undefined)

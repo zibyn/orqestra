@@ -4,6 +4,7 @@ import {
 	enabledModel,
 	mcpServer,
 	provider,
+	sandboxProvider,
 	searchProvider,
 } from "@orqestra/db/schema";
 import { availableTools } from "@orqestra/tools";
@@ -22,7 +23,7 @@ import { decryptSecret, encryptionKey } from "./secret.ts";
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
 
-export type { McpTestResult } from "@orqestra/tools";
+export type { McpTestResult, SandboxTestResult } from "@orqestra/tools";
 export {
 	agentInput,
 	mcpServerEnabledInput,
@@ -30,6 +31,7 @@ export {
 	modelEnabledInput,
 	providerInput,
 	providerTestInput,
+	sandboxProviderInput,
 	searchProviderInput,
 	toolServiceInput,
 } from "./admin.ts";
@@ -37,15 +39,23 @@ export {
 /** Everything saved in /console, with API keys decrypted. */
 async function loadSettings(): Promise<Settings> {
 	const key = encryptionKey();
-	const [providers, enabled, searchProviders, served, mcpServers, agents] =
-		await Promise.all([
-			db.select().from(provider),
-			db.select().from(enabledModel),
-			db.select().from(searchProvider),
-			servedBy(),
-			db.select().from(mcpServer).orderBy(mcpServer.createdAt),
-			db.select().from(agent).orderBy(agent.createdAt),
-		]);
+	const [
+		providers,
+		enabled,
+		searchProviders,
+		served,
+		mcpServers,
+		agents,
+		[sandbox],
+	] = await Promise.all([
+		db.select().from(provider),
+		db.select().from(enabledModel),
+		db.select().from(searchProvider),
+		servedBy(),
+		db.select().from(mcpServer).orderBy(mcpServer.createdAt),
+		db.select().from(agent).orderBy(agent.createdAt),
+		db.select().from(sandboxProvider),
+	]);
 	return {
 		providers: providers.map((p) => ({
 			id: p.id,
@@ -72,6 +82,13 @@ async function loadSettings(): Promise<Settings> {
 				value: decryptSecret(h.value, key),
 			})),
 		})),
+		sandboxProvider: sandbox && {
+			url: sandbox.url,
+			token: decryptSecret(sandbox.token, key),
+			snapshot: sandbox.snapshot,
+			cpu: sandbox.cpu,
+			memory: sandbox.memory,
+		},
 	};
 }
 
