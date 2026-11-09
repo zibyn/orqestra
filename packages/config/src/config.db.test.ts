@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import type { SkillFile } from "./shared.ts";
 
 // Writes through the interface against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -235,7 +236,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 					content: content as string,
 				})),
 			]);
-		const text = (files: { path: string; content: Uint8Array }[]) =>
+		const text = (files: SkillFile[]) =>
 			Object.fromEntries(
 				files.map((f) => [f.path, new TextDecoder().decode(f.content)]),
 			);

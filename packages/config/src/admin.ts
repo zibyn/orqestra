@@ -31,6 +31,7 @@ import {
 	type OrqestraConfig,
 	type SaveErrors,
 	type SearchProviderId,
+	type SkillFile,
 	searchProviders as searchProviderCatalog,
 	searchProviderId,
 	type ToolName,
@@ -548,7 +549,7 @@ const skills = ({ write }: Deps) => ({
 		const old = new Map(
 			(await skillFiles(base)).map((f) => [f.path, f.content]),
 		);
-		const contents: SkillFiles["files"] = [];
+		const contents: SkillFile[] = [];
 		for (const { path, text } of files) {
 			const kept = old.get(path);
 			// the console shows a binary file without its bytes, so text for it would replace it unseen

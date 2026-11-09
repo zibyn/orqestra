@@ -158,6 +158,9 @@ export function definitionIssues(def: z.infer<typeof agentDefinition>) {
 	return issues;
 }
 
+/** One of a Skill version's files, its path relative to the Skill's folder (`SKILL.md`, `scripts/…`). */
+export type SkillFile = { path: string; content: Uint8Array };
+
 /** Where a Sandbox holds its Skills, one folder each. */
 export const SKILLS_DIR = "/workspace/.skills";
 
