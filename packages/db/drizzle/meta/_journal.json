@@ -15,6 +15,13 @@
       "when": 1793955916439,
       "tag": "0001_polaris_users",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794204956830,
+      "tag": "0002_skills",
+      "breakpoints": true
     }
   ]
 }

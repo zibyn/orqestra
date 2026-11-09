@@ -1,6 +1,7 @@
 import {
 	type AnyPgColumn,
 	boolean,
+	customType,
 	index,
 	integer,
 	jsonb,
@@ -9,8 +10,15 @@ import {
 	serial,
 	text,
 	timestamp,
+	unique,
 	uuid,
 } from "drizzle-orm/pg-core";
+
+// drizzle 0.45 has no bytea column; node-postgres reads it as a Buffer
+const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
+	dataType: () => "bytea",
+	toDriver: (value) => Buffer.from(value),
+});
 
 // Visible only to its owner: every query filters on userId, Admins included
 export const conversation = pgTable(
@@ -198,3 +206,49 @@ export const agent = pgTable("agent", {
 	definition: jsonb("definition").notNull(),
 	createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// Skills an Admin uploaded; `name` is the Skill's frontmatter name, which Agent Definitions refer to
+export const skill = pgTable("skill", {
+	name: text("name").primaryKey(),
+	// the version Agents use; set in the transaction that adds the first one
+	currentVersionId: integer("current_version_id").references(
+		(): AnyPgColumn => skillVersion.id,
+	),
+	enabled: boolean("enabled").default(true).notNull(),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+	updatedAt: timestamp("updated_at")
+		.defaultNow()
+		.$onUpdate(() => new Date())
+		.notNull(),
+});
+
+// A full snapshot of a Skill per upload or edit, never changed afterwards (ADR 0004)
+export const skillVersion = pgTable(
+	"skill_version",
+	{
+		id: serial("id").primaryKey(),
+		skillName: text("skill_name")
+			.notNull()
+			.references(() => skill.name, { onDelete: "cascade" }),
+		// 1, 2, ... within the Skill
+		number: integer("number").notNull(),
+		// from SKILL.md's frontmatter
+		description: text("description").notNull(),
+		disableModelInvocation: boolean("disable_model_invocation").notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [unique().on(table.skillName, table.number)],
+);
+
+export const skillFile = pgTable(
+	"skill_file",
+	{
+		versionId: integer("version_id")
+			.notNull()
+			.references(() => skillVersion.id, { onDelete: "cascade" }),
+		// relative to the Skill's folder: SKILL.md, scripts/…
+		path: text("path").notNull(),
+		content: bytea("content").notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.versionId, table.path] })],
+);

@@ -71,6 +71,8 @@ export const agentDefinition = z.strictObject({
 		.optional(),
 	/** Omitted means Search and Scrape, never an MCP Server. */
 	tools: z.array(toolRef).optional(),
+	/** Allowed Skills by name; omitted means none. */
+	skills: z.array(z.string()).optional(),
 	compaction: z
 		.strictObject({
 			reserveTokens: z.number().int().positive().optional(),
@@ -93,8 +95,18 @@ export type SaveError =
 				| "id_invalid"
 				| "id_taken"
 				| "default_required"
-				| "default_not_pickable";
+				| "default_not_pickable"
+				| "skill_zip_invalid"
+				| "skill_md_missing"
+				| "skill_frontmatter_invalid"
+				| "skill_name_invalid"
+				| "skill_description_invalid"
+				| "skill_too_large"
+				| "skill_too_many_files"
+				| "skill_exists";
 	  }
+	| { code: "skill_path_unsafe" | "skill_symlink"; path: string }
+	| { code: "skill_name_mismatch"; name: string; folder: string }
 	| { code: "invalid"; detail: string }
 	| {
 			code: "header_invalid" | "header_twice" | "header_value_missing";

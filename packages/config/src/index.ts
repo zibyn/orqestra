@@ -78,6 +78,22 @@ export interface Settings {
 		enabled: boolean;
 		headers: { name: string; value: string | undefined }[];
 	}[];
+	/** Every Skill with its current version. */
+	skills: {
+		name: string;
+		enabled: boolean;
+		versionId: number;
+		description: string;
+		disableModelInvocation: boolean;
+	}[];
+}
+
+/** A Skill Runs can use; read its files with `skillFiles(versionId)`. */
+export interface SkillInfo {
+	/** The current version when the config was loaded. */
+	versionId: number;
+	description: string;
+	disableModelInvocation: boolean;
 }
 
 export interface OrqestraConfig {
@@ -91,6 +107,8 @@ export interface OrqestraConfig {
 	tools: Partial<Record<ToolName, ToolService>>;
 	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
 	mcpServers: Record<string, McpServer>;
+	/** Enabled Skills, by name; the others are unavailable. */
+	skills: Record<string, SkillInfo>;
 	/** pi's streamSimple with the Provider's configured API key. */
 	streamSimple: StreamSimple;
 }
@@ -232,6 +250,10 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 			mcpServers[id] = { name, url, headers: Object.fromEntries(plain) };
 	}
 
+	const skills: OrqestraConfig["skills"] = {};
+	for (const { name, enabled, ...skill } of settings.skills)
+		if (enabled) skills[name] = skill;
+
 	return {
 		registry,
 		models,
@@ -239,6 +261,7 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		defaultAgent: defaults[0],
 		tools,
 		mcpServers,
+		skills,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);
 			if (provider && provider.apiKey === undefined)

@@ -5,6 +5,9 @@ import {
 	mcpServer,
 	provider,
 	searchProvider,
+	skill,
+	skillFile,
+	skillVersion,
 	toolService,
 } from "@orqestra/db/schema";
 import {
@@ -12,7 +15,7 @@ import {
 	type McpTestResult,
 	testMcpServer,
 } from "@orqestra/tools";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, max, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
 	agentDefinition,
@@ -32,6 +35,7 @@ import {
 	toolName,
 } from "./index.ts";
 import { decryptSecret, sealSecret, secretReadable } from "./secret.ts";
+import { parseSkillZip } from "./skill-zip.ts";
 
 // What Admins edit in /console, by GLOSSARY entity: inputs, rules across fields and entities, and the management views.
 // Secrets only go in; a view tells whether they can still be decrypted.
@@ -86,6 +90,14 @@ export const mcpServerInput = z.object({
 export const mcpServerEnabledInput = z.object({
 	id: mcpServerId,
 	enabled: z.boolean(),
+});
+export const skillEnabledInput = z.object({
+	name: z.string(),
+	enabled: z.boolean(),
+});
+export const skillCurrentInput = z.object({
+	name: z.string(),
+	versionId: z.number().int(),
 });
 export const agentInput = z.object({
 	id: agentId,
@@ -356,6 +368,128 @@ const mcpServers = ({ write }: Deps) => ({
 		}),
 });
 
+/** A version's files, paths relative to the Skill's folder; for Runs, by the `versionId` of `current().skills`. */
+export const skillFiles = (versionId: number) =>
+	db
+		.select({ path: skillFile.path, content: skillFile.content })
+		.from(skillFile)
+		.where(eq(skillFile.versionId, versionId))
+		.orderBy(skillFile.path);
+
+const skills = ({ write }: Deps) => ({
+	/** Every Skill with its versions, newest first; `description` is the current version's. */
+	async list() {
+		const [skills, versions] = await Promise.all([
+			db.select().from(skill).orderBy(skill.name),
+			db
+				.select({
+					id: skillVersion.id,
+					skillName: skillVersion.skillName,
+					number: skillVersion.number,
+					description: skillVersion.description,
+					createdAt: skillVersion.createdAt,
+				})
+				.from(skillVersion)
+				.orderBy(desc(skillVersion.number)),
+		]);
+		return skills.map((s) => {
+			const own = versions.filter((v) => v.skillName === s.name);
+			return {
+				name: s.name,
+				enabled: s.enabled,
+				currentVersionId: s.currentVersionId,
+				description:
+					own.find((v) => v.id === s.currentVersionId)?.description ?? "",
+				versions: own.map(({ skillName: _, ...v }) => v),
+			};
+		});
+	},
+
+	/** Adds the zip as a new current version; one whose name exists needs `replace`. `name` is set once the zip is valid. */
+	async upload(
+		zip: Uint8Array,
+		replace: boolean,
+	): Promise<{ errors: SaveErrors; name?: string }> {
+		const parsed = parseSkillZip(zip);
+		if ("error" in parsed) return { errors: { file: parsed.error } };
+		const { name, description, disableModelInvocation, files } = parsed.skill;
+		const errors = await write(async (tx): Promise<SaveErrors> => {
+			const inserted = await tx
+				.insert(skill)
+				.values({ name })
+				.onConflictDoNothing()
+				.returning({ name: skill.name });
+			if (!inserted.length && !replace)
+				return { name: { code: "skill_exists" } };
+			// locks the Skill, so two uploads cannot take the same number
+			await tx
+				.select({ name: skill.name })
+				.from(skill)
+				.where(eq(skill.name, name))
+				.for("update");
+			const [{ last }] = await tx
+				.select({ last: max(skillVersion.number) })
+				.from(skillVersion)
+				.where(eq(skillVersion.skillName, name));
+			const [version] = await tx
+				.insert(skillVersion)
+				.values({
+					skillName: name,
+					number: (last ?? 0) + 1,
+					description,
+					disableModelInvocation,
+				})
+				.returning({ id: skillVersion.id });
+			await tx
+				.insert(skillFile)
+				.values(files.map((f) => ({ versionId: version.id, ...f })));
+			await tx
+				.update(skill)
+				.set({ currentVersionId: version.id })
+				.where(eq(skill.name, name));
+			return {};
+		});
+		return { errors, name };
+	},
+
+	async setEnabled(name: string, enabled: boolean) {
+		const updated = await write((tx) =>
+			tx
+				.update(skill)
+				.set({ enabled })
+				.where(eq(skill.name, name))
+				.returning({ name: skill.name }),
+		);
+		if (!updated.length) throw new Error("Skill not found");
+	},
+
+	/** Agents use this version from their next Run on; it must be one of the Skill's. */
+	async setCurrent(name: string, versionId: number) {
+		const updated = await write((tx) =>
+			tx
+				.update(skill)
+				.set({ currentVersionId: versionId })
+				.where(
+					and(
+						eq(skill.name, name),
+						sql`exists (select 1 from ${skillVersion} where ${skillVersion.id} = ${versionId} and ${skillVersion.skillName} = ${name})`,
+					),
+				)
+				.returning({ name: skill.name }),
+		);
+		if (!updated.length) throw new Error("Skill version not found");
+	},
+
+	/** Also deletes its versions and removes it from every Agent Definition. */
+	delete: (name: string) =>
+		write(async (tx) => {
+			await tx.delete(skill).where(eq(skill.name, name));
+			await tx.execute(
+				sql`update ${agent} set definition = jsonb_set(definition, '{skills}', (definition->'skills') - ${name}::text) where definition->'skills' @> ${JSON.stringify([name])}::jsonb`,
+			);
+		}),
+});
+
 const isDefault = (stored: { definition: unknown } | undefined) =>
 	!!stored && agentDefinition.parse(stored.definition).default;
 
@@ -447,4 +581,5 @@ export const admin = (deps: Deps) => ({
 	searchProviders: searchProviders(deps),
 	mcpServers: mcpServers(deps),
 	agents: agents(deps),
+	skills: skills(deps),
 });

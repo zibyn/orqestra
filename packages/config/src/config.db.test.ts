@@ -7,6 +7,8 @@ const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
 const { config, liveConfig } = await import("./live.ts");
 const { catalogProviders } = await import("./index.ts");
+const { skillFiles } = await import("./live.ts");
+const { zip } = await import("./test-zip.ts");
 
 const general = {
 	name: "General",
@@ -39,7 +41,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 	// leaves only a default Agent, as the baseline does, also for the next package's tests
 	const reset = async () => {
 		await db.execute(
-			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, agent cascade`,
+			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, agent, skill cascade`,
 		);
 		await config.agents.save({
 			id: "general",
@@ -218,6 +220,120 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 				["other", []],
 			]);
 			expect(mcpServers).toEqual([{ id: "files", name: "files" }]);
+		});
+	});
+
+	describe("Skills", () => {
+		const skillZip = (name: string, description: string, extra = {}) =>
+			zip([
+				{
+					path: `${name}/SKILL.md`,
+					content: `---\nname: ${name}\ndescription: ${description}\n---\nBody\n`,
+				},
+				...Object.entries(extra).map(([path, content]) => ({
+					path: `${name}/${path}`,
+					content: content as string,
+				})),
+			]);
+		const text = (files: { path: string; content: Uint8Array }[]) =>
+			Object.fromEntries(
+				files.map((f) => [f.path, new TextDecoder().decode(f.content)]),
+			);
+		const currentFiles = async (name: string) => {
+			const skill = (await config.current()).skills[name];
+			return skill && text(await skillFiles(skill.versionId));
+		};
+
+		it("refuses an invalid zip with the reason", async () => {
+			expect(await config.skills.upload(zip([]), false)).toEqual({
+				errors: { file: { code: "skill_md_missing" } },
+			});
+			expect(await config.skills.list()).toEqual([]);
+		});
+
+		it("makes an uploaded Skill available to Runs with its files", async () => {
+			expect(
+				await config.skills.upload(
+					skillZip("pdf", "Fills PDFs", { "scripts/a.py": "print(1)" }),
+					false,
+				),
+			).toEqual({ errors: {}, name: "pdf" });
+			expect((await config.current()).skills.pdf).toMatchObject({
+				description: "Fills PDFs",
+				disableModelInvocation: false,
+			});
+			expect(await currentFiles("pdf")).toEqual({
+				"SKILL.md": "---\nname: pdf\ndescription: Fills PDFs\n---\nBody\n",
+				"scripts/a.py": "print(1)",
+			});
+		});
+
+		it("asks before uploading a name that exists, then adds a version", async () => {
+			await config.skills.upload(skillZip("pdf", "v1"), false);
+			expect(await config.skills.upload(skillZip("pdf", "v2"), false)).toEqual({
+				errors: { name: { code: "skill_exists" } },
+				name: "pdf",
+			});
+			expect((await config.current()).skills.pdf.description).toBe("v1");
+			await config.skills.upload(skillZip("pdf", "v2"), true);
+			const [listed, ...others] = await config.skills.list();
+			expect(others).toEqual([]);
+			expect(listed).toMatchObject({
+				name: "pdf",
+				description: "v2",
+				enabled: true,
+			});
+			expect(listed.versions.map((v) => [v.number, v.description])).toEqual([
+				[2, "v2"],
+				[1, "v1"],
+			]);
+			expect(listed.currentVersionId).toBe(listed.versions[0].id);
+		});
+
+		it("rolls back to an earlier version, files included", async () => {
+			await config.skills.upload(skillZip("pdf", "v1", { a: "old" }), false);
+			await config.skills.upload(skillZip("pdf", "v2", { b: "new" }), true);
+			const [{ versions }] = await config.skills.list();
+			await config.skills.setCurrent("pdf", versions[1].id);
+			expect((await config.current()).skills.pdf.description).toBe("v1");
+			expect(Object.keys(await currentFiles("pdf"))).toEqual(["SKILL.md", "a"]);
+			// another Skill's version is not one of its own
+			await config.skills.upload(skillZip("doc", "d"), false);
+			const doc = (await config.skills.list()).find((s) => s.name === "doc");
+			await expect(
+				config.skills.setCurrent("pdf", doc?.versions[0].id ?? 0),
+			).rejects.toThrow(/not found/);
+		});
+
+		it("is unavailable while disabled", async () => {
+			await config.skills.upload(skillZip("pdf", "d"), false);
+			await config.skills.setEnabled("pdf", false);
+			expect((await config.current()).skills).toEqual({});
+			expect((await config.skills.list())[0].enabled).toBe(false);
+			await config.skills.setEnabled("pdf", true);
+			expect(Object.keys((await config.current()).skills)).toEqual(["pdf"]);
+		});
+
+		it("is removed from every Agent Definition when deleted", async () => {
+			await config.skills.upload(skillZip("pdf", "d"), false);
+			await config.skills.upload(skillZip("doc", "d"), false);
+			await config.agents.save({
+				id: "general",
+				create: false,
+				definition: { ...general, skills: ["pdf", "doc"] },
+			});
+			await config.agents.save({
+				id: "other",
+				create: true,
+				definition: { ...other, skills: ["pdf"] },
+			});
+			await config.skills.delete("pdf");
+			const { agents } = await config.agents.list();
+			expect(agents.map((a) => [a.id, a.definition.skills])).toEqual([
+				["general", ["doc"]],
+				["other", []],
+			]);
+			expect((await config.skills.list()).map((s) => s.name)).toEqual(["doc"]);
 		});
 	});
 
