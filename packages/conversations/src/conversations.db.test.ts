@@ -1083,9 +1083,12 @@ describe.skipIf(!url)(
 
 		it("answers a message left in the inbox when the User stops the Run", async () => {
 			let sent: Promise<unknown> | undefined;
+			// a "start" streamed before the test subscribes would be missed, and the Run would wait for a Stop forever
+			const { gate: listening, release } = gate();
 			script({
 				parent: [
 					async ({ run }) => {
+						await listening;
 						await run.stream({ type: "start" });
 						await untilAborted(run.signal);
 						// a stopped reply keeps what was generated
@@ -1100,6 +1103,7 @@ describe.skipIf(!url)(
 				id,
 				new AbortController().signal,
 			);
+			release();
 			await collect(
 				stream as ReadableStream,
 				(es) => es.some((e) => e.type === "start"),
