@@ -1,5 +1,6 @@
 import { Elysia } from "elysia";
 import type { User } from "./identity.ts";
+import { memoryRoutes } from "./memories.ts";
 
 export type { User };
 
@@ -14,6 +15,17 @@ export type Session = (
 
 /** Polaris' /auth/login, /auth/callback and /auth/logout. */
 export type Auth = (request: Request) => Response | Promise<Response>;
+
+/** The /api group as a domain's routes see it: the signed-in User, or null, resolved. */
+export type SignedIn = Elysia<
+	"",
+	{
+		decorator: Record<string, never>;
+		store: Record<string, never>;
+		derive: Record<string, never>;
+		resolve: { user: User | null };
+	}
+>;
 
 /** The api; production passes Polaris (see polaris.ts), tests a fake. */
 export function createApp({ session, auth }: { session: Session; auth: Auth }) {
@@ -32,7 +44,8 @@ export function createApp({ session, auth }: { session: Session; auth: Auth }) {
 					({ user, status }) =>
 						user ??
 						status(401, { errors: { session: { code: "unauthorized" } } }),
-				),
+				)
+				.use(memoryRoutes),
 		);
 }
 

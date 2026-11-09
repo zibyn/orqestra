@@ -53,6 +53,12 @@ export const saveErrorTexts = (errors: SaveErrors) =>
 export const firstError = (result: { errors: SaveErrors }) =>
 	Object.values(saveErrorTexts(result.errors))[0];
 
-/** What to show for a failed request. */
-export const errorText = (error: unknown) =>
-	error instanceof Error ? error.message : m.request_failed();
+/** What to show for a failed request: the first field error of an api error's body, when it has a known code. */
+export function errorText(error: unknown) {
+	const errors = (error as { value?: { errors?: SaveErrors } } | null)?.value
+		?.errors;
+	const first = errors && Object.values(errors)[0];
+	if (first)
+		return first.code in texts ? saveErrorText(first) : m.request_failed();
+	return error instanceof Error ? error.message : m.request_failed();
+}

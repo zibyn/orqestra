@@ -17,6 +17,12 @@ importers:
 
   apps/api:
     dependencies:
+      '@orqestra/conversations':
+        specifier: workspace:*
+        version: link:../../packages/conversations
+      '@orqestra/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@zibyn/polaris':
         specifier: ^0.1.3
         version: 0.1.3

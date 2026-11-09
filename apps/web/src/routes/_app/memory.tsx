@@ -22,19 +22,25 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Switch } from "#/components/ui/switch";
 import { Textarea } from "#/components/ui/textarea";
-import {
-	deleteAllMemories,
-	deleteMemory,
-	getMemories,
-	saveMemory,
-	setMemoryOn,
-} from "#/lib/memory-fns";
+import { api } from "#/lib/api";
 import { errorText } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
 
+/** An api call's data; its error thrown, for errorText. */
+async function ok<R extends { data: unknown; error: unknown }>(
+	call: Promise<R>,
+) {
+	const { data, error } = await call;
+	if (error) throw error;
+	return data as NonNullable<R["data"]>;
+}
+
+const memoryApi = () => api().api.memories;
+const getMemories = () => ok(memoryApi().get());
+
 export const Route = createFileRoute("/_app/memory")({
-	loader: () => getMemories(),
+	loader: getMemories,
 	component: MemoryPage,
 });
 
@@ -81,7 +87,7 @@ function MemoryPage() {
 								checked={on}
 								disabled={!!busy}
 								onCheckedChange={(v) =>
-									act("on", () => setMemoryOn({ data: v }))
+									act("on", () => ok(memoryApi().on.put({ on: v })))
 								}
 							/>
 							<Label htmlFor="memory-on">{m.memory_on()}</Label>
@@ -91,7 +97,7 @@ function MemoryPage() {
 							disabled={!!busy || !memories.length}
 							onClick={() => {
 								if (confirm(m.memory_delete_all_confirm()))
-									void act("all", () => deleteAllMemories());
+									void act("all", () => ok(memoryApi().delete()));
 							}}
 						>
 							{m.memory_delete_all()}
@@ -144,7 +150,12 @@ function MemoryPage() {
 										onClick={() => {
 											if (confirm(m.memory_delete_confirm()))
 												void act(`delete-${x.path}`, () =>
-													deleteMemory({ data: x.path }),
+													ok(
+														// Eden puts a path parameter in the URL as it is
+														memoryApi()({
+															path: encodeURIComponent(x.path),
+														}).delete(),
+													),
 												);
 										}}
 									/>
@@ -216,7 +227,7 @@ function MemoryForm({
 			return setError(m.memory_body_too_long({ max: limits.body, bytes }));
 		setBusy(true);
 		try {
-			await saveMemory({ data: { path: memory.path, description, body } });
+			await ok(memoryApi().put({ path: memory.path, description, body }));
 			await router.invalidate();
 			onSaved();
 		} catch (e) {
