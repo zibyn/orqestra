@@ -20,16 +20,18 @@ import {
 	FieldLabel,
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
-import {
-	deleteSandboxProvider,
-	getSandboxProvider,
-	saveSandboxProvider,
-} from "#/lib/sandbox-provider";
-import { errorText, saveErrorTexts } from "#/lib/save-errors";
+import { api } from "#/lib/api";
+import { errorText, ok, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 
+const saveSandboxProvider = (
+	provider: Parameters<
+		ReturnType<typeof api>["api"]["sandbox-provider"]["post"]
+	>[0],
+) => saved(api().api["sandbox-provider"].post(provider));
+
 export const Route = createFileRoute("/console/sandbox")({
-	loader: () => getSandboxProvider(),
+	loader: async () => (await ok(api().api["sandbox-provider"].get())).provider,
 	component: SandboxProvider,
 });
 
@@ -70,13 +72,11 @@ function SandboxProvider() {
 	const save = () =>
 		act("save", async () => {
 			const result = await saveSandboxProvider({
-				data: {
-					url,
-					token,
-					snapshot,
-					cpu: Number(cpu),
-					memory: Math.round(Number(memory) * GiB),
-				},
+				url,
+				token,
+				snapshot,
+				cpu: Number(cpu),
+				memory: Math.round(Number(memory) * GiB),
 			});
 			setErrors(saveErrorTexts(result.errors));
 			setTest(result.test);
@@ -107,7 +107,7 @@ function SandboxProvider() {
 								onClick={() => {
 									if (confirm(m.delete_sandbox_provider_confirm()))
 										void act("delete", async () => {
-											await deleteSandboxProvider();
+											await ok(api().api["sandbox-provider"].delete());
 											setErrors({});
 											setToken("");
 										});

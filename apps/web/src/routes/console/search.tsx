@@ -27,17 +27,14 @@ import {
 	FieldLabel,
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
-import { errorText, firstError } from "#/lib/save-errors";
-import {
-	deleteSearchProvider,
-	getSearchProviders,
-	saveSearchProvider,
-	setServedBy,
-} from "#/lib/search-providers";
+import { api } from "#/lib/api";
+import { errorText, firstError, ok, saved } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 
+const getSearchProviders = () => ok(api().api["search-providers"].get());
+
 export const Route = createFileRoute("/console/search")({
-	loader: () => getSearchProviders(),
+	loader: getSearchProviders,
 	component: SearchProviders,
 });
 
@@ -106,12 +103,12 @@ function SearchProviders() {
 								value={data.servedBy[tool] ?? NONE}
 								onChange={(v) =>
 									act(`tool-${tool}`, () =>
-										setServedBy({
-											data: {
+										ok(
+											api().api["search-providers"].tools.put({
 												tool,
 												provider: v === NONE ? null : (v as SearchProviderId),
-											},
-										}),
+											}),
+										),
 									)
 								}
 								items={[
@@ -160,9 +157,9 @@ function SearchProviders() {
 									onClick={() => {
 										if (confirm(m.delete_search_provider_confirm()))
 											void act(`delete-${p.id}`, () =>
-												deleteSearchProvider({
-													data: p.id as SearchProviderId,
-												}),
+												ok(
+													api().api["search-providers"]({ id: p.id }).delete(),
+												),
 											);
 									}}
 								/>
@@ -231,7 +228,9 @@ function SearchProviderForm({
 		setBusy(true);
 		try {
 			const failed = firstError(
-				await saveSearchProvider({ data: { id, apiKey, baseUrl } }),
+				await saved(
+					api().api["search-providers"].post({ id, apiKey, baseUrl }),
+				),
 			);
 			if (failed) return setError(failed);
 			await router.invalidate();

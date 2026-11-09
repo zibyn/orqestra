@@ -30,18 +30,14 @@ import {
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
 import { Switch } from "#/components/ui/switch";
-import {
-	deleteProvider,
-	getProviders,
-	saveProvider,
-	setModelEnabled,
-	testProvider,
-} from "#/lib/providers";
-import { errorText, firstError } from "#/lib/save-errors";
+import { api } from "#/lib/api";
+import { errorText, firstError, ok, saved } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 
+const getProviders = () => ok(api().api.providers.get());
+
 export const Route = createFileRoute("/console/providers")({
-	loader: () => getProviders(),
+	loader: getProviders,
 	component: Providers,
 });
 
@@ -114,7 +110,7 @@ function Providers() {
 											if (!confirm(m.delete_provider_confirm())) return;
 											setBusy(p.id);
 											try {
-												await deleteProvider({ data: p.id });
+												await ok(api().api.providers({ id: p.id }).delete());
 												setError("");
 												await router.invalidate();
 											} catch (e) {
@@ -200,13 +196,13 @@ function ModelToggles({
 								onCheckedChange={async (enabled) => {
 									setBusy(id);
 									try {
-										await setModelEnabled({
-											data: {
+										await ok(
+											api().api.providers.models.put({
 												providerId: provider.id,
 												modelId: model.id,
 												enabled,
-											},
-										});
+											}),
+										);
 										setError("");
 										await router.invalidate();
 									} catch (e) {
@@ -264,14 +260,16 @@ function ProviderForm({
 			if (kind === "test" && !apiKey && !existing?.keyReadable)
 				setResult({ ok: false, text: m.api_key_required() });
 			else if (kind === "test" && modelId) {
-				const error = await testProvider({ data: { ...values, modelId } });
+				const { error } = await ok(
+					api().api.providers.test.post({ ...values, modelId }),
+				);
 				setResult(
 					error
 						? { ok: false, text: error }
 						: { ok: true, text: m.test_connection_ok() },
 				);
 			} else {
-				const error = firstError(await saveProvider({ data: values }));
+				const error = firstError(await saved(api().api.providers.post(values)));
 				if (error) setResult({ ok: false, text: error });
 				else {
 					await router.invalidate();

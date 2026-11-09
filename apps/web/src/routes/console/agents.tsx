@@ -37,12 +37,14 @@ import {
 import { Input } from "#/components/ui/input";
 import { Switch } from "#/components/ui/switch";
 import { Textarea } from "#/components/ui/textarea";
-import { deleteAgent, listAgents, saveAgent } from "#/lib/agents";
-import { errorText, saveErrorTexts } from "#/lib/save-errors";
+import { api } from "#/lib/api";
+import { errorText, ok, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 
+const listAgents = () => ok(api().api.agents.get());
+
 export const Route = createFileRoute("/console/agents")({
-	loader: () => listAgents(),
+	loader: listAgents,
 	component: Agents,
 });
 
@@ -148,7 +150,7 @@ function AgentItem({
 								if (!confirm(m.delete_agent_confirm())) return;
 								setBusy(true);
 								try {
-									await deleteAgent({ data: agent.id });
+									await ok(api().api.agents({ id: agent.id }).delete());
 									await router.invalidate();
 								} catch (e) {
 									setError(errorText(e));
@@ -249,9 +251,9 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 	async function save() {
 		setBusy(true);
 		try {
-			const result = await saveAgent({
-				data: { id, create: !agent, definition: def },
-			});
+			const result = await saved(
+				api().api.agents.post({ id, create: !agent, definition: def }),
+			);
 			setErrors(saveErrorTexts(result.errors));
 			if (!Object.keys(result.errors).length) {
 				await router.invalidate();

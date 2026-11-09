@@ -53,6 +53,27 @@ export const saveErrorTexts = (errors: SaveErrors) =>
 export const firstError = (result: { errors: SaveErrors }) =>
 	Object.values(saveErrorTexts(result.errors))[0];
 
+type Response<T> =
+	| { data: T; error: null }
+	| { data: null; error: { status: unknown; value: unknown } };
+
+/** An api call's data; any error is thrown, its text request_failed. */
+export async function ok<T>(response: Promise<Response<T>>) {
+	const { data, error } = await response;
+	if (error) throw new Error(m.request_failed());
+	return data as T;
+}
+
+/** A save's result, its field errors empty when it was saved: the api answers 422 with them. */
+export async function saved<T extends { errors: SaveErrors }>(
+	response: Promise<Response<T>>,
+) {
+	const { data, error } = await response;
+	if (error?.status === 422) return error.value as T;
+	if (error) throw new Error(m.request_failed());
+	return data as T;
+}
+
 /** What to show for a failed request. */
 export const errorText = (error: unknown) =>
 	error instanceof Error ? error.message : m.request_failed();

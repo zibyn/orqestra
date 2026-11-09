@@ -1,3 +1,4 @@
+import { config } from "@orqestra/config/live";
 import { z } from "zod";
 import { createApp } from "./app.ts";
 import { polaris } from "./polaris.ts";
@@ -18,6 +19,12 @@ if (!env.success) {
 	console.error(z.prettifyError(env.error));
 	process.exit(1);
 }
+
+// a misconfigured instance does not come up
+await config.current().catch((error) => {
+	console.error(error.message);
+	process.exit(1);
+});
 
 createApp(polaris(env.data)).listen(3001);
 console.log("api listening on 3001");

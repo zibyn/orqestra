@@ -31,17 +31,17 @@ import {
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
 import { Switch } from "#/components/ui/switch";
-import {
-	deleteMcpServer,
-	getMcpServers,
-	saveMcpServer,
-	setMcpServerEnabled,
-} from "#/lib/mcp-servers";
-import { errorText, saveErrorTexts } from "#/lib/save-errors";
+import { api } from "#/lib/api";
+import { errorText, ok, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 
+const getMcpServers = () => ok(api().api["mcp-servers"].get());
+const saveMcpServer = (
+	server: Parameters<ReturnType<typeof api>["api"]["mcp-servers"]["post"]>[0],
+) => saved(api().api["mcp-servers"].post(server));
+
 export const Route = createFileRoute("/console/mcp")({
-	loader: () => getMcpServers(),
+	loader: getMcpServers,
 	component: McpServers,
 });
 
@@ -111,7 +111,12 @@ function McpServers() {
 									disabled={!!busy}
 									onCheckedChange={(enabled) =>
 										act(`enable-${s.id}`, () =>
-											setMcpServerEnabled({ data: { id: s.id, enabled } }),
+											ok(
+												api().api["mcp-servers"].enabled.put({
+													id: s.id,
+													enabled,
+												}),
+											),
 										)
 									}
 								/>
@@ -128,7 +133,7 @@ function McpServers() {
 									onClick={() => {
 										if (confirm(m.delete_mcp_server_confirm()))
 											void act(`delete-${s.id}`, () =>
-												deleteMcpServer({ data: s.id }),
+												ok(api().api["mcp-servers"]({ id: s.id }).delete()),
 											);
 									}}
 								/>
@@ -189,14 +194,12 @@ function McpServerForm({
 		setBusy(true);
 		try {
 			const result = await saveMcpServer({
-				data: {
-					id,
-					create: !existing,
-					name,
-					url,
-					enabled: existing?.enabled ?? true,
-					headers,
-				},
+				id,
+				create: !existing,
+				name,
+				url,
+				enabled: existing?.enabled ?? true,
+				headers,
 			});
 			setErrors(saveErrorTexts(result.errors));
 			if (!Object.keys(result.errors).length) {
