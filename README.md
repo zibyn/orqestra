@@ -144,4 +144,4 @@ git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
 
 ## 贡献
 
-Issue 和 Pull Request 请提交到 [zibyn/orqestra](https://github.com/zibyn/orqestra/issues)。提交前运行 `pnpm lint` 和 `pnpm test`。
+Issue 和 Pull Request 请提交到 [zibyn/orqestra](https://github.com/zibyn/orqestra/issues)。提交前运行 `pnpm check` 和 `pnpm test`。
