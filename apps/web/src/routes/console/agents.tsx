@@ -30,6 +30,7 @@ import {
 	FieldGroup,
 	FieldLabel,
 	FieldLegend,
+	FieldSeparator,
 	FieldSet,
 	Field as UiField,
 } from "#/components/ui/field";
@@ -77,7 +78,7 @@ function Agents() {
 			<FormSheet
 				open={sheet.open}
 				onClose={sheet.close}
-				className="sm:max-w-2xl"
+				className="data-[side=right]:sm:max-w-2xl"
 				title={sheet.item?.definition.name ?? m.new_agent()}
 			>
 				<AgentForm agent={sheet.item} onDone={sheet.close} />
@@ -266,7 +267,7 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 	return (
 		<SheetForm onSubmit={() => void save()} busy={busy} submitLabel={m.save()}>
 			<FieldGroup className="gap-6">
-				<div className="grid gap-6 md:grid-cols-2">
+				<div className="grid gap-6 @md:grid-cols-2">
 					<Field
 						id={fieldId("name")}
 						label={m.agent_name()}
@@ -352,84 +353,80 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 						/>
 					)}
 				</UiField>
-				<div className="grid gap-6 md:grid-cols-2">
-					<Toggles
-						label={m.agent_models()}
-						hint={m.agent_models_hint()}
-						error={fieldError("models")}
-						items={modelChoices.map((x) => ({
-							value: x.ref,
-							label: x.name,
-						}))}
-						checked={def.models ?? []}
-						onToggle={(ref, on) => {
-							const models = toggle(def.models, ref, on);
-							update({
-								models,
-								defaultModel:
-									models &&
-									def.defaultModel &&
-									!models.includes(def.defaultModel)
-										? undefined
-										: def.defaultModel,
-							});
-						}}
-						idPrefix={fieldId("model")}
-					/>
-					<Picker
-						label={m.agent_default_model()}
-						error={fieldError("defaultModel")}
-						value={def.defaultModel ?? AUTO}
-						onChange={(v) =>
-							update({ defaultModel: v === AUTO ? undefined : v })
-						}
-						items={[
-							{ value: AUTO, label: m.automatic() },
-							...modelChoices
-								.filter((x) => !def.models || def.models.includes(x.ref))
-								.map((x) => ({ value: x.ref, label: x.name })),
-						]}
-					/>
-					<Toggles
-						label={m.agent_thinking_allowed()}
-						hint={m.agent_thinking_allowed_hint()}
-						error={fieldError("thinking.allowed")}
-						items={thinkingLevel.options.map((l) => ({
+				<FieldSeparator />
+				<Toggles
+					label={m.agent_models()}
+					hint={m.agent_models_hint()}
+					error={fieldError("models")}
+					items={modelChoices.map((x) => ({
+						value: x.ref,
+						label: x.name,
+					}))}
+					checked={def.models ?? []}
+					onToggle={(ref, on) => {
+						const models = toggle(def.models, ref, on);
+						update({
+							models,
+							defaultModel:
+								models && def.defaultModel && !models.includes(def.defaultModel)
+									? undefined
+									: def.defaultModel,
+						});
+					}}
+					idPrefix={fieldId("model")}
+				/>
+				<Picker
+					label={m.agent_default_model()}
+					error={fieldError("defaultModel")}
+					value={def.defaultModel ?? AUTO}
+					onChange={(v) => update({ defaultModel: v === AUTO ? undefined : v })}
+					items={[
+						{ value: AUTO, label: m.automatic() },
+						...modelChoices
+							.filter((x) => !def.models || def.models.includes(x.ref))
+							.map((x) => ({ value: x.ref, label: x.name })),
+					]}
+				/>
+				<Toggles
+					label={m.agent_thinking_allowed()}
+					hint={m.agent_thinking_allowed_hint()}
+					error={fieldError("thinking.allowed")}
+					items={thinkingLevel.options.map((l) => ({
+						value: l,
+						label: l,
+					}))}
+					checked={def.thinking?.allowed ?? []}
+					onToggle={(level, on) =>
+						update({
+							thinking: {
+								...def.thinking,
+								allowed: toggle(def.thinking?.allowed, level, on),
+							},
+						})
+					}
+					idPrefix={fieldId("thinking")}
+				/>
+				<Picker
+					label={m.agent_thinking_default()}
+					error={fieldError("thinking.default")}
+					value={def.thinking?.default ?? AUTO}
+					onChange={(v) =>
+						update({
+							thinking: {
+								...def.thinking,
+								default: v === AUTO ? undefined : (v as AgentThinking),
+							},
+						})
+					}
+					items={[
+						{ value: AUTO, label: m.automatic() },
+						...(def.thinking?.allowed ?? thinkingLevel.options).map((l) => ({
 							value: l,
 							label: l,
-						}))}
-						checked={def.thinking?.allowed ?? []}
-						onToggle={(level, on) =>
-							update({
-								thinking: {
-									...def.thinking,
-									allowed: toggle(def.thinking?.allowed, level, on),
-								},
-							})
-						}
-						idPrefix={fieldId("thinking")}
-					/>
-					<Picker
-						label={m.agent_thinking_default()}
-						error={fieldError("thinking.default")}
-						value={def.thinking?.default ?? AUTO}
-						onChange={(v) =>
-							update({
-								thinking: {
-									...def.thinking,
-									default: v === AUTO ? undefined : (v as AgentThinking),
-								},
-							})
-						}
-						items={[
-							{ value: AUTO, label: m.automatic() },
-							...(def.thinking?.allowed ?? thinkingLevel.options).map((l) => ({
-								value: l,
-								label: l,
-							})),
-						]}
-					/>
-				</div>
+						})),
+					]}
+				/>
+				<FieldSeparator />
 				<Toggles
 					label={m.agent_tools()}
 					error={fieldError("tools")}
@@ -472,6 +469,7 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 					}
 					idPrefix={fieldId("skill")}
 				/>
+				<FieldSeparator />
 				<SwitchField
 					id={fieldId("memory")}
 					label={m.agent_memory()}
@@ -547,23 +545,25 @@ function Toggles<T extends string>({
 				{label}
 			</FieldLegend>
 			{hint && <FieldDescription>{hint}</FieldDescription>}
-			<div className="grid max-h-72 gap-3 overflow-y-auto rounded-lg border p-3 sm:grid-cols-2">
-				{items.map((item) => (
-					<UiField key={item.value} orientation="horizontal">
-						<Switch
-							id={`${idPrefix}-${item.value}`}
-							checked={checked.includes(item.value)}
-							onCheckedChange={(on) => onToggle(item.value, on)}
-						/>
-						<FieldLabel
-							htmlFor={`${idPrefix}-${item.value}`}
-							className="font-normal"
-						>
-							{item.label}
-						</FieldLabel>
-					</UiField>
-				))}
-			</div>
+			{items.length > 0 && (
+				<div className="grid max-h-72 gap-3 overflow-y-auto rounded-lg border p-3 @md:grid-cols-2 @xl:grid-cols-3">
+					{items.map((item) => (
+						<UiField key={item.value} orientation="horizontal">
+							<Switch
+								id={`${idPrefix}-${item.value}`}
+								checked={checked.includes(item.value)}
+								onCheckedChange={(on) => onToggle(item.value, on)}
+							/>
+							<FieldLabel
+								htmlFor={`${idPrefix}-${item.value}`}
+								className="font-normal"
+							>
+								{item.label}
+							</FieldLabel>
+						</UiField>
+					))}
+				</div>
+			)}
 			<FieldError>{error}</FieldError>
 		</FieldSet>
 	);

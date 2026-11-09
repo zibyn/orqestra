@@ -202,7 +202,11 @@ function Skills() {
 			<FormSheet
 				open={sheet.open}
 				onClose={sheet.close}
-				className={sheet.item?.kind === "new" ? undefined : "sm:max-w-3xl"}
+				className={
+					sheet.item?.kind === "new"
+						? undefined
+						: "data-[side=right]:sm:max-w-3xl"
+				}
 				title={
 					sheet.item?.kind === "new" ? (
 						m.new_skill()

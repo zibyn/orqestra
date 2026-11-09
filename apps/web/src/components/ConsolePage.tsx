@@ -146,7 +146,10 @@ export function FormSheet({
 }) {
 	return (
 		<Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-			<SheetContent className={cn("w-full gap-0 sm:max-w-lg", className)}>
+			{/* width classes need the `data-[side=right]:` prefix to beat the Sheet's own `max-w-sm` */}
+			<SheetContent
+				className={cn("w-full gap-0 data-[side=right]:sm:max-w-lg", className)}
+			>
 				<SheetHeader className="border-b pr-12">
 					<SheetTitle className="flex flex-wrap items-center gap-2 text-base">
 						{title}
@@ -181,7 +184,8 @@ export function SheetForm({
 				onSubmit();
 			}}
 		>
-			<div className="flex-1 overflow-y-auto p-4">{children}</div>
+			{/* a container, so the fields lay out by the sheet's width, not the screen's */}
+			<div className="@container flex-1 overflow-y-auto p-4">{children}</div>
 			<SheetFooter className="flex-row flex-wrap border-t">
 				<Button type="submit" disabled={busy}>
 					{busy && (
