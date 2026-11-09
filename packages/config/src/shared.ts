@@ -146,3 +146,21 @@ export function definitionIssues(def: z.infer<typeof agentDefinition>) {
 		});
 	return issues;
 }
+
+/** Where a Sandbox holds its Skills, one folder each. */
+export const SKILLS_DIR = "/workspace/.skills";
+
+/** What a User's message that invokes a Skill becomes: its instructions, then what the User wrote, as pi expands `/skill:name args`. */
+export function skillBlock(name: string, body: string, args: string) {
+	const block = `<skill name="${name}" location="${SKILLS_DIR}/${name}/SKILL.md">\nReferences are relative to ${SKILLS_DIR}/${name}.\n\n${body}\n</skill>`;
+	return args ? `${block}\n\n${args}` : block;
+}
+
+/** The Skill a User's message invoked and what they wrote with it; undefined when it invokes none. */
+export function parseSkillBlock(text: string) {
+	// pi's parseSkillBlock pattern
+	const match = text.match(
+		/^<skill name="([^"]+)" location="[^"]+">\n[\s\S]*?\n<\/skill>(?:\n\n([\s\S]+))?$/,
+	);
+	return match ? { name: match[1], text: match[2]?.trim() ?? "" } : undefined;
+}

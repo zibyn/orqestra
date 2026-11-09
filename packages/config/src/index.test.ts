@@ -3,9 +3,11 @@ import {
 	catalogProviders,
 	GENERAL_WORKER,
 	loadConfig,
+	parseSkillBlock,
 	resolveThinking,
 	resolveTurn,
 	type Settings,
+	skillBlock,
 	turnSkills,
 } from "./index";
 
@@ -584,5 +586,24 @@ describe("resolveTurn", () => {
 
 	it("returns nothing once the Agent is removed from config, so the Conversation is read-only", async () => {
 		expect(resolveTurn(await load(), "deleted-agent")).toBeUndefined();
+	});
+});
+
+describe("a message that invokes a Skill", () => {
+	it("reads back as the Skill's name and the User's own text", () => {
+		expect(
+			parseSkillBlock(
+				skillBlock("pdf", "Use pypdf.\n\n</skill>?", "merge them"),
+			),
+		).toEqual({ name: "pdf", text: "merge them" });
+		expect(parseSkillBlock(skillBlock("pdf", "Use pypdf.", ""))).toEqual({
+			name: "pdf",
+			text: "",
+		});
+	});
+
+	it("is any other message when written by hand", () => {
+		expect(parseSkillBlock('<skill name="pdf">hi</skill>')).toBeUndefined();
+		expect(parseSkillBlock("/skill:pdf merge them")).toBeUndefined();
 	});
 });

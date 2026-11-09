@@ -41,6 +41,7 @@ const config = {
 let o = memoryOrrery();
 const conversations = createConversations({
 	config: async () => config,
+	skillFiles: async () => [],
 	orrery: () => o.client,
 });
 const userId = "u1";

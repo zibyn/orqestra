@@ -4,6 +4,8 @@ import {
 	type OrqestraConfig,
 	resolveThinking,
 	resolveTurn,
+	skillBlock,
+	skillInstructions,
 	type ThinkingLevel,
 	turnSkills,
 } from "@orqestra/config";
@@ -89,13 +91,39 @@ const takesAttachments = (
 
 export function createConversations({
 	config,
+	skillFiles,
 	orrery = orreryClient,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
+	/** A Skill version's files, read when a User invokes it. */
+	skillFiles: (
+		versionId: number,
+	) => Promise<{ path: string; content: Uint8Array }[]>;
 	/** The Sandbox Provider's client, for attachments; tests stand in for orrery. */
 	orrery?: typeof orreryClient;
 }) {
+	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
+	async function expandSkill(
+		cfg: OrqestraConfig,
+		agent: Parameters<typeof turnSkills>[1],
+		text: string,
+	) {
+		const invoked = text.match(/^\/skill:(\S+)\s*([\s\S]*)$/);
+		if (!invoked) return text;
+		const [, name, args] = invoked;
+		const skill = turnSkills(cfg, agent).find((s) => s.name === name);
+		const md = skill
+			? (await skillFiles(skill.versionId)).find((f) => f.path === "SKILL.md")
+			: undefined;
+		if (!md) throw new ConversationError("This Skill is unavailable");
+		return skillBlock(
+			name,
+			skillInstructions(new TextDecoder().decode(md.content)),
+			args.trim(),
+		);
+	}
+
 	return {
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
@@ -115,6 +143,11 @@ export function createConversations({
 					pickable: a.pickable,
 					attachments: takesAttachments(cfg, a),
 					defaultModel: a.defaultModel,
+					// the User may invoke those the Agent may not
+					skills: turnSkills(cfg, a).map(({ name, description }) => ({
+						name,
+						description,
+					})),
 					models: a.models.map((ref) => {
 						const model = cfg.models.find((m) => modelRef(m) === ref);
 						return {
@@ -282,6 +315,7 @@ export function createConversations({
 			// existing Conversations keep their Agent even after it stops being pickable
 			if (!existing && !turn.agent.pickable)
 				throw new ConversationError("This Agent cannot be picked");
+			const content = await expandSkill(cfg, turn.agent, input.text);
 
 			const conversationId = await db.transaction(async (tx) => {
 				let id = existing?.id;
@@ -305,7 +339,7 @@ export function createConversations({
 						? {
 								role: "user",
 								content: [
-									{ type: "text", text: input.text },
+									{ type: "text", text: content },
 									{
 										type: "text",
 										text: `\n\nAttached files, in your Sandbox:\n${attachments.map((a) => `- ${a.path}`).join("\n")}`,
@@ -315,7 +349,7 @@ export function createConversations({
 								attachments,
 								timestamp: Date.now(),
 							}
-						: { role: "user", content: input.text, timestamp: Date.now() },
+						: { role: "user", content, timestamp: Date.now() },
 					model: modelRef(turn.model),
 					thinkingLevel: turn.thinking,
 					wake: true,

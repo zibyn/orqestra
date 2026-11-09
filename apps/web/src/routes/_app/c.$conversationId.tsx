@@ -4,7 +4,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import { messageText } from "@orqestra/config/shared";
+import { messageText, parseSkillBlock } from "@orqestra/config/shared";
 import type { ConversationEvent } from "@orqestra/conversations";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -287,6 +287,18 @@ function ConversationView() {
 
 type Results = Map<string, ToolResultMessage>;
 
+/** A User's message; one that invoked a Skill shows its name, not the instructions put in for it. */
+function UserText({ text }: { text: string }) {
+	const skill = parseSkillBlock(text);
+	if (!skill) return text;
+	return (
+		<div className="flex flex-col items-start gap-1.5">
+			<Badge variant="outline">{m.skill_used({ name: skill.name })}</Badge>
+			{skill.text}
+		</div>
+	);
+}
+
 const toolResults = (messages: PiMessage[]): Results =>
 	new Map(
 		messages
@@ -548,9 +560,13 @@ function UserMessageContent({
 	const first = Array.isArray(message.content) ? message.content[0] : undefined;
 	return (
 		<MessageContent className={className}>
-			{attachments && first?.type === "text"
-				? first.text
-				: messageText(message)}
+			<UserText
+				text={
+					attachments && first?.type === "text"
+						? first.text
+						: messageText(message)
+				}
+			/>
 			{attachments && (
 				<ul aria-label={m.attachments()} className="mt-2 flex flex-wrap gap-1">
 					{attachments.map((a) => (

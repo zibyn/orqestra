@@ -75,6 +75,15 @@ export function Composer({
 			: model.thinking.default;
 	// picked for an Agent with a Sandbox, then another picked: they stay out of the message
 	const attached = agent.attachments ? files : [];
+	// `/` then the start of `skill:name`, before any space, lists the Skills it matches
+	const typed = /^\/(\S*)$/.exec(text)?.[1];
+	const matches =
+		typed === undefined
+			? []
+			: agent.skills.filter((s) => `skill:${s.name}`.startsWith(typed));
+	const [active, setActive] = useState(0);
+	const highlighted = matches[Math.min(active, matches.length - 1)];
+	const pick = (name: string) => setText(`/skill:${name} `);
 
 	return (
 		<div className="mx-auto w-full max-w-3xl px-4 pb-4">
@@ -96,11 +105,60 @@ export function Composer({
 					}
 				}}
 			>
+				{highlighted && (
+					<div
+						id="composer-skills"
+						role="listbox"
+						aria-label={m.composer_skills()}
+						className="flex flex-col p-1"
+					>
+						{matches.map((s) => (
+							<button
+								key={s.name}
+								id={`composer-skill-${s.name}`}
+								type="button"
+								role="option"
+								aria-selected={s === highlighted}
+								tabIndex={-1}
+								className="flex flex-col items-start rounded-md px-2 py-1.5 text-left text-sm aria-selected:bg-accent"
+								onMouseDown={(e) => e.preventDefault()}
+								onClick={() => pick(s.name)}
+							>
+								<span className="font-medium">/skill:{s.name}</span>
+								<span className="line-clamp-1 text-muted-foreground text-xs">
+									{s.description}
+								</span>
+							</button>
+						))}
+					</div>
+				)}
 				<PromptInputTextarea
 					aria-label={m.composer_placeholder()}
 					placeholder={m.composer_placeholder()}
 					value={text}
-					onChange={(e) => setText(e.target.value)}
+					role={highlighted ? "combobox" : undefined}
+					aria-expanded={highlighted ? true : undefined}
+					aria-controls={highlighted ? "composer-skills" : undefined}
+					aria-activedescendant={
+						highlighted ? `composer-skill-${highlighted.name}` : undefined
+					}
+					onChange={(e) => {
+						setText(e.target.value);
+						setActive(0);
+					}}
+					onKeyDown={(e) => {
+						if (!highlighted || e.nativeEvent.isComposing) return;
+						const i = matches.indexOf(highlighted);
+						if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+							e.preventDefault();
+							const step = e.key === "ArrowDown" ? 1 : -1;
+							setActive((i + step + matches.length) % matches.length);
+						} else if (e.key === "Enter" || e.key === "Tab") {
+							// picks the Skill instead of sending
+							e.preventDefault();
+							pick(highlighted.name);
+						}
+					}}
 				/>
 				{attached.length > 0 && (
 					<ul

@@ -74,7 +74,7 @@ export function startAgentWorker(
 	} = {},
 ) {
 	const limitProviders = providerLimiter(providerConcurrency);
-	return createConversations({ config: getConfig }).serveRuns(
+	return createConversations({ config: getConfig, skillFiles }).serveRuns(
 		(run, config) =>
 			runAgent(run, {
 				config,

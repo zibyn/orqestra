@@ -65,12 +65,37 @@ const agent = (id: string, model: string): AgentDefinition => ({
 	unavailableModels: [],
 });
 const fauxAgent = agent("faux", "faux/faux-1");
+const skilled = {
+	...agent("skilled", "faux/faux-1"),
+	skills: ["pdf", "manual", "gone"],
+};
 const config = {
-	agents: [fauxAgent, agent("small", "faux/faux-small")],
+	agents: [fauxAgent, agent("small", "faux/faux-small"), skilled],
 	models: faux.models,
 	defaultAgent: fauxAgent,
+	// `gone` is listed by `skilled` but disabled or deleted, so it is missing here
+	skills: {
+		pdf: { versionId: 1, description: "PDFs", disableModelInvocation: false },
+		manual: {
+			versionId: 2,
+			description: "By hand",
+			disableModelInvocation: true,
+		},
+	},
+	sandboxProvider: provider,
 } as unknown as OrqestraConfig;
-const conversations = createConversations({ config: async () => config });
+/** Each Skill version's SKILL.md, as the test has it now. */
+const skillMds = new Map<number, string>();
+const conversations = createConversations({
+	config: async () => config,
+	skillFiles: async (versionId) => [
+		{ path: "scripts/run.py", content: new TextEncoder().encode("print()") },
+		{
+			path: "SKILL.md",
+			content: new TextEncoder().encode(skillMds.get(versionId) ?? ""),
+		},
+	],
+});
 const userId = "u1";
 
 // Reads SSE events from a stream until `until` returns true
@@ -1198,6 +1223,58 @@ describe.skipIf(!url)(
 			await send("again", id);
 			await waitFor(() => get(id), idle(4));
 			expect((await get(id))?.title).toBe("Renamed");
+		});
+
+		it("snapshots the SKILL.md body of a Skill the User invokes into the message, untouched by later versions", async () => {
+			skillMds.set(
+				1,
+				"---\nname: pdf\ndescription: PDFs\n---\n\n# PDF\n\nUse pypdf.\n",
+			);
+			script({ parent: [say("ok")] });
+			const id = await conversations.send(userId, {
+				agentId: "skilled",
+				text: "/skill:pdf merge a.pdf and b.pdf",
+			});
+			await waitFor(() => get(id), idle(2));
+			skillMds.set(1, "---\nname: pdf\ndescription: PDFs\n---\nChanged.");
+			const [question] = (await get(id))?.messages ?? [];
+			expect(messageText(question.message)).toBe(
+				'<skill name="pdf" location="/workspace/.skills/pdf/SKILL.md">\nReferences are relative to /workspace/.skills/pdf.\n\n# PDF\n\nUse pypdf.\n</skill>\n\nmerge a.pdf and b.pdf',
+			);
+		});
+
+		it("lets the User invoke a Skill the Agent may not invoke itself, without further text", async () => {
+			skillMds.set(2, "---\nname: manual\n---\nBy hand.");
+			script({ parent: [say("ok")] });
+			const id = await conversations.send(userId, {
+				agentId: "skilled",
+				text: "/skill:manual",
+			});
+			await waitFor(() => get(id), idle(2));
+			const [question] = (await get(id))?.messages ?? [];
+			expect(messageText(question.message)).toBe(
+				'<skill name="manual" location="/workspace/.skills/manual/SKILL.md">\nReferences are relative to /workspace/.skills/manual.\n\nBy hand.\n</skill>',
+			);
+		});
+
+		it("refuses a Skill the Agent does not allow or that is unavailable", async () => {
+			for (const [agentId, text] of [
+				["skilled", "/skill:gone do it"],
+				["faux", "/skill:pdf do it"],
+			])
+				await expect(
+					conversations.send(userId, { agentId, text }),
+				).rejects.toThrow("This Skill is unavailable");
+			expect(await conversations.list(userId)).toEqual([]);
+		});
+
+		it("offers each Agent's available Skills for the User to invoke, those the Agent may not invoke included", async () => {
+			const options = await conversations.agentOptions();
+			expect(options.find((a) => a.id === "skilled")?.skills).toEqual([
+				{ name: "pdf", description: "PDFs" },
+				{ name: "manual", description: "By hand" },
+			]);
+			expect(options.find((a) => a.id === "faux")?.skills).toEqual([]);
 		});
 
 		it("hides a Conversation from everyone but its owner", async () => {

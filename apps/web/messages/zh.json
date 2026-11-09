@@ -13,6 +13,8 @@
   "empty_title": "今天想做点什么？",
   "empty_hint": "在下方输入消息，开始新的会话。",
   "composer_placeholder": "给 Agent 发消息…",
+  "composer_skills": "Skill",
+  "skill_used": "使用了 Skill：{name}",
   "send": "发送",
   "back_to_app": "返回",
   "console_agents": "智能体",
