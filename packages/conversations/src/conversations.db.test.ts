@@ -1082,6 +1082,61 @@ describe.skipIf(!url)(
 			await waitFor(() => get(parent.id), idle(2));
 		});
 
+		it("lets a Subagent recall neither its own Conversation nor its parent's", async () => {
+			const kiwi = (conversationId: string) =>
+				db.insert(schema.message).values({
+					conversationId,
+					message: { role: "user", content: "kiwi", timestamp: 0 },
+					model: "faux/faux-1",
+					thinkingLevel: "off",
+				});
+			const [past, parent] = await db
+				.insert(schema.conversation)
+				.values([
+					{ userId, agentId: "faux" },
+					{ userId, agentId: "faux" },
+				])
+				.returning();
+			const [child] = await db
+				.insert(schema.conversation)
+				.values({ userId, agentId: "small", parentId: parent.id })
+				.returning();
+			await db.insert(schema.subagent).values({
+				conversationId: child.id,
+				toolCallId: "call",
+				number: 1,
+				brief: "b",
+			});
+			await kiwi(past.id);
+			await kiwi(parent.id);
+			await db.insert(schema.inbox).values({
+				conversationId: child.id,
+				message: { role: "user", content: "kiwi", timestamp: Date.now() },
+				model: "faux/faux-small",
+				thinkingLevel: "off",
+				wake: true,
+			});
+			let found: string[] | undefined;
+			script({
+				parent: [say("ok")],
+				sub: [
+					async ({ run }) => {
+						found = (await run.recall.search("kiwi")).map(
+							(f) => f.conversationId,
+						);
+						return "done";
+					},
+				],
+			});
+			await runs.ensureRun(child.id);
+			await waitFor(
+				async () => found,
+				(f) => f !== undefined,
+			);
+			expect(found).toEqual([past.id]);
+			await waitFor(() => get(parent.id), idle(3));
+		});
+
 		it("answers a message left in the inbox when the User stops the Run", async () => {
 			let sent: Promise<unknown> | undefined;
 			// a "start" streamed before the test subscribes would be missed, and the Run would wait for a Stop forever

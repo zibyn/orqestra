@@ -868,10 +868,41 @@ describe("runAgent with memory", () => {
 		expect(prompt(context)).toContain("- prefs/language: Replies in English");
 	});
 
-	it("gives a Subagent no memory", async () => {
+	it("lets a Subagent of an Agent with memory read the Memories and Recall, but not write, and tells it to report what is worth remembering", async () => {
+		script([
+			(c) => {
+				context = c;
+				return fauxAssistantMessage([
+					fauxToolCall("memory_read", { path: "prefs/language" }),
+				]);
+			},
+			fauxAssistantMessage("done"),
+		]);
+		const m = run("remembers", { isSubagent: true });
+		await runAgent(m.run, memDeps);
+		const p = prompt(context);
+		expect(p).toContain("- prefs/language: Replies in English");
+		expect(p).toContain("worth remembering");
+		expect(p).not.toContain("memory_write");
+		for (const name of ["read", "grep"])
+			expect(tools(context)).toContain(`"memory_${name}"`);
+		for (const name of ["write", "edit", "delete"])
+			expect(tools(context)).not.toContain(`"memory_${name}"`);
+		expect(tools(context)).toContain('"recall"');
+		expect(JSON.stringify(results(m)[0].content)).toContain("en");
+	});
+
+	it("gives the general worker no memory", async () => {
 		answer();
-		await runAgent(run("remembers", { isSubagent: true }).run, memDeps);
-		expect(prompt(context)).toBe("You are a test.");
+		await runAgent(
+			memoryRun({
+				transcript: transcript(user("hi")),
+				turn: resolveTurn(memoryConfig, null) as Turn,
+				memories: seeded,
+				isSubagent: true,
+			}).run,
+			memDeps,
+		);
 		expect(tools(context)).not.toContain("memory_");
 		expect(tools(context)).not.toContain('"recall"');
 	});

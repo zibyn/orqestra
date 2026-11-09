@@ -373,7 +373,8 @@ async function open(
 		sandbox: (client, provider) =>
 			ensureSandbox(conversationId, client, provider, { signal }),
 		memories: memoriesOf(conv.userId, conversationId),
-		recall: recallOf(conv.userId, conversationId),
+		// a Subagent works within its parent's Conversation, so that is not a past one either
+		recall: recallOf(conv.userId, conv.parentId ?? conversationId),
 		subagents: subagentsOf(cfg, conv, turn, saved),
 	};
 }
