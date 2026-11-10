@@ -42,7 +42,7 @@ import {
 import { ensureSandbox } from "./sandbox.ts";
 import { fire } from "./tasks.ts";
 import { cancelTimer, ring, setTimer, TIMERS_QUEUE } from "./timers.ts";
-import { storeUpload } from "./uploads.ts";
+import { storeUpload, sweepUploads } from "./uploads.ts";
 
 /** Tasks one start of Subagents may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
@@ -711,8 +711,17 @@ export async function serveRuns(
 	// the pg backend doesn't emit 'error' on connect failure, so fail fast instead of idling silently
 	await Promise.all(workers.map((w) => w.waitUntilReady()));
 	await requeue();
+	// every worker sweeps; a row is deleted, with its object, by whichever gets it first
+	const sweep = setInterval(
+		() =>
+			sweepUploads(store).catch((error) =>
+				console.error("could not sweep unsent uploads", error),
+			),
+		3600_000,
+	);
 
 	return async () => {
+		clearInterval(sweep);
 		await Promise.all(workers.map((w) => w.close()));
 		listener.release(true); // destroy rather than return a LISTENing connection to the pool
 	};

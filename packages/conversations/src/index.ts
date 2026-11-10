@@ -47,8 +47,10 @@ import { tasksOf } from "./tasks.ts";
 import { cancelTimer } from "./timers.ts";
 import {
 	copyUploads,
+	deleteObjects,
 	safeFileName,
 	storeUpload,
+	sweepUploads,
 	uploadPath,
 } from "./uploads.ts";
 
@@ -198,6 +200,9 @@ export function createConversations({
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
 			serveRuns(config, store, handler, options),
+
+		/** Deletes the uploads not sent with a message for a day before `now`; the worker does this every hour. */
+		sweepUploads: (now?: Date) => sweepUploads(store, now),
 
 		/** The User's Scheduled Tasks; their Firings run in `serveRuns`. */
 		tasks: tasksOf(config),
@@ -560,25 +565,38 @@ export function createConversations({
 						"id",
 						"nothing_to_retry",
 					);
+				// the files it attached go with it; the User's message, with its uploads, stays
+				const attached = await tx.execute<{ key: string }>(
+					sql`delete from ${attachment} where ${attachment.conversationId} = ${id} and ${attachment.messageId} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user') returning ${attachment.key}`,
+				);
 				// drop the failed reply, if one was saved, with the Subagents it started
 				await tx.execute(
 					sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
 				);
 				// with the Subagents those started in turn
-				return (
-					await tx.execute<{ id: string; sandboxId: string | null }>(
-						sql`with recursive dropped as (
+				const subagents = await tx.execute<{
+					id: string;
+					sandboxId: string | null;
+				}>(
+					sql`with recursive dropped as (
 							select id from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id})
 							union all
 							select c.id from conversation c join dropped on c.parent_id = dropped.id
 						)
 						delete from ${conversation} where ${conversation.id} in (select id from dropped) returning id, sandbox_id as "sandboxId"`,
-					)
-				).rows;
+				);
+				return {
+					subagents: subagents.rows,
+					keys: attached.rows.map((a) => a.key),
+				};
 			});
 			// their Runs stop; with their Conversation gone they save nothing more
-			await requestStop(dropped.map((d) => d.id));
-			await deleteSandboxes(dropped.map((d) => d.sandboxId));
+			await requestStop(dropped.subagents.map((d) => d.id));
+			await deleteSandboxes(dropped.subagents.map((d) => d.sandboxId));
+			await deleteObjects(store, [
+				...dropped.keys,
+				...dropped.subagents.map((d) => `${conv.rootId}/${d.id}/`),
+			]);
 			await enqueue(id);
 			return true;
 		},
@@ -665,6 +683,8 @@ export function createConversations({
 				.where(eq(conversation.rootId, id))
 				.returning({ sandboxId: conversation.sandboxId });
 			await deleteSandboxes(deleted.map((d) => d.sandboxId));
+			// its Attachments, its Subagents' too, are kept under its id
+			if (deleted.length) await deleteObjects(store, [`${id}/`]);
 			return true;
 		},
 

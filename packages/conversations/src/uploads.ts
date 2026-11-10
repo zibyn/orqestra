@@ -2,7 +2,7 @@ import { MAX_UPLOAD_BYTES } from "@orqestra/config";
 import { db } from "@orqestra/db";
 import { attachment } from "@orqestra/db/schema";
 import type { ObjectStore, Orrery } from "@orqestra/tools";
-import { eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 
 /** Where attachments go in the Sandbox, relative to /workspace. */
 const UPLOADS = "uploads";
@@ -106,6 +106,36 @@ export async function storeUpload(
 		await store.deletePrefix(key);
 		throw error;
 	}
+}
+
+/** Deletes the objects under `prefixes` once their rows are gone; one storage does not delete is logged and left there. */
+export async function deleteObjects(store: ObjectStore, prefixes: string[]) {
+	await Promise.all(
+		prefixes.map((prefix) =>
+			store
+				.deletePrefix(prefix)
+				.catch((error) =>
+					console.error(`Attachments ${prefix} are left in storage`, error),
+				),
+		),
+	);
+}
+
+/** Deletes the uploads not sent with a message for a day before `now`, rows first, then their objects. */
+export async function sweepUploads(store: ObjectStore, now = new Date()) {
+	const swept = await db
+		.delete(attachment)
+		.where(
+			and(
+				eq(attachment.sent, false),
+				lt(attachment.createdAt, new Date(now.getTime() - 24 * 3600_000)),
+			),
+		)
+		.returning({ key: attachment.key });
+	await deleteObjects(
+		store,
+		swept.map((a) => a.key),
+	);
 }
 
 /** Copies Attachments from object storage into the ready Sandbox at /workspace/uploads/<name>. */
