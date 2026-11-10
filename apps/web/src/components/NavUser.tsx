@@ -71,6 +71,13 @@ export function NavUser({ user }: { user: User }) {
 							<CalendarClockIcon />
 							{m.tasks_page()}
 						</DropdownMenuItem>
+						{/* PROTOTYPE #81 */}
+						{import.meta.env.DEV && (
+							<DropdownMenuItem render={<Link to="/prototype/connections" />}>
+								<CalendarClockIcon />
+								连接（原型）
+							</DropdownMenuItem>
+						)}
 						{user.admin && (
 							<DropdownMenuItem render={<Link to="/console" />}>
 								<SettingsIcon />

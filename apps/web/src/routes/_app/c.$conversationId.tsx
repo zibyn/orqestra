@@ -17,6 +17,7 @@ import {
 	getRouteApi,
 	notFound,
 	useRouter,
+	useSearch,
 } from "@tanstack/react-router";
 import {
 	AlarmClockIcon,
@@ -45,6 +46,10 @@ import {
 import { MessageResponse } from "#/components/ai-elements/message";
 import { Reasoning } from "#/components/ai-elements/reasoning";
 import { type Choice, Composer } from "#/components/Composer";
+import {
+	ConnectionDockPrototype,
+	ConnectionThreadPrototype,
+} from "#/components/ConnectionCard.prototype";
 import { FormSheet, useSheet } from "#/components/ConsolePage";
 import { TaskForm } from "#/components/TaskForm";
 import {
@@ -235,6 +240,8 @@ function ConversationView() {
 		open: boolean;
 	}>();
 	const running = conversation.status === "running";
+	// PROTOTYPE #81: `?proto=1` appends the connection card scenario
+	const proto = !!(useSearch({ strict: false }) as { proto?: unknown }).proto;
 	const draftSheet = useSheet<TaskDraft>();
 	const lastUser = conversation.messages
 		.filter((row) => row.message.role === "user")
@@ -391,6 +398,15 @@ function ConversationView() {
 							)}
 						</MessageScrollerItem>
 					))}
+					{/* PROTOTYPE #81 */}
+					{proto && (
+						<MessageScrollerItem
+							messageId="proto"
+							className="flex flex-col gap-6"
+						>
+							<ConnectionThreadPrototype />
+						</MessageScrollerItem>
+					)}
 					{conversation.timer && (
 						<MessageScrollerItem messageId="timer">
 							<TimerBar
@@ -401,6 +417,7 @@ function ConversationView() {
 						</MessageScrollerItem>
 					)}
 				</Thread>
+				{proto && <ConnectionDockPrototype />}
 				{conversation.readOnly ? (
 					<p className="mx-auto w-full max-w-3xl px-4 pb-6 text-center text-sm text-muted-foreground">
 						{m.agent_offline()}

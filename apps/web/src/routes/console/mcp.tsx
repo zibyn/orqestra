@@ -17,6 +17,13 @@ import {
 	SheetForm,
 	useSheet,
 } from "#/components/ConsolePage";
+import {
+	AuthModeFields,
+	ConnectedUsers,
+	FAKE_OAUTH_SERVER,
+	OAuthHeadersHint,
+	OAuthTestOutcome,
+} from "#/components/McpAuth.prototype";
 import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -52,7 +59,11 @@ type McpTestResult = NonNullable<
 
 /** MCP Servers with their write-only header values. */
 function McpServers() {
-	const servers = Route.useLoaderData();
+	// PROTOTYPE #81: a fake per-User server in dev
+	const servers = [
+		...Route.useLoaderData(),
+		...(import.meta.env.DEV ? [FAKE_OAUTH_SERVER as McpServer] : []),
+	];
 	const router = useRouter();
 	const sheet = useSheet<McpServer | undefined>();
 	const [busy, setBusy] = useState<string>();
@@ -100,6 +111,9 @@ function McpServers() {
 								<Badge variant="outline" className="font-mono">
 									{s.id}
 								</Badge>
+								{s.id === FAKE_OAUTH_SERVER.id && (
+									<Badge variant="secondary">按用户 OAuth</Badge>
+								)}
 							</>
 						}
 						description={<span className="font-mono text-xs">{s.url}</span>}
@@ -147,6 +161,12 @@ function McpServers() {
 							</Alert>
 						)}
 						{tested?.id === s.id && <McpTestOutcome result={tested.result} />}
+						{s.id === FAKE_OAUTH_SERVER.id && (
+							<>
+								<OAuthTestOutcome />
+								<ConnectedUsers />
+							</>
+						)}
 					</Item>
 				))}
 			</ItemList>
@@ -186,6 +206,10 @@ function McpServerForm({
 	);
 	const [busy, setBusy] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
+	// PROTOTYPE #81
+	const [authMode, setAuthMode] = useState<"shared" | "oauth">(
+		existing?.id === FAKE_OAUTH_SERVER.id ? "oauth" : "shared",
+	);
 	const fieldId = (field: string) => `mcp-${existing?.id ?? "new"}-${field}`;
 	const setHeader = (i: number, fields: Partial<(typeof headers)[number]>) =>
 		setHeaders(headers.map((h, j) => (j === i ? { ...h, ...fields } : h)));
@@ -265,8 +289,16 @@ function McpServerForm({
 						onChange={(e) => setUrl(e.target.value)}
 					/>
 				</Field>
+				{import.meta.env.DEV && (
+					<AuthModeFields
+						mode={authMode}
+						onMode={setAuthMode}
+						existing={!!existing}
+					/>
+				)}
 				<FieldSet className="gap-3">
 					<FieldLegend variant="label">{m.mcp_headers()}</FieldLegend>
+					{authMode === "oauth" && <OAuthHeadersHint />}
 					{existing && (
 						<FieldDescription>{m.mcp_headers_hint()}</FieldDescription>
 					)}

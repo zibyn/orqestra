@@ -24,6 +24,7 @@ import { Route as ConsoleSandboxRouteImport } from './routes/console/sandbox'
 import { Route as ConsoleSearchRouteImport } from './routes/console/search'
 import { Route as ConsoleSkillsRouteImport } from './routes/console/skills'
 import { Route as AppCConversationIdRouteImport } from './routes/_app/c.$conversationId'
+import { Route as AppPrototypeConnectionsRouteImport } from './routes/_app/prototype.connections'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -99,6 +100,11 @@ const AppCConversationIdRoute = AppCConversationIdRouteImport.update({
   path: '/c/$conversationId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPrototypeConnectionsRoute = AppPrototypeConnectionsRouteImport.update({
+  id: '/prototype/connections',
+  path: '/prototype/connections',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -115,6 +121,7 @@ export interface FileRoutesByFullPath {
   '/console/skills': typeof ConsoleSkillsRoute
   '/console/': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
+  '/prototype/connections': typeof AppPrototypeConnectionsRoute
 }
 export interface FileRoutesByTo {
   '/memory': typeof AppMemoryRoute
@@ -130,6 +137,7 @@ export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
+  '/prototype/connections': typeof AppPrototypeConnectionsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -148,6 +156,7 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/console/': typeof ConsoleIndexRoute
   '/_app/c/$conversationId': typeof AppCConversationIdRoute
+  '/_app/prototype/connections': typeof AppPrototypeConnectionsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -166,6 +175,7 @@ export interface FileRouteTypes {
     | '/console/skills'
     | '/console/'
     | '/c/$conversationId'
+    | '/prototype/connections'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/memory'
@@ -181,6 +191,7 @@ export interface FileRouteTypes {
     | '/'
     | '/console'
     | '/c/$conversationId'
+    | '/prototype/connections'
   id:
     | '__root__'
     | '/_app'
@@ -198,6 +209,7 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/console/'
     | '/_app/c/$conversationId'
+    | '/_app/prototype/connections'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -312,6 +324,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCConversationIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/prototype/connections': {
+      id: '/_app/prototype/connections'
+      path: '/prototype/connections'
+      fullPath: '/prototype/connections'
+      preLoaderRoute: typeof AppPrototypeConnectionsRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -320,6 +339,7 @@ interface AppRouteChildren {
   AppTasksRoute: typeof AppTasksRoute
   AppIndexRoute: typeof AppIndexRoute
   AppCConversationIdRoute: typeof AppCConversationIdRoute
+  AppPrototypeConnectionsRoute: typeof AppPrototypeConnectionsRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -327,6 +347,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppTasksRoute: AppTasksRoute,
   AppIndexRoute: AppIndexRoute,
   AppCConversationIdRoute: AppCConversationIdRoute,
+  AppPrototypeConnectionsRoute: AppPrototypeConnectionsRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

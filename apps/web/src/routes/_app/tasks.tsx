@@ -12,6 +12,7 @@ import {
 	ItemList,
 	useSheet,
 } from "#/components/ConsolePage";
+import { FiringAlertPrototype } from "#/components/TaskConnection.prototype";
 import { OUTCOMES, TaskForm } from "#/components/TaskForm";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -79,6 +80,8 @@ function TasksPage() {
 					</Button>
 				}
 			>
+				{/* PROTOTYPE #81 */}
+				<FiringAlertPrototype />
 				<ItemList
 					empty={{
 						icon: CalendarClockIcon,

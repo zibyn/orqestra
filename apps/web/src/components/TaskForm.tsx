@@ -13,6 +13,7 @@ import { useState } from "react";
 import { type AgentOption, levelLabels } from "#/components/Composer";
 import { Item, ItemList, SheetForm } from "#/components/ConsolePage";
 import { Picker } from "#/components/Picker";
+import { TaskConnectionHint } from "#/components/TaskConnection.prototype";
 import { UnreadMark } from "#/components/UnreadMark";
 import { Button } from "#/components/ui/button";
 import {
@@ -273,6 +274,8 @@ export function TaskForm({
 						/>
 					)}
 				</div>
+				{/* PROTOTYPE #81 */}
+				{agent && <TaskConnectionHint agentName={agent.name} />}
 				<Field>
 					<FieldLabel>{m.task_schedule()}</FieldLabel>
 					<ToggleGroup
