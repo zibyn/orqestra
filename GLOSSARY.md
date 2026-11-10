@@ -129,7 +129,7 @@ The external service that serves Parse, such as MinerU, whether its online servi
 _Avoid_: OCR Provider, OCR service, Provider
 
 **Model**:
-A specific LLM offered by a Provider; an Agent runs on a Model but is not one. Only Models an Admin has enabled are offered; disabling one removes it from every Agent that allowed it. A Model's price comes from the Catalog unless an Admin sets their own; one with neither has an unknown price.
+A specific LLM offered by a Provider; an Agent runs on a Model but is not one. Only Models an Admin has enabled are offered; disabling one removes it from every Agent that allowed it. A Model's price is the Catalog's unless an Admin overrides it to correct it.
 _Avoid_: Agent, engine
 
 **Provider**:
@@ -141,7 +141,7 @@ Every Provider and Model Orqestra knows about, with their defaults such as conte
 _Avoid_: Preset, registry, template
 
 **Usage**:
-The tokens one Model request consumed and their cost at the Model's price at the time, counted against the User, the Agent that made it and the Model. Every request counts, whether for a Turn's step, compaction or a title, in a Subagent, an Incognito Conversation or a Firing's Conversation, and even when it failed, was stopped or its reply was withdrawn by a retry; a Model without a price has its tokens counted and its cost unknown, never zero. Usage outlives the Conversation that caused it and is kept indefinitely. A User sees their own Usage, cost included; an Admin sees every User's.
+The tokens one Model request consumed and their cost at the Model's price at the time, counted against the User, the Agent that made it and the Model. Every request counts, whether for a Turn's step, compaction or a title, in a Subagent, an Incognito Conversation or a Firing's Conversation, and even when it failed, was stopped or its reply was withdrawn by a retry. Usage outlives the Conversation that caused it and is kept indefinitely. A User sees their own Usage, cost included; an Admin sees every User's.
 _Avoid_: Billing, cost record, token log
 
 **Conversation**:
