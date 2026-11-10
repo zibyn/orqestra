@@ -54,6 +54,7 @@ Compose 启动六个服务：`postgres`、`migrate`（执行数据库迁移后�
 | `POLARIS_SECRET` | 是 | 加密会话 Cookie（至少 32 字符）；更换后所有人需重新登录 |
 | `DATABASE_URL` | Compose 外必填 | PostgreSQL 连接串；Compose 根据 `POSTGRES_PASSWORD` 自动生成 |
 | `POSTGRES_PASSWORD` | 否 | Compose 内置 Postgres 的密码，默认 `orqestra` |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | 否 | Web Push 发送 Alert 用的 VAPID 密钥（`npx web-push generate-vapid-keys` 生成）和联系方式（`mailto:` 或 `https://`）；三项都填才启用，需要 HTTPS。不填时用户菜单里没有「在此浏览器接收 Alert」开关 |
 | `WORKER_CONCURRENCY` / `SUBAGENT_CONCURRENCY` / `PROVIDER_CONCURRENCY` | 否 | worker 并发度（正整数） |
 
 ## 本地开发

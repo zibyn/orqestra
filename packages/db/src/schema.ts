@@ -290,6 +290,21 @@ export const memory = pgTable(
 	(table) => [unique().on(table.userId, table.path)],
 );
 
+// A browser that receives the User's Alerts by Web Push: one row per browser
+export const pushSubscription = pgTable(
+	"push_subscription",
+	{
+		id: serial("id").primaryKey(),
+		// the owner's Polaris `sub`
+		userId: text("user_id").notNull(),
+		// the push service's URL for this browser; a browser signed in as another User moves it to them
+		endpoint: text("endpoint").notNull().unique(),
+		keys: jsonb("keys").$type<{ p256dh: string; auth: string }>().notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [index().on(table.userId)],
+);
+
 // A User's memory master switch; no row means on
 export const memorySetting = pgTable("memory_setting", {
 	// the owner's Polaris `sub`

@@ -10,6 +10,7 @@ import { limits } from "./limits.ts";
 import { mcpServers } from "./mcp-servers.ts";
 import { memoryRoutes } from "./memories.ts";
 import { providers } from "./providers.ts";
+import { pushRoutes } from "./push.ts";
 import { sandboxProvider } from "./sandbox-provider.ts";
 import { scheduledTaskRoutes } from "./scheduled-tasks.ts";
 import { searchProviders } from "./search-providers.ts";
@@ -79,6 +80,7 @@ export function createApp({
 				.use(skills(user))
 				.use(conversationRoutes(user, conversations))
 				.use(scheduledTaskRoutes(user, conversations))
+				.use(pushRoutes(user, conversations))
 				.use(providers(user))
 				.use(searchProviders(user))
 				.use(mcpServers(user))

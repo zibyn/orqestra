@@ -18,7 +18,26 @@ const env = z
 		ORQESTRA_ENCRYPTION_KEY: z.base64().refine((s) => atob(s).length === 32, {
 			message: "must be 32 bytes of base64 (openssl rand -base64 32)",
 		}),
+		// Web Push Alerts, all three or none; `npx web-push generate-vapid-keys`
+		VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+		VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+		VAPID_SUBJECT: z
+			.string()
+			.regex(/^(mailto:|https:\/\/)/, "must be a mailto: or https:// URL")
+			.optional(),
 	})
+	.refine(
+		(e) =>
+			new Set(
+				[e.VAPID_PUBLIC_KEY, e.VAPID_PRIVATE_KEY, e.VAPID_SUBJECT].map(
+					(v) => !v,
+				),
+			).size === 1,
+		{
+			message:
+				"set all of VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and VAPID_SUBJECT, or none",
+		},
+	)
 	.safeParse(process.env);
 if (!env.success) {
 	console.error(z.prettifyError(env.error));

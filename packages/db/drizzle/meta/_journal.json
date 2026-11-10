@@ -106,6 +106,13 @@
       "when": 1794289104005,
       "tag": "0014_scheduled_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794289476795,
+      "tag": "0015_push_subscription",
+      "breakpoints": true
     }
   ]
 }

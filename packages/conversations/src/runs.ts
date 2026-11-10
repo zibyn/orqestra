@@ -436,20 +436,21 @@ async function endFiring(
 		return ended.taskId;
 }
 
-/** A Firing's Conversation whose Run could not even be queued: the Firing failed. */
+/** A Firing's Conversation whose Run could not even be queued: the Firing failed. True when that auto-paused its task. */
 export async function firingFailed(conversationId: string) {
 	const paused = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
 		return endFiring(tx, conversationId, "failed");
 	});
 	if (paused) await unschedule(paused);
+	return !!paused;
 }
 
 /**
  * Ends a top-level Run that did not drain to the end (stopped, failed or crashed) with `status`, under the root's lock.
  * After a stop, a wake input that arrived meanwhile, such as a User message sent right after Stop, starts the next Run;
  * after a failure the inbox waits for Retry, which delivers it, so the failure still shows.
- * A Firing's first Run ends it failed, or partial when stopped, by the User or out of time.
+ * A Firing's first Run ends it failed, or partial when stopped, by the User or out of time. True when that auto-paused its task.
  */
 export async function endRun(
 	conversationId: string,
@@ -470,6 +471,7 @@ export async function endRun(
 	if (paused) await unschedule(paused);
 	await saved(conversationId);
 	if (status === "idle") await ensureRun(conversationId);
+	return !!paused;
 }
 
 /** Ends a Subagent's Run that did not drain to the end (stopped, failed, crashed or never queued); see `settle`. */

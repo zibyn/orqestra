@@ -15,6 +15,7 @@ import {
 } from "@orqestra/db/schema";
 import { CronExpressionParser } from "cron-parser";
 import { and, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { alertRun, sendAlert, taskUrl } from "./alerts.ts";
 import {
 	countFiring,
 	ensureRun,
@@ -217,7 +218,7 @@ export async function fire(
 ) {
 	const cfg = await config();
 	const now = new Date();
-	const { started, stop } = await db.transaction(async (tx) => {
+	const { started, stop, task, alert } = await db.transaction(async (tx) => {
 		const [task] = await tx
 			.select()
 			.from(scheduledTask)
@@ -239,7 +240,8 @@ export async function fire(
 				.where(eq(scheduledTask.id, taskId));
 			return true;
 		};
-		if (task.endsAt && task.endsAt <= now) return { stop: await finish() };
+		if (task.endsAt && task.endsAt <= now)
+			return { stop: await finish(), task, alert: "finished" as const };
 		const record = (values: Omit<typeof firing.$inferInsert, "taskId">) =>
 			tx.insert(firing).values({ taskId, firedAt: now, ...values });
 		// a Conversation waiting on a Question is idle, so not running
@@ -262,7 +264,12 @@ export async function fire(
 				: undefined;
 		if (reason) {
 			await record({ outcome: "failed", reason });
-			return { stop: await countFiring(tx, taskId, true) };
+			const paused = await countFiring(tx, taskId, true);
+			return {
+				stop: paused,
+				task,
+				alert: paused ? ("auto_paused" as const) : ("failed" as const),
+			};
 		}
 		const [{ id }] = await tx
 			.insert(conversation)
@@ -283,13 +290,26 @@ export async function fire(
 		});
 		await record({ outcome: "running", conversationId: id });
 		const last = s?.kind === "once" || !nextOf(task, now);
-		return { started: id, stop: last && (await finish()) };
+		return {
+			started: id,
+			stop: last && (await finish()),
+			task,
+			alert: last ? ("finished" as const) : undefined,
+		};
 	});
 	if (stop) await unschedule(taskId);
 	if (started)
 		await ensureRun(started).catch(async (error) => {
 			console.error(`could not start the Run of Firing ${started}`, error);
-			await firingFailed(started);
+			const paused = await firingFailed(started);
+			await alertRun(started, paused ? "auto_paused" : "failed");
+		});
+	// (b) and (d): it failed before opening a Conversation, or paused or finished on its own
+	if (task && alert)
+		await sendAlert(task.userId, {
+			title: task.name,
+			status: alert,
+			url: started ? `/c/${started}` : taskUrl(taskId),
 		});
 }
 

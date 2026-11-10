@@ -31,6 +31,9 @@ import { ok } from "#/lib/api";
 import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/_app/tasks")({
+	// an Alert about a task opens its drawer
+	validateSearch: (search): { task?: string } =>
+		typeof search.task === "string" ? { task: search.task } : {},
 	loader: getTasks,
 	component: TasksPage,
 });
@@ -51,7 +54,8 @@ function TasksPage() {
 	const tasks = Route.useLoaderData();
 	const { agents } = appRoute.useLoaderData();
 	const router = useRouter();
-	const sheet = useSheet<Task | undefined>();
+	const { task: opened } = Route.useSearch();
+	const sheet = useSheet<Task | undefined>(tasks.find((t) => t.id === opened));
 	const [error, setError] = useState("");
 
 	async function enable(task: Task, enabled: boolean) {

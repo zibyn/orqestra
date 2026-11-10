@@ -316,5 +316,6 @@
   "task_error_invalid": "这个值无效。",
   "task_error_in_past": "这个时间已经过去了。",
   "task_error_too_frequent": "两次 Firing 的间隔短于管理员允许的最短间隔。",
-  "task_error_too_many": "定时任务已达上限。"
+  "task_error_too_many": "定时任务已达上限。",
+  "alerts_browser": "在此浏览器接收 Alert"
 }

@@ -316,5 +316,6 @@
   "task_error_invalid": "This value is not valid.",
   "task_error_in_past": "That time has passed.",
   "task_error_too_frequent": "Firings would come closer together than the Admin allows.",
-  "task_error_too_many": "You have as many Scheduled Tasks as allowed."
+  "task_error_too_many": "You have as many Scheduled Tasks as allowed.",
+  "alerts_browser": "Receive Alerts in this browser"
 }

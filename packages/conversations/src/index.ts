@@ -29,6 +29,7 @@ import {
 } from "@orqestra/tools";
 import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
+import { push } from "./alerts.ts";
 import { MEMORY_CHANGES, undoChange } from "./memories.ts";
 import {
 	AGENT_RUNS_QUEUE,
@@ -195,6 +196,9 @@ export function createConversations({
 
 		/** The User's Scheduled Tasks; their Firings run in `serveRuns`. */
 		tasks: tasksOf(config),
+
+		/** The browsers that receive the User's Alerts, pushed as their Runs end. */
+		push,
 
 		/** The online Agents, with the Models and thinking levels each offers; new Conversations only use `pickable` ones. */
 		async agentOptions() {

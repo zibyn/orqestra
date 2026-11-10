@@ -17,6 +17,7 @@ import {
 import type { Orrery, SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { alertRun } from "./alerts.ts";
 import { type Memories, memoriesOf, memoryOn } from "./memories.ts";
 import { type Recall, recallOf } from "./recall.ts";
 import {
@@ -212,13 +213,15 @@ async function stopped(
 	signal: AbortSignal,
 ) {
 	await stopSubagents(conv.id);
-	// out of time is no stop of the User's: the parent gets what it has
+	// out of time is no stop of the User's: the parent gets what it has, the User an Alert
+	const timedOut = signal.reason instanceof RunTimedOut;
 	if (conv.parentId)
 		return endSubagent(conv.id, {
-			outcome: signal.reason instanceof RunTimedOut ? "partial" : "stopped",
+			outcome: timedOut ? "partial" : "stopped",
 			result,
 		});
 	await endRun(conv.id, "idle");
+	if (timedOut) await alertRun(conv.id, "partial");
 }
 
 /** A failed or crashed Run: a top-level Conversation is marked failed; a Subagent fails, and its Notification wakes the parent. */
@@ -227,7 +230,11 @@ async function failed(conversationId: string, error: Error) {
 		where: eq(conversation.id, conversationId),
 	});
 	if (!conv) return;
-	if (!conv.parentId) return endRun(conversationId, "failed");
+	if (!conv.parentId) {
+		// one Alert: a failure that auto-paused the Firing's task says so
+		const paused = await endRun(conversationId, "failed");
+		return alertRun(conversationId, paused ? "auto_paused" : "failed");
+	}
 	// the Subagents under it would report to nobody
 	await stopSubagents(conversationId);
 	await endSubagent(conversationId, {
@@ -408,19 +415,25 @@ async function open(
 				await stopped(conv, outcome?.result ?? "", signal);
 				return [];
 			}
+			// an Unattended Run cut off at its step cap ends partial
+			const status = question
+				? "question"
+				: outcome?.outcome === "partial"
+					? "partial"
+					: "completed";
 			const next = (await drain(
 				conversationId,
 				sub
 					? () => outcome ?? { outcome: "completed", result: "" }
-					: question
-						? "question"
-						: // an Unattended Run cut off at its step cap
-							outcome?.outcome === "partial"
-							? "partial"
-							: true,
+					: status === "completed"
+						? true
+						: status,
 			)) as Message[];
 			await saved();
-			if (!next.length) end();
+			if (!next.length) {
+				end();
+				if (!sub) await alertRun(conversationId, status);
+			}
 			return next;
 		},
 		async setTitle(title) {

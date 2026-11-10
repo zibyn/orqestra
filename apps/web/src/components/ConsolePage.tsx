@@ -116,10 +116,11 @@ export function DeleteButton({
 	);
 }
 
-/** Which item a `FormSheet` shows; the item outlives `open` so the sheet keeps its content while it slides out. */
-export function useSheet<T>() {
+/** Which item a `FormSheet` shows, open on `initial` if given; the item outlives `open` so the sheet keeps its content while it slides out. */
+export function useSheet<T>(initial?: T) {
 	const [state, setState] = useState<{ open: boolean; item?: T }>({
-		open: false,
+		open: initial !== undefined,
+		item: initial,
 	});
 	return {
 		...state,

@@ -7,6 +7,7 @@ import {
 	LogOutIcon,
 	SettingsIcon,
 } from "lucide-react";
+import { AlertSwitch } from "#/components/AlertSwitch";
 import ParaglideLocaleSwitcher from "#/components/LocaleSwitcher";
 import { ThemeSwitcher } from "#/components/ThemeSwitcher";
 import {
@@ -34,7 +35,7 @@ function signOut() {
 	form.submit();
 }
 
-/** The user menu at the foot of a sidebar: theme, language, Memory, /console for Admins, sign out. */
+/** The user menu at the foot of a sidebar: theme, language, this browser's Alerts, Memory, /console for Admins, sign out. */
 export function NavUser({ user }: { user: User }) {
 	return (
 		<SidebarMenu>
@@ -61,6 +62,7 @@ export function NavUser({ user }: { user: User }) {
 						<DropdownMenuSeparator />
 						<ThemeSwitcher />
 						<ParaglideLocaleSwitcher />
+						<AlertSwitch />
 						<DropdownMenuItem render={<Link to="/memory" />}>
 							<BrainIcon />
 							{m.memory_page()}
