@@ -35,6 +35,13 @@ export const conversation = pgTable(
 		parentId: uuid("parent_id").references((): AnyPgColumn => conversation.id, {
 			onDelete: "cascade",
 		}),
+		// the top-level Conversation of its tree (itself for a top-level one) and how deep it sits under it;
+		// the conversation_tree trigger sets both from parentId on insert
+		rootId: uuid("root_id")
+			.notNull()
+			.references((): AnyPgColumn => conversation.id, { onDelete: "cascade" })
+			.$defaultFn(() => sql`null`),
+		depth: integer("depth").default(0).notNull(),
 		// fixed once the first message is sent; null: the built-in general worker (Subagents only)
 		agentId: text("agent_id"),
 		// null until generated after the first reply
@@ -47,7 +54,7 @@ export const conversation = pgTable(
 			.notNull(),
 		// the BullMQ job id of the latest Run, so queueing that Run twice adds one job
 		jobId: text("job_id"),
-		// Subagents this Conversation's Agent started or continued since the User's last message
+		// on a root: Subagents its tree's Agents started or continued since the User's last message
 		subagentsSinceUser: integer("subagents_since_user").default(0).notNull(),
 		// its orrery Sandbox, created the first time its Agent needs one; null until then
 		sandboxId: text("sandbox_id"),
@@ -67,7 +74,10 @@ export const conversation = pgTable(
 			.$onUpdate(() => new Date())
 			.notNull(),
 	},
-	(table) => [index("conversation_userId_idx").on(table.userId)],
+	(table) => [
+		index("conversation_userId_idx").on(table.userId),
+		index("conversation_rootId_idx").on(table.rootId),
+	],
 );
 
 export type InputOrigin = "task" | "timer";

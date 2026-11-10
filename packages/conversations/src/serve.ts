@@ -41,7 +41,7 @@ import { cancelTimer, ring, setTimer, TIMERS_QUEUE } from "./timers.ts";
 
 /** Tasks one start of Subagents may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
-/** Subagents an Agent may start or continue in all since the User's last message, so Notifications cannot keep it delegating forever. */
+/** Subagents a tree's Agents may start or continue in all since the User's last message to its root, so Notifications cannot keep them delegating forever. */
 export const MAX_SUBAGENTS_PER_USER_MESSAGE = 16;
 
 /** Starting or continuing these Subagents would spend more than the budget since the User's last message; `used` were already. */
@@ -152,8 +152,8 @@ export type RunHandle = {
 		/** True when there was one to cancel. */
 		cancel(): Promise<boolean>;
 	};
-	/** The Run's Subagents; only a top-level Conversation's Agent has them. */
-	subagents: {
+	/** The Run's Subagents; none for a Subagent at the deepest level Subagents may nest to. */
+	subagents?: {
 		/** Starts a Subagent per task, numbered in order; throws NoSuchTemplate, TemplateOffline or BudgetExceeded. */
 		start(
 			toolCallId: string,
@@ -185,23 +185,23 @@ export type ServeOptions = {
 const active = new Map<string, AbortController>();
 
 /**
- * Under the parent's lock: spends `more` of the budget of Subagents started, or continued once finished, since the User's last message.
+ * Under the root's lock: spends `more` of the tree's budget of Subagents started, or continued once finished, since the User's last message.
  * Throws, spending nothing, when it would run out.
  */
-async function spend(tx: Tx, conversationId: string, more: number) {
+async function spend(tx: Tx, rootId: string, more: number) {
 	const [{ used }] = await tx
 		.update(conversation)
 		.set({
 			subagentsSinceUser: sql`${conversation.subagentsSinceUser} + ${more}`,
 		})
-		.where(eq(conversation.id, conversationId))
+		.where(eq(conversation.id, rootId))
 		.returning({ used: conversation.subagentsSinceUser });
 	if (used > MAX_SUBAGENTS_PER_USER_MESSAGE)
 		throw new BudgetExceeded(used - more);
 }
 
 /**
- * Ends a stopped Run. Only the User stops a top-level one, which stops its Subagents too:
+ * Ends a stopped Run, which stops the Subagents under it too:
  * again after the Run ended, to catch any it started while the stop was on its way.
  */
 async function stopped(
@@ -209,13 +209,13 @@ async function stopped(
 	result: string,
 	signal: AbortSignal,
 ) {
+	await stopSubagents(conv.id);
 	// out of time is no stop of the User's: the parent gets what it has
 	if (conv.parentId)
 		return endSubagent(conv.id, {
 			outcome: signal.reason instanceof RunTimedOut ? "partial" : "stopped",
 			result,
 		});
-	await stopSubagents(conv.id);
 	await endRun(conv.id, "idle");
 }
 
@@ -226,6 +226,8 @@ async function failed(conversationId: string, error: Error) {
 	});
 	if (!conv) return;
 	if (!conv.parentId) return endRun(conversationId, "failed");
+	// the Subagents under it would report to nobody
+	await stopSubagents(conversationId);
 	await endSubagent(conversationId, {
 		outcome: "failed",
 		result: `[The subagent failed, or the worker running it crashed: ${error.message}]`,
@@ -248,9 +250,8 @@ async function execute(
 	const stop = new AbortController();
 	active.set(conversationId, stop);
 	const sub = conv.parentId ? conversationId : undefined;
-	// a Subagent's events go to its parent's page
-	const emit = (event: ConversationEvent) =>
-		notify(conv.parentId ?? conversationId, event);
+	// a Subagent's events go to its root's page
+	const emit = (event: ConversationEvent) => notify(conv.rootId, event);
 	let over = false;
 	let clock: ReturnType<typeof setTimeout> | undefined;
 	try {
@@ -261,10 +262,10 @@ async function execute(
 			if (row?.outcome === "stopped") stop.abort(); // stopped while queued
 		}
 		const cfg = await config();
-		// a Subagent goes by its parent: Subagents start no Subagents, so that is the top-level Conversation
+		// a Subagent goes by its root
 		const root = conv.parentId
 			? await db.query.conversation.findFirst({
-					where: eq(conversation.id, conv.parentId),
+					where: eq(conversation.id, conv.rootId),
 				})
 			: conv;
 		const unattended = !!root?.unattended;
@@ -438,7 +439,7 @@ async function open(
 				? memoriesOf(conv.userId, conversationId)
 				: undefined,
 		// a Subagent works within its parent's Conversation, so that is not a past one either
-		recall: recallOf(conv.userId, conv.parentId ?? conversationId),
+		recall: recallOf(conv.userId, conv.rootId),
 		timer: sub
 			? undefined
 			: {
@@ -452,12 +453,15 @@ async function open(
 						}),
 					cancel: () => cancelTimer(conversationId),
 				},
-		subagents: subagentsOf(cfg, conv, turn, saved),
+		subagents:
+			conv.depth < cfg.limits.maxSubagentDepth
+				? subagentsOf(cfg, conv, turn, saved)
+				: undefined,
 	};
 }
 
 /**
- * Each Subagent runs in a Conversation of its own, in the background and past the parent's Run, up to MAX_SUBAGENTS at once;
+ * Each Subagent runs in a Conversation of its own, in the background and past the parent's Run, up to MAX_SUBAGENTS of the tree at once;
  * it hands back its result as a Notification that wakes the parent.
  */
 function subagentsOf(
@@ -493,7 +497,7 @@ function subagentsOf(
 			});
 			const { first, children } = await db.transaction(async (tx) => {
 				await lockRoot(tx, parentId);
-				await spend(tx, parentId, picked.length);
+				await spend(tx, conv.rootId, picked.length);
 				const [{ numbered }] = await tx
 					.select({
 						numbered: sql<number>`coalesce(max(${subagent.number}), 0)`,
@@ -542,7 +546,7 @@ function subagentsOf(
 				const row = await find(tx, number);
 				const continued = !["queued", "running"].includes(row.outcome);
 				if (continued) {
-					await spend(tx, parentId, 1);
+					await spend(tx, conv.rootId, 1);
 					// it waits for a slot like a new one, and a stop catches it while it waits
 					await tx
 						.update(subagent)

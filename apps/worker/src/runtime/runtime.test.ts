@@ -285,7 +285,7 @@ describe("runAgent", () => {
 		});
 		await runAgent(m.run, deps());
 
-		// a Subagent cannot start Subagents in turn
+		// a Subagent at the deepest level cannot start Subagents in turn
 		const offered = JSON.stringify(
 			(first?.messages[0] as { toolsAdded?: unknown }).toolsAdded,
 		);
@@ -300,6 +300,32 @@ describe("runAgent", () => {
 			{ outcome: "partial", result: "what I found" },
 		]);
 		expect(m.titles).toEqual([]);
+	});
+
+	it("gives a Subagent above the deepest level the Subagent Tools", async () => {
+		let first: Context | undefined;
+		script([
+			(context) => {
+				first = context;
+				return fauxAssistantMessage("done");
+			},
+		]);
+		const unused = async (): Promise<never> => {
+			throw new Error("unused");
+		};
+		const m = memoryRun({
+			transcript: transcript(user("lead")),
+			turn: turn(),
+			isSubagent: true,
+			subagents: { start: unused, message: unused, stop: unused },
+		});
+		await runAgent(m.run, deps());
+
+		expect(
+			JSON.stringify(
+				(first?.messages[0] as { toolsAdded?: unknown }).toolsAdded,
+			),
+		).toContain("subagent_message");
 	});
 
 	describe("an Unattended Run", () => {

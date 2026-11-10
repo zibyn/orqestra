@@ -44,7 +44,10 @@ export function memoryRun({
 	unattended = false,
 	incognito = false,
 	renamed = false,
-	subagents = { start: unavailable, message: unavailable, stop: unavailable },
+	// a Subagent at the deepest level, as one is with the depth limit of 1, has none
+	subagents = isSubagent
+		? undefined
+		: { start: unavailable, message: unavailable, stop: unavailable },
 	timerRings = Number.POSITIVE_INFINITY,
 	memories = [],
 	memoryOff = false,
