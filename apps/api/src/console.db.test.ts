@@ -33,7 +33,7 @@ describe.skipIf(!url)("the console through the api", () => {
 	// leaves only a default Agent, as the baseline does, also for the next package's tests
 	const reset = async () => {
 		await db.execute(
-			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, agent, skill, limits cascade`,
+			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, document_parser, agent, skill, limits cascade`,
 		);
 		await config.agents.save({
 			id: "general",
@@ -131,6 +131,28 @@ describe.skipIf(!url)("the console through the api", () => {
 		).toMatchObject({ url: "http://127.0.0.1:9", tokenReadable: true });
 		await call("DELETE", "/sandbox-provider");
 		expect((await call("GET", "/sandbox-provider")).body.provider).toBeNull();
+	});
+
+	it("saves the Document Parser with its connection test, and deletes it", async () => {
+		expect((await call("GET", "/document-parser")).body).toEqual({
+			parser: null,
+		});
+		const { body } = await call("POST", "/document-parser", {
+			enabled: true,
+			url: "http://127.0.0.1:9",
+			apiKey: "k",
+		});
+		expect(body).toMatchObject({
+			errors: {},
+			test: { ok: false, reason: "unreachable" },
+		});
+		expect((await call("GET", "/document-parser")).body.parser).toEqual({
+			enabled: true,
+			url: "http://127.0.0.1:9",
+			keyReadable: true,
+		});
+		await call("DELETE", "/document-parser");
+		expect((await call("GET", "/document-parser")).body.parser).toBeNull();
 	});
 
 	it("saves the Limits, refusing a Subagent depth past 3", async () => {

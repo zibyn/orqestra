@@ -11,6 +11,7 @@ import {
 	BotIcon,
 	BoxesIcon,
 	ContainerIcon,
+	FileTextIcon,
 	GaugeIcon,
 	type LucideIcon,
 	PlugIcon,
@@ -62,6 +63,7 @@ type NavItem = {
 		| "/console/mcp"
 		| "/console/skills"
 		| "/console/sandbox"
+		| "/console/parse"
 		| "/console/limits";
 	label: () => string;
 	icon: LucideIcon;
@@ -87,6 +89,7 @@ const nav: { label: () => string; items: NavItem[] }[] = [
 				label: m.sandbox_provider,
 				icon: ContainerIcon,
 			},
+			{ to: "/console/parse", label: m.document_parser, icon: FileTextIcon },
 		],
 	},
 	{

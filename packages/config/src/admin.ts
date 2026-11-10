@@ -1,6 +1,7 @@
 import { db, type Tx } from "@orqestra/db";
 import {
 	agent,
+	documentParser,
 	enabledModel,
 	limits,
 	mcpServer,
@@ -14,8 +15,10 @@ import {
 } from "@orqestra/db/schema";
 import {
 	availableTools,
+	type DocumentParserTestResult,
 	type McpTestResult,
 	type SandboxTestResult,
+	testDocumentParser,
 	testMcpServer,
 	testSandboxProvider,
 } from "@orqestra/tools";
@@ -27,18 +30,19 @@ import {
 	catalogProviders,
 	DEFAULT_LIMITS,
 	definitionIssues,
+	isMineruNet,
 	mcpServerId,
 	mcpToolRef,
 	modelRef,
 	type OrqestraConfig,
 	type SaveErrors,
 	type SearchProviderId,
+	type SearchToolName,
 	type SkillFile,
 	searchProviders as searchProviderCatalog,
 	searchProviderId,
-	type ToolName,
+	searchToolName,
 	testConnection,
-	toolName,
 	turnSkills,
 } from "./index.ts";
 import { decryptSecret, sealSecret, secretReadable } from "./secret.ts";
@@ -81,8 +85,15 @@ export const searchProviderInput = z.object({
 	baseUrl: httpUrl,
 });
 export const toolServiceInput = z.object({
-	tool: toolName,
+	tool: searchToolName,
 	provider: searchProviderId.nullable(),
+});
+export const documentParserInput = z.object({
+	enabled: z.boolean(),
+	// mineru.net, or a self-hosted MinerU
+	url: httpUrl,
+	// blank keeps the stored key
+	apiKey: z.string().trim().optional(),
 });
 export const mcpServerInput = z.object({
 	// checked in save, so a bad id lands on the id field
@@ -197,7 +208,7 @@ async function saveKeyed(
 /** Which Search Provider serves each Tool; null when none is picked. */
 export async function servedBy() {
 	const served = await db.select().from(toolService);
-	const by = (tool: ToolName) =>
+	const by = (tool: SearchToolName) =>
 		(served.find((s) => s.tool === tool)?.searchProviderId ??
 			null) as SearchProviderId | null;
 	return { search: by("search"), scrape: by("scrape") };
@@ -296,7 +307,7 @@ const searchProviders = ({ current, write }: Deps) => ({
 			servedBy: served,
 			/** Tools with a usable Search Provider. */
 			available: availableTools(loaded).filter(
-				(t): t is ToolName => toolName.safeParse(t).success,
+				(t): t is SearchToolName => searchToolName.safeParse(t).success,
 			),
 		};
 	},
@@ -314,7 +325,7 @@ const searchProviders = ({ current, write }: Deps) => ({
 		write((tx) => tx.delete(searchProvider).where(eq(searchProvider.id, id))),
 
 	/** Picks the Search Provider for a Tool; null leaves it unavailable. */
-	serve: (tool: ToolName, providerId: string | null) =>
+	serve: (tool: SearchToolName, providerId: string | null) =>
 		write((tx) =>
 			tx
 				.insert(toolService)
@@ -674,6 +685,50 @@ const sandboxProviders = ({ write }: Deps) => ({
 	delete: () => write((tx) => tx.delete(sandboxProvider)),
 });
 
+// MinerU is the only Document Parser, so its one row has a fixed id
+const MINERU = "mineru";
+
+const documentParsers = ({ write }: Deps) => ({
+	/** The configured one, or null; the key only goes in, `keyReadable` null when none is stored. */
+	async get() {
+		const row = await db.query.documentParser.findFirst();
+		return row
+			? {
+					enabled: row.enabled,
+					url: row.url,
+					keyReadable: row.apiKey === null ? null : secretReadable(row.apiKey),
+				}
+			: null;
+	},
+
+	/** Once saved, also the connection test's result. The key is required for mineru.net, optional for a self-hosted MinerU. */
+	async save(
+		input: z.infer<typeof documentParserInput>,
+	): Promise<{ errors: SaveErrors; test?: DocumentParserTestResult }> {
+		const stored = await db.query.documentParser.findFirst();
+		const apiKey =
+			sealSecret(input.apiKey, stored?.apiKey ?? undefined) ?? null;
+		const plain = input.apiKey || (apiKey && decryptSecret(apiKey)) || "";
+		if (isMineruNet(input.url) && !plain)
+			return { errors: { apiKey: { code: "api_key_required" } } };
+		const values = { enabled: input.enabled, url: input.url, apiKey };
+		await write((tx) =>
+			tx
+				.insert(documentParser)
+				.values({ id: MINERU, ...values })
+				.onConflictDoUpdate({ target: documentParser.id, set: values }),
+		);
+		// saved either way, so the Admin can fix the address or key later
+		return {
+			errors: {},
+			test: await testDocumentParser({ baseUrl: input.url, apiKey: plain }),
+		};
+	},
+
+	/** Parse becomes unavailable; parses already cached stay with their Attachments. */
+	delete: () => write((tx) => tx.delete(documentParser)),
+});
+
 // one row, with a fixed id
 const limitsOf = ({ write }: Deps) => ({
 	/** As saved, or the defaults. */
@@ -730,7 +785,7 @@ const agents = ({ current, write }: Deps) => ({
 			})),
 			/** Every configured MCP Server, enabled or not. */
 			mcpServers: servers,
-			/** Tools with a usable Search Provider, and `mcp:<id>` of available MCP Servers. */
+			/** Built-in Tools with a usable Search Provider or Document Parser, and `mcp:<id>` of available MCP Servers. */
 			availableTools: availableTools(loaded),
 			/** Every Skill's name, enabled or not. */
 			skills: skillNames,
@@ -796,6 +851,7 @@ export const admin = (deps: Deps) => ({
 	searchProviders: searchProviders(deps),
 	mcpServers: mcpServers(deps),
 	sandboxProvider: sandboxProviders(deps),
+	documentParser: documentParsers(deps),
 	limits: limitsOf(deps),
 	agents: agents(deps),
 	skills: skills(deps),

@@ -52,6 +52,7 @@ export function memoryRun({
 	memories = [],
 	memoryOff = false,
 	recall = { search: async () => [], open: async () => undefined },
+	attachments = {},
 }: {
 	transcript: Transcript;
 	turn: Turn;
@@ -69,6 +70,8 @@ export function memoryRun({
 	memories?: Pick<Memory, "path" | "description" | "body">[];
 	/** The User turned memory off: the Run gets no Memories. */
 	memoryOff?: boolean;
+	/** The Attachments the Run finds by name, with their object storage keys; none by default. */
+	attachments?: Record<string, string>;
 	/** The User's past Conversations; none by default. */
 	recall?: Recall;
 }) {
@@ -127,6 +130,8 @@ export function memoryRun({
 				},
 				{ signal: stopper.signal },
 			),
+		attachment: async (name) =>
+			Object.hasOwn(attachments, name) ? { key: attachments[name] } : undefined,
 		memories: memoryOff || incognito ? undefined : userMemories,
 		recall,
 		timer: isSubagent

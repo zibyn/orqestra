@@ -1,6 +1,11 @@
 import { fauxProvider } from "@earendil-works/pi-ai";
-import type { AgentDefinition, OrqestraConfig } from "@orqestra/config";
+import {
+	type AgentDefinition,
+	DEFAULT_LIMITS,
+	type OrqestraConfig,
+} from "@orqestra/config";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { RunHandle } from "./index.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -37,6 +42,7 @@ const config = {
 		pdf: { versionId: 1, description: "", disableModelInvocation: false },
 	},
 	sandboxProvider: { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 },
+	limits: DEFAULT_LIMITS,
 } as unknown as OrqestraConfig;
 
 let o = memoryOrrery();
@@ -90,8 +96,9 @@ describe.skipIf(!url)(
 	() => {
 		// sending queues a Run: a worker that does nothing takes it (and sets up BullMQ's schema)
 		let stopWorker: () => Promise<void>;
+		let onRun = async (_run: RunHandle) => {};
 		beforeAll(async () => {
-			stopWorker = await conversations.serveRuns(async () => {});
+			stopWorker = await conversations.serveRuns((run) => onRun(run));
 		});
 		afterAll(() => stopWorker?.());
 		beforeEach(async () => {
@@ -227,6 +234,23 @@ describe.skipIf(!url)(
 				expect(sent.content[1].text).toContain("a.pdf");
 				expect(o.calls).toEqual([]);
 			});
+		});
+
+		it("lets the Run find its Conversation's Attachments by name, for Parse", async () => {
+			const id = await newConversation("plain");
+			await upload(id, "a.pdf", stream("pdf bytes"));
+			let found: Promise<unknown[]> | undefined;
+			onRun = async (run) => {
+				found ??= Promise.all([
+					run.attachment("a.pdf").then(async (a) => {
+						const object = a && (await s.store.get(a.key));
+						return object && new Response(object.body).text();
+					}),
+					run.attachment("b.pdf"),
+				]);
+			};
+			await sendWith(id, ["a.pdf"]);
+			expect(await found).toEqual(["pdf bytes", undefined]);
 		});
 	},
 );

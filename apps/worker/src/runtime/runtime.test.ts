@@ -21,10 +21,11 @@ import {
 	type OrqestraConfig,
 	resolveTurn,
 } from "@orqestra/config";
+import { zip } from "@orqestra/config/test-zip";
 import type { Transcript, Turn } from "@orqestra/conversations";
 import { memoryRun } from "@orqestra/conversations/testing";
 import { openToolbox } from "@orqestra/tools";
-import { memoryOrrery } from "@orqestra/tools/testing";
+import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
 import { runAgent } from "./index.ts";
 import { MAX_SUBAGENT_STEPS } from "./tools.ts";
 
@@ -1238,5 +1239,71 @@ describe("runAgent with memory", () => {
 		expect(JSON.stringify(open.content)).toContain("好的");
 		expect(missing.isError).toBe(true);
 		expect(neither.isError).toBe(true);
+	});
+});
+
+describe("runAgent with a Document Parser", () => {
+	// mineru.net answering every call at once, its result zip holding full.md
+	const mineru = (async (url: string | URL) => {
+		const at = String(url);
+		if (at.endsWith("/file-urls/batch"))
+			return Response.json({
+				code: 0,
+				data: { batch_id: "b", file_urls: ["https://oss.example/u"] },
+			});
+		if (at.includes("/extract-results/batch/"))
+			return Response.json({
+				code: 0,
+				data: {
+					extract_result: [
+						{ state: "done", full_zip_url: "https://cdn.example/r.zip" },
+					],
+				},
+			});
+		if (at === "https://cdn.example/r.zip")
+			return new Response(zip([{ path: "full.md", content: "# Report" }]));
+		return new Response(null);
+	}) as unknown as typeof fetch;
+	const parseConfig = (sandbox: boolean) => ({
+		...config,
+		agents: [agent({ id: "reader", tools: ["parse"] })],
+		tools: { parse: { baseUrl: "https://mineru.net", apiKey: "k" } },
+		sandboxProvider: sandbox
+			? { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 }
+			: undefined,
+	});
+
+	it("parses an Attachment and writes its Markdown next to it in the Sandbox", async () => {
+		const { store, objects } = memoryStore();
+		objects.set("r/c/1", new TextEncoder().encode("%PDF"));
+		script([
+			fauxAssistantMessage(fauxToolCall("parse", { name: "report.pdf" })),
+			fauxAssistantMessage("Read it"),
+		]);
+		const cfg = parseConfig(true);
+		const m = memoryRun({
+			transcript: transcript(user("read report.pdf")),
+			turn: resolveTurn(cfg, "reader") as Turn,
+			attachments: { "report.pdf": "r/c/1" },
+		});
+		const o = memoryOrrery();
+		await runAgent(m.run, {
+			config: cfg,
+			streamSimple,
+			skillFiles: noSkillFiles,
+			orrery: () => o.client,
+			store,
+			openToolbox: ((services, allowed, options) =>
+				openToolbox(services, allowed, {
+					...options,
+					fetch: mineru,
+				})) as typeof openToolbox,
+		});
+		expect(JSON.stringify(m.saved[1])).toContain("# Report");
+		expect(
+			new TextDecoder().decode(
+				o.files(m.sandboxId as string).get("uploads/report.pdf.md"),
+			),
+		).toBe("# Report");
 	});
 });

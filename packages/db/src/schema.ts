@@ -442,6 +442,17 @@ export const sandboxProvider = pgTable("sandbox_provider", {
 	createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// The Document Parser (MinerU) an Admin configured; at most one row, id "mineru"
+export const documentParser = pgTable("document_parser", {
+	id: text("id").primaryKey(),
+	enabled: boolean("enabled").default(true).notNull(),
+	// mineru.net, or a self-hosted MinerU
+	url: text("url").notNull(),
+	// encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser; null: none (a self-hosted MinerU may need none)
+	apiKey: text("api_key"),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Agent Definitions edited by Admins in /console/agents; `conversation.agent_id` refers to the id, so it never changes
 export const agent = pgTable("agent", {
 	id: text("id").primaryKey(),

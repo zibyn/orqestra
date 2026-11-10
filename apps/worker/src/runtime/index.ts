@@ -2,7 +2,11 @@ import { Agent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { messageText, type OrqestraConfig, turnSkills } from "@orqestra/config";
 import { type RunHandle, RunTimedOut } from "@orqestra/conversations";
-import { type openToolbox, orrery as orreryClient } from "@orqestra/tools";
+import {
+	type ObjectStore,
+	type openToolbox,
+	orrery as orreryClient,
+} from "@orqestra/tools";
 import { prepareContext } from "./compaction.ts";
 import { memoryPrompt, memoryTools, recallTool } from "./memory.ts";
 import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
@@ -30,6 +34,8 @@ export type RuntimeDeps = {
 	skillFiles: SkillFiles;
 	/** The Sandbox Provider's client; tests stand in for orrery. */
 	orrery?: typeof orreryClient;
+	/** Object storage, where Attachments are kept; Parse reads them there. No Parse without it. */
+	store?: ObjectStore;
 };
 
 /**
@@ -44,14 +50,32 @@ export async function runAgent(
 		openToolbox,
 		skillFiles,
 		orrery = orreryClient,
+		store,
 	}: RuntimeDeps,
 ) {
 	const { conversationId, turn, signal } = run;
 	const sub = run.isSubagent;
 	const rows = run.transcript.messages;
 	const last = rows.at(-1) as (typeof rows)[number];
+	const provider = config.sandboxProvider;
 	// MCP Servers are connected for this Run only, so changes on the server side show up in the next one
-	const toolbox = await openToolbox(config, turn.agent.tools, { signal });
+	const toolbox = await openToolbox(config, turn.agent.tools, {
+		signal,
+		files: store && {
+			store,
+			attachment: (name) => run.attachment(name),
+			// beside the Attachment's copy, so the Agent can search the whole document with bash
+			toSandbox:
+				provider &&
+				(async (path, markdown) => {
+					const client = orrery(provider);
+					const { id } = await run.sandbox(client, provider);
+					await client.writeFile(id, path, new TextEncoder().encode(markdown), {
+						signal,
+					});
+				}),
+		},
+	});
 	// no Sandbox or Sandbox Tools without a Sandbox Provider; no Skill list without an available Skill
 	const skills = turnSkills(config, turn.agent);
 	const sandbox = config.sandboxProvider

@@ -42,7 +42,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 	// leaves only a default Agent, as the baseline does, also for the next package's tests
 	const reset = async () => {
 		await db.execute(
-			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, agent, skill, limits cascade`,
+			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, document_parser, agent, skill, limits cascade`,
 		);
 		await config.agents.save({
 			id: "general",
@@ -547,6 +547,63 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 			await config.sandboxProvider.delete();
 			expect(await config.sandboxProvider.get()).toBeNull();
 			expect((await config.current()).sandboxProvider).toBeUndefined();
+		});
+	});
+
+	describe("Document Parser", () => {
+		// nothing listens there, so the connection test fails fast
+		const selfHosted = { enabled: true, url: "http://127.0.0.1:9", apiKey: "" };
+
+		it("requires a key for mineru.net", async () => {
+			expect(
+				await config.documentParser.save({
+					enabled: true,
+					url: "https://mineru.net",
+					apiKey: "",
+				}),
+			).toEqual({ errors: { apiKey: { code: "api_key_required" } } });
+			expect(await config.documentParser.get()).toBeNull();
+		});
+
+		it("serves Parse from a self-hosted MinerU without a key, saved even when the connection test fails", async () => {
+			expect(await config.documentParser.save(selfHosted)).toMatchObject({
+				errors: {},
+				test: { ok: false, reason: "unreachable" },
+			});
+			expect(await config.documentParser.get()).toEqual({
+				enabled: true,
+				url: "http://127.0.0.1:9",
+				keyReadable: null,
+			});
+			expect((await config.current()).tools.parse).toEqual({
+				baseUrl: "http://127.0.0.1:9",
+				apiKey: "",
+			});
+		});
+
+		it("stores the key encrypted and keeps it when left blank", async () => {
+			await config.documentParser.save({ ...selfHosted, apiKey: "mk" });
+			await config.documentParser.save(selfHosted);
+			const [row] = (await db.execute(sql`select api_key from document_parser`))
+				.rows as { api_key: string }[];
+			expect(row.api_key).not.toContain("mk");
+			expect(await config.documentParser.get()).toMatchObject({
+				keyReadable: true,
+			});
+			expect((await config.current()).tools.parse?.apiKey).toBe("mk");
+		});
+
+		it("leaves Parse unavailable while disabled, and once deleted", async () => {
+			await config.documentParser.save({ ...selfHosted, enabled: false });
+			expect((await config.current()).tools.parse).toBeUndefined();
+			expect((await config.agents.list()).availableTools).not.toContain(
+				"parse",
+			);
+			await config.documentParser.save(selfHosted);
+			expect((await config.agents.list()).availableTools).toContain("parse");
+			await config.documentParser.delete();
+			expect(await config.documentParser.get()).toBeNull();
+			expect((await config.current()).tools.parse).toBeUndefined();
 		});
 	});
 

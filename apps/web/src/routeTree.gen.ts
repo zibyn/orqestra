@@ -18,6 +18,7 @@ import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
 import { Route as ConsoleLimitsRouteImport } from './routes/console/limits'
 import { Route as ConsoleMcpRouteImport } from './routes/console/mcp'
+import { Route as ConsoleParseRouteImport } from './routes/console/parse'
 import { Route as ConsoleProvidersRouteImport } from './routes/console/providers'
 import { Route as ConsoleSandboxRouteImport } from './routes/console/sandbox'
 import { Route as ConsoleSearchRouteImport } from './routes/console/search'
@@ -68,6 +69,11 @@ const ConsoleMcpRoute = ConsoleMcpRouteImport.update({
   path: '/mcp',
   getParentRoute: () => ConsoleRoute,
 } as any)
+const ConsoleParseRoute = ConsoleParseRouteImport.update({
+  id: '/parse',
+  path: '/parse',
+  getParentRoute: () => ConsoleRoute,
+} as any)
 const ConsoleProvidersRoute = ConsoleProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
@@ -102,6 +108,7 @@ export interface FileRoutesByFullPath {
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
   '/console/mcp': typeof ConsoleMcpRoute
+  '/console/parse': typeof ConsoleParseRoute
   '/console/providers': typeof ConsoleProvidersRoute
   '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
   '/console/mcp': typeof ConsoleMcpRoute
+  '/console/parse': typeof ConsoleParseRoute
   '/console/providers': typeof ConsoleProvidersRoute
   '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
@@ -132,6 +140,7 @@ export interface FileRoutesById {
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
   '/console/mcp': typeof ConsoleMcpRoute
+  '/console/parse': typeof ConsoleParseRoute
   '/console/providers': typeof ConsoleProvidersRoute
   '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/console/agents'
     | '/console/limits'
     | '/console/mcp'
+    | '/console/parse'
     | '/console/providers'
     | '/console/sandbox'
     | '/console/search'
@@ -163,6 +173,7 @@ export interface FileRouteTypes {
     | '/console/agents'
     | '/console/limits'
     | '/console/mcp'
+    | '/console/parse'
     | '/console/providers'
     | '/console/sandbox'
     | '/console/search'
@@ -179,6 +190,7 @@ export interface FileRouteTypes {
     | '/console/agents'
     | '/console/limits'
     | '/console/mcp'
+    | '/console/parse'
     | '/console/providers'
     | '/console/sandbox'
     | '/console/search'
@@ -258,6 +270,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleMcpRouteImport
       parentRoute: typeof ConsoleRoute
     }
+    '/console/parse': {
+      id: '/console/parse'
+      path: '/parse'
+      fullPath: '/console/parse'
+      preLoaderRoute: typeof ConsoleParseRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
     '/console/providers': {
       id: '/console/providers'
       path: '/providers'
@@ -316,6 +335,7 @@ interface ConsoleRouteChildren {
   ConsoleAgentsRoute: typeof ConsoleAgentsRoute
   ConsoleLimitsRoute: typeof ConsoleLimitsRoute
   ConsoleMcpRoute: typeof ConsoleMcpRoute
+  ConsoleParseRoute: typeof ConsoleParseRoute
   ConsoleProvidersRoute: typeof ConsoleProvidersRoute
   ConsoleSandboxRoute: typeof ConsoleSandboxRoute
   ConsoleSearchRoute: typeof ConsoleSearchRoute
@@ -327,6 +347,7 @@ const ConsoleRouteChildren: ConsoleRouteChildren = {
   ConsoleAgentsRoute: ConsoleAgentsRoute,
   ConsoleLimitsRoute: ConsoleLimitsRoute,
   ConsoleMcpRoute: ConsoleMcpRoute,
+  ConsoleParseRoute: ConsoleParseRoute,
   ConsoleProvidersRoute: ConsoleProvidersRoute,
   ConsoleSandboxRoute: ConsoleSandboxRoute,
   ConsoleSearchRoute: ConsoleSearchRoute,

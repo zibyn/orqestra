@@ -92,6 +92,7 @@ export function startAgentWorker(
 				openToolbox: toolbox,
 				skillFiles,
 				orrery,
+				store,
 			}),
 		options,
 	);

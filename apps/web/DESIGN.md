@@ -99,10 +99,10 @@ Use the Tailwind names (`bg-background`, `text-muted-foreground`, `border-border
   - Built from the shadcn chat components: the thread is a `MessageScroller` (each turn a `MessageScrollerItem`, the User's turn its scroll anchor), turns are `Message`, the User's bubble is `Bubble variant="muted"`. Thinking, Tool calls and Subagents are `TraceLine`s, one `Trace` per run of them; Tool output is a `CodeBlock`; dividers (compaction, Notifications) are `Marker variant="separator"`; files are `Attachment`; the Composer is an `InputGroup`.
 - **Standalone pages** (login, setup): a single `Card` centered on the screen, `max-w-sm`.
 - **Console**: its own `Sidebar` (also `collapsible="icon"`), page padding `px-4 py-6`, `md:px-10 md:py-10`.
-  - Sidebar header: Orqestra / Console. Content: nav groups (Models: Providers, Agents, Skills; Tools: Search Providers, MCP Servers, Sandbox Provider; Limits: Limits) and "Back to conversations" at the bottom. Footer: the same user menu as the app (`NavUser`).
+  - Sidebar header: Orqestra / Console. Content: nav groups (Models: Providers, Agents, Skills; Tools: Search Providers, MCP Servers, Sandbox Provider, Document Parser; Limits: Limits) and "Back to conversations" at the bottom. Footer: the same user menu as the app (`NavUser`).
   - Top bar: `SidebarTrigger`, a vertical `Separator` and a `Breadcrumb` (Console › page).
   - Pages use `ConsolePage` (centered `max-w-5xl`: title, one-line description, primary "Add" action in the header). Items are rows of one bordered `ItemList` (name with an outline `Badge` for its id, a muted line, then actions on the right: enable `Switch`, outline "Edit", icon `DeleteButton`), with an empty state when there are none; warnings use a destructive `Alert` under the row.
-  - Adding and editing never happen in the list: they open a `FormSheet` (a right-side `Sheet`) whose `SheetForm` scrolls the fields and pins submit / cancel to the bottom. Page-wide settings that aren't items (Sandbox Provider, which Search Provider serves each Tool, the Limits) stay inline in a `Card`.
+  - Adding and editing never happen in the list: they open a `FormSheet` (a right-side `Sheet`) whose `SheetForm` scrolls the fields and pins submit / cancel to the bottom. Page-wide settings that aren't items (Sandbox Provider, Document Parser, which Search Provider serves each Tool, the Limits) stay inline in a `Card`.
 
 ## Components
 

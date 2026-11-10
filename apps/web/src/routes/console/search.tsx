@@ -1,7 +1,7 @@
 import {
 	type SearchProviderId,
 	searchProviders,
-	toolName,
+	searchToolNames,
 } from "@orqestra/config/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { PlusIcon, SearchIcon, TriangleAlertIcon } from "lucide-react";
@@ -91,7 +91,7 @@ function SearchProviders() {
 				</CardHeader>
 				<CardContent>
 					<div className="grid gap-5 md:grid-cols-2">
-						{toolName.options.map((tool) => (
+						{searchToolNames.map((tool) => (
 							<Picker
 								key={tool}
 								label={m.tool_served_by({ tool })}

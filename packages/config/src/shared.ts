@@ -1,13 +1,21 @@
 // No Node imports: browser code can use this module (as @orqestra/config/shared)
 import type { Message } from "@earendil-works/pi-ai";
-import { searchProviders, toolNames } from "@orqestra/tools/refs";
+import {
+	searchProviders,
+	searchToolNames,
+	toolNames,
+} from "@orqestra/tools/refs";
 import { z } from "zod";
 
 export {
+	isMineruNet,
+	MINERU_URL,
 	mcpServerOf,
 	mcpToolRef,
 	type SearchProviderId,
+	type SearchToolName,
 	searchProviders,
+	searchToolNames,
 	type ToolName,
 	type ToolRef,
 } from "@orqestra/tools/refs";
@@ -36,6 +44,7 @@ export const messageText = (message: Message) =>
 		: message.content.map((c) => (c.type === "text" ? c.text : "")).join("");
 
 export const toolName = z.enum(toolNames);
+export const searchToolName = z.enum(searchToolNames);
 export const searchProviderId = z.enum(searchProviders.map((p) => p.id));
 
 /** An Agent's id, used in `conversation.agent_id`. */
@@ -75,7 +84,7 @@ export const agentDefinition = z.strictObject({
 			allowed: z.array(thinkingLevel).min(1).optional(),
 		})
 		.optional(),
-	/** Omitted means Search and Scrape, never an MCP Server. */
+	/** Omitted means every built-in Tool (Search, Scrape and Parse), never an MCP Server. */
 	tools: z.array(toolRef).optional(),
 	/** Allowed Skills by name; omitted means none. */
 	skills: z.array(z.string()).optional(),

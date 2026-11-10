@@ -80,7 +80,7 @@ describe("loadConfig", () => {
 			pickable: true,
 			memory: false,
 			allModels: true,
-			tools: ["search", "scrape"],
+			tools: ["search", "scrape", "parse"],
 		});
 	});
 
@@ -311,7 +311,7 @@ describe("loadConfig", () => {
 			]);
 		});
 
-		it("gives an Agent without `tools` Search and Scrape but no MCP Server", async () => {
+		it("gives an Agent without `tools` every built-in Tool but no MCP Server", async () => {
 			const config = await loadConfig({
 				...deepseek(),
 				mcpServers: [
@@ -324,7 +324,7 @@ describe("loadConfig", () => {
 					},
 				],
 			});
-			expect(config.defaultAgent.tools).toEqual(["search", "scrape"]);
+			expect(config.defaultAgent.tools).toEqual(["search", "scrape", "parse"]);
 		});
 	});
 
@@ -577,13 +577,13 @@ describe("resolveTurn", () => {
 		expect(turn?.thinking).toBe("high");
 	});
 
-	it("runs a Subagent without a template as the general worker, on the picked Model, Search and Scrape but no MCP Server", async () => {
+	it("runs a Subagent without a template as the general worker, on the picked Model, every built-in Tool but no MCP Server", async () => {
 		const turn = resolveTurn(await load(), null, {
 			model: "deepseek/deepseek-v4-pro",
 		});
 		expect(turn?.model.id).toBe("deepseek-v4-pro");
 		expect(turn?.agent.instructions).toBe(GENERAL_WORKER);
-		expect(turn?.agent.tools).toEqual(["search", "scrape"]);
+		expect(turn?.agent.tools).toEqual(["search", "scrape", "parse"]);
 	});
 
 	it("returns nothing once the Agent is removed from config, so the Conversation is read-only", async () => {

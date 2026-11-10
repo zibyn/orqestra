@@ -5,17 +5,29 @@ import { type TSchema, Type } from "@earendil-works/pi-ai";
 import type { McpClient, McpFetch, McpTransport } from "@earendil-works/pi-mcp";
 import { cut } from "./cut.ts";
 import { mcpTools } from "./mcp.ts";
+import { type DocumentParser, type ParseFiles, parseTool } from "./parse.ts";
 import {
 	mcpServerOf,
 	mcpToolRef,
 	type SearchProviderId,
-	type ToolName,
+	type SearchToolName,
 	type ToolRef,
 	toolNames,
 } from "./refs.ts";
 import { searchProvider } from "./search.ts";
 
-export type { SearchProviderId, ToolName, ToolRef } from "./refs.ts";
+export {
+	type DocumentParser,
+	type DocumentParserTestResult,
+	type ParseFiles,
+	testDocumentParser,
+} from "./parse.ts";
+export type {
+	SearchProviderId,
+	SearchToolName,
+	ToolName,
+	ToolRef,
+} from "./refs.ts";
 
 /** A Tool's Search Provider and its decrypted key. */
 export interface ToolService {
@@ -34,7 +46,9 @@ export interface McpServer {
 
 /** The services the Tools need; only usable ones are listed, the other Tools are unavailable. */
 export interface ToolServices {
-	tools: Partial<Record<ToolName, ToolService>>;
+	tools: Partial<Record<SearchToolName, ToolService>> & {
+		parse?: DocumentParser;
+	};
 	mcpServers: Record<string, McpServer>;
 }
 
@@ -49,11 +63,12 @@ const text = (t: string) => [{ type: "text" as const, text: t }];
 // infers `execute`'s params from `parameters`, then fits the Agent's untyped Tool list
 const tool = <T extends TSchema>(t: AgentTool<T>) => t as unknown as AgentTool;
 
-/** Search and Scrape, those of them `offered`. */
+/** Search, Scrape and Parse, those of them `offered`; Parse only with the Run's `files`. */
 function builtinTools(
 	services: ToolServices,
 	offered: ToolRef[],
 	fetch: McpFetch,
+	{ files, pollMs }: { files?: ParseFiles; pollMs?: number },
 ): AgentTool[] {
 	const tools: AgentTool[] = [];
 	const search = offered.includes("search") && services.tools.search;
@@ -107,6 +122,8 @@ function builtinTools(
 			}),
 		);
 	}
+	const parse = offered.includes("parse") && services.tools.parse;
+	if (parse && files) tools.push(parseTool(parse, files, fetch, { pollMs }));
 	return tools;
 }
 
@@ -123,9 +140,13 @@ export async function openToolbox(
 		mcpTransport?: (id: string, server: McpServer) => McpTransport;
 		/** How long one MCP request (connecting, listing, a Tool call) may take. */
 		timeoutMs?: number;
+		/** The Run's Attachments, which Parse reads; no Parse without them. */
+		files?: ParseFiles;
+		/** How often Parse asks the Document Parser whether it is done. */
+		pollMs?: number;
 	},
 ): Promise<{ tools: AgentTool[]; close: () => Promise<unknown> }> {
-	const { signal, fetch, mcpTransport, timeoutMs = 60_000 } = options;
+	const { signal, fetch, mcpTransport, timeoutMs = 60_000, ...parse } = options;
 	const available = availableTools(services);
 	const offered = allowed.filter((t) => available.includes(t));
 	const ids = offered.flatMap((t) => mcpServerOf(t) ?? []);
@@ -144,6 +165,7 @@ export async function openToolbox(
 			services,
 			offered,
 			fetch ?? ((i, o) => globalThis.fetch(i, o)),
+			parse,
 		),
 		...mcp,
 	].filter((t) => {

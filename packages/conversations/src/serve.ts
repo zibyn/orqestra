@@ -8,6 +8,7 @@ import {
 } from "@orqestra/config";
 import { db, type Tx } from "@orqestra/db";
 import {
+	attachment,
 	compaction,
 	conversation,
 	inbox,
@@ -16,7 +17,7 @@ import {
 } from "@orqestra/db/schema";
 import type { Orrery, SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { alertRun } from "./alerts.ts";
 import { type Memories, memoriesOf, memoryOn } from "./memories.ts";
 import { type Recall, recallOf } from "./recall.ts";
@@ -141,6 +142,8 @@ export type RunHandle = {
 		client: Orrery,
 		provider: SandboxProvider,
 	): Promise<{ id: string; woke: boolean }>;
+	/** The Attachment `name` of the Conversation, else of the Conversation that started it, with its object storage key; undefined when there is none. */
+	attachment(name: string): Promise<{ key: string } | undefined>;
 	/** The Memories of the Conversation's User; writes record this Conversation. None while the User has memory off or the Conversation is Incognito, and no Recall then either. */
 	memories?: Memories;
 	/** The User's past Conversations, for Recall. */
@@ -457,6 +460,28 @@ async function open(
 		},
 		sandbox: (client, provider) =>
 			ensureSandbox(conversationId, client, provider, { signal }),
+		async attachment(name) {
+			const rows = await db
+				.select({
+					conversationId: attachment.conversationId,
+					key: attachment.key,
+				})
+				.from(attachment)
+				.where(
+					and(
+						eq(attachment.name, name),
+						inArray(
+							attachment.conversationId,
+							conv.parentId
+								? [conversationId, conv.parentId]
+								: [conversationId],
+						),
+					),
+				);
+			const row =
+				rows.find((r) => r.conversationId === conversationId) ?? rows[0];
+			return row && { key: row.key };
+		},
 		// an Incognito Conversation's Runs, its Subagents' too, have no memory
 		memories:
 			!incognito && (await memoryOn(conv.userId))

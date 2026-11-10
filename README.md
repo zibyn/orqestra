@@ -130,6 +130,10 @@ orrery snapshot build orqestra-skills -f Dockerfile
 
 再次运行同一条命令即生成新版本，orrery 构建成功后自动把 current 指向它；新建的 Sandbox 使用 current 版本。
 
+### 配置 Document Parser（MinerU）
+
+Parse 把 Attachment（PDF、图片、Office 文档）转成 Markdown，由 MinerU 提供。Admin 在 `/console/parse` 填写地址（默认 `https://mineru.net`）和 key（加密保存、只写不读；mineru.net 必填，在 mineru.net 的 API 管理页申请），可随时停用。最多配置一个；没有启用时 Parse 不可用，Agent 不带它运行。保存时会用该 key 查询一次 mineru.net，失败时显示原因，配置照常保存。目前只支持 mineru.net 的 v4 精准解析 API（单个文件最多 200 页、200 MB，超出时 Agent 会按页段解析）；自部署的 MinerU 见 #75。
+
 ### 添加 Agent
 
 Admin 在 `/console/agents` 新建、编辑、删除 Agent，保存后 api 和 worker 自动重新加载，正在进行的 Run 不受影响。数据库里没有任何 Agent 时会自动写入 General。

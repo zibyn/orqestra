@@ -14,14 +14,15 @@ import {
 	ModelRuntime,
 	stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
-import type { McpServer, SandboxProvider, ToolService } from "@orqestra/tools";
+import type { McpServer, SandboxProvider, ToolServices } from "@orqestra/tools";
 import type { z } from "zod";
 import {
 	agentDefinition,
 	definitionIssues,
 	type SearchProviderId,
+	type SearchToolName,
 	searchProviders,
-	type ToolName,
+	searchToolNames,
 	type ToolRef,
 	toolName,
 } from "./shared.ts";
@@ -45,7 +46,7 @@ export interface AgentDefinition {
 	/** As written; resolve per Model with `resolveThinking`. */
 	thinking: { default?: ThinkingLevel; allowed?: ThinkingLevel[] };
 	compaction?: { reserveTokens?: number; keepRecentTokens?: number };
-	/** As written; only built-in Tools with a Search Provider and available MCP Servers are offered in a Run. */
+	/** As written; only built-in Tools with a Search Provider or Document Parser and available MCP Servers are offered in a Run. */
 	tools: ToolRef[];
 	/** Allowed Skills by name, as written; a Run gets the available ones from `turnSkills`. */
 	skills: string[];
@@ -77,7 +78,13 @@ export interface Settings {
 		baseUrl: string | null;
 	}[];
 	/** The Search Provider picked for each Tool. */
-	servedBy: Record<ToolName, SearchProviderId | null>;
+	servedBy: Record<SearchToolName, SearchProviderId | null>;
+	/** Omitted when none is configured; `apiKey` is null when none is stored, undefined when it cannot be decrypted. */
+	documentParser?: {
+		enabled: boolean;
+		url: string;
+		apiKey: string | null | undefined;
+	};
 	/** A header `value` is undefined when it cannot be decrypted. */
 	mcpServers: {
 		id: string;
@@ -145,8 +152,8 @@ export interface OrqestraConfig {
 	models: Model<Api>[];
 	agents: AgentDefinition[];
 	defaultAgent: AgentDefinition;
-	/** Tools with a usable Search Provider; the others are unavailable. */
-	tools: Partial<Record<ToolName, ToolService>>;
+	/** Tools with a usable Search Provider or Document Parser; the others are unavailable. */
+	tools: ToolServices["tools"];
 	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
 	mcpServers: Record<string, McpServer>;
 	/** Enabled Skills, by name; the others are unavailable. */
@@ -279,7 +286,7 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		throw new ConfigError(`Invalid configuration:\n  ${errors.join("\n  ")}`);
 
 	const tools: OrqestraConfig["tools"] = {};
-	for (const tool of toolName.options) {
+	for (const tool of searchToolNames) {
 		const picked = settings.servedBy[tool];
 		const stored = settings.searchProviders.find((p) => p.id === picked);
 		if (picked && stored?.apiKey)
@@ -292,6 +299,9 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 					"",
 			};
 	}
+	const parser = settings.documentParser;
+	if (parser?.enabled && parser.apiKey !== undefined)
+		tools.parse = { baseUrl: parser.url, apiKey: parser.apiKey ?? "" };
 
 	const mcpServers: OrqestraConfig["mcpServers"] = {};
 	for (const { id, name, url, enabled, headers } of settings.mcpServers) {
@@ -391,7 +401,7 @@ export function resolveThinking(
 export const GENERAL_WORKER =
 	"You carry out one task for another agent, starting without any prior context. Work through it with the tools you have, then reply with a complete, self-contained answer: it is all the other agent will see.";
 
-/** The built-in Agent a Subagent without a template runs as: any enabled Model, Search and Scrape, no MCP Server, no Skill. */
+/** The built-in Agent a Subagent without a template runs as: any enabled Model, every built-in Tool, no MCP Server, no Skill. */
 const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
 	id: "",
 	name: "General worker",

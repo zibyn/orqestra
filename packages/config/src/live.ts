@@ -1,6 +1,7 @@
 import { db } from "@orqestra/db";
 import {
 	agent,
+	documentParser,
 	enabledModel,
 	limits,
 	mcpServer,
@@ -26,9 +27,14 @@ import { decryptSecret, encryptionKey } from "./secret.ts";
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
 
-export type { McpTestResult, SandboxTestResult } from "@orqestra/tools";
+export type {
+	DocumentParserTestResult,
+	McpTestResult,
+	SandboxTestResult,
+} from "@orqestra/tools";
 export {
 	agentInput,
+	documentParserInput,
 	limitsInput,
 	mcpServerEnabledInput,
 	mcpServerInput,
@@ -59,6 +65,7 @@ async function loadSettings(): Promise<Settings> {
 		skills,
 		[sandbox],
 		[saved],
+		[parser],
 	] = await Promise.all([
 		db.select().from(provider),
 		db.select().from(enabledModel),
@@ -79,6 +86,7 @@ async function loadSettings(): Promise<Settings> {
 			.orderBy(skill.name),
 		db.select().from(sandboxProvider),
 		db.select().from(limits),
+		db.select().from(documentParser),
 	]);
 	return {
 		providers: providers.map((p) => ({
@@ -116,6 +124,11 @@ async function loadSettings(): Promise<Settings> {
 			cpu: sandbox.cpu,
 			memory: sandbox.memory,
 		},
+		documentParser: parser && {
+			enabled: parser.enabled,
+			url: parser.url,
+			apiKey: parser.apiKey === null ? null : decryptSecret(parser.apiKey, key),
+		},
 	};
 }
 
@@ -130,7 +143,7 @@ const logWarnings = (config: OrqestraConfig) => {
 	for (const tool of toolName.options)
 		if (!available.includes(tool))
 			console.warn(
-				`Tool "${tool}" has no usable Search Provider, so Agents run without it`,
+				`Tool "${tool}" has no usable ${tool === "parse" ? "Document Parser" : "Search Provider"}, so Agents run without it`,
 			);
 	return config;
 };

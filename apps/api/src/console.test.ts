@@ -67,6 +67,13 @@ const endpoints: [string, string, unknown?][] = [
 		{ url: "https://x.test", snapshot: "", cpu: 1, memory: 1024 },
 	],
 	["DELETE", "/api/sandbox-provider"],
+	["GET", "/api/document-parser"],
+	[
+		"POST",
+		"/api/document-parser",
+		{ enabled: true, url: "https://x.test", apiKey: "k" },
+	],
+	["DELETE", "/api/document-parser"],
 	["GET", "/api/limits"],
 	[
 		"PUT",

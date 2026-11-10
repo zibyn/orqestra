@@ -4,6 +4,7 @@ import { z } from "zod";
 import { signedInOnly } from "./admin.ts";
 import { agents } from "./agents.ts";
 import { conversationRoutes, notFound } from "./conversations.ts";
+import { documentParser } from "./document-parser.ts";
 import { download, upload } from "./files.ts";
 import type { User } from "./identity.ts";
 import { limits } from "./limits.ts";
@@ -85,6 +86,7 @@ export function createApp({
 				.use(searchProviders(user))
 				.use(mcpServers(user))
 				.use(sandboxProvider(user))
+				.use(documentParser(user))
 				.use(limits(user))
 				.use(agents(user))
 				.derive(signedInOnly)
