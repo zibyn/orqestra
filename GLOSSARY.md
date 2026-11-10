@@ -112,6 +112,14 @@ _Avoid_: Fetch, extract, crawl
 An external service that serves Search and Scrape, such as Tavily, Firecrawl or DeepSeek, configured by an Admin with its own API key, independently of any Provider. An Admin picks one Search Provider for Search and one for Scrape; only the Search Providers Orqestra supports can be configured, each at most once.
 _Avoid_: Tool Provider, Provider
 
+**Parse**:
+The Tool that turns an Attachment of the Agent's Conversation, or of the one that started it, such as a PDF, an image or an Office document, into Markdown, keeping its text, tables and formulas, served by the Document Parser. It parses a long document a range of pages at a time, each range at most once; the Agent reads the same result each time it asks.
+_Avoid_: OCR, extract, convert
+
+**Document Parser**:
+The external service that serves Parse, such as MinerU, whether its online service or one the Admin hosts, configured by an Admin with its address and key; only the kinds Orqestra supports can be configured, and at most one is in use.
+_Avoid_: OCR Provider, OCR service, Provider
+
 **Model**:
 A specific LLM offered by a Provider; an Agent runs on a Model but is not one. Only Models an Admin has enabled are offered; disabling one removes it from every Agent that allowed it.
 _Avoid_: Agent, engine
@@ -129,7 +137,7 @@ An ordered series of messages between one User and the Agent, owned by and visib
 _Avoid_: Session, thread, chat
 
 **Attachment**:
-A file in a Conversation's Sandbox that goes with a message: one the User uploads into the Sandbox with their message, or one the Agent attaches to its reply for the User to download. Orqestra stores only its name and path; the file itself stays in the Sandbox and goes with it.
+A file that goes with a message: one the User uploads with their message, or one the Agent attaches to its reply for the User to download. Orqestra keeps the original itself, apart from any Sandbox, so an Attachment outlives the Sandbox and needs none; when the Agent works on it in a Sandbox, it works on a copy, and one the Agent attaches is the file as it was when attached. Attachments go with their Conversation when it is deleted, and those of a reply withdrawn by a retry go with it; a file uploaded but never sent is soon discarded.
 _Avoid_: Upload, artifact, document
 
 **Turn**:
