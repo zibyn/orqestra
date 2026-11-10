@@ -125,6 +125,9 @@ export function timerTools(timer: NonNullable<RunHandle["timer"]>) {
 	return [set, cancel];
 }
 
+// an ISO time's trailing offset: Z or ±hh:mm
+const OFFSET = /(Z|[+-]\d\d:\d\d)$/i;
+
 /**
  * The top-level Agent's Tool for drafting a Scheduled Task: checked as a saved one would be, then shown to the User
  * as a card they may open and create from; nothing is saved, and the Run goes on.
@@ -133,7 +136,7 @@ export function draftTool(limits: Pick<Limits, "minFiringInterval">) {
 	return tool({
 		name: "draft_scheduled_task",
 		label: "Draft a scheduled task",
-		description: `Draft a scheduled task for the user: they see it as a card and decide whether to create it. On each run, \`prompt\` is sent to a new conversation as the user's message, with no one watching, so write it to stand on its own. A schedule runs once at an ISO time, every so many seconds, or by a 5-field cron expression read in the user's time zone; runs must be at least ${limits.minFiringInterval} seconds apart. \`ends_at\` (ISO) ends a recurring one.`,
+		description: `Draft a scheduled task for the user: they see it as a card and decide whether to create it. On each run, \`prompt\` is sent to a new conversation as the user's message, with no one watching, so write it to stand on its own. A schedule runs once at an ISO time with its UTC offset, every so many seconds, or by a 5-field cron expression read in the user's time zone; runs must be at least ${limits.minFiringInterval} seconds apart. \`ends_at\` (ISO, with its offset) ends a recurring one.`,
 		parameters: Type.Object({
 			name: Type.String({ minLength: 1, maxLength: 100 }),
 			prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
@@ -148,8 +151,17 @@ export function draftTool(limits: Pick<Limits, "minFiringInterval">) {
 			ends_at: Type.Optional(Type.String()),
 		}),
 		execute: async (_, { schedule, ends_at }) => {
+			// a time without its offset would be read in the worker's time zone, not the user's
+			for (const [field, time] of [
+				["schedule.at", schedule.kind === "once" ? schedule.at : undefined],
+				["ends_at", ends_at],
+			])
+				if (time !== undefined && !OFFSET.test(time))
+					throw new Error(
+						`${field}: give the time with its UTC offset, such as 2026-01-31T09:00:00+08:00`,
+					);
 			try {
-				// shortcut: checked in UTC, though the User saves it in their browser's time zone; only DST shifts a cron's intervals
+				// shortcut: cron and intervals are checked in UTC, though the User saves them in their browser's time zone; only DST shifts a cron's intervals
 				checkSchedule(limits, {
 					schedule,
 					endsAt: ends_at ?? null,
