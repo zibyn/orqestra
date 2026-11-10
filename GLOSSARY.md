@@ -33,15 +33,43 @@ The reusable description of an Agent, maintained by Admins: its name, descriptio
 _Avoid_: Profile, persona, preset
 
 **Subagent**:
-An Agent that another Agent starts to carry out one task from a fresh context, in a Conversation of its own nested under the starting one, using an Agent Definition as its template or the built-in general worker. It works in the background and can outlive the Run that started it; when it finishes, its result goes back as a Notification. The starting Agent can send it further instructions, continue it once finished, or stop it; the User can only view and stop it. A Subagent cannot start Subagents of its own.
+An Agent that another Agent starts to carry out one task from a fresh context, in a Conversation of its own nested under the starting one, using an Agent Definition as its template or the built-in general worker. It works in the background and can outlive the Run that started it; when it finishes, its result goes back as a Notification. The starting Agent can send it further instructions, continue it once finished, or stop it; the User can only view and stop it. A Subagent can start Subagents of its own, down to a depth the Admin sets; stopping one stops every Subagent below it, and it has not finished, so sends no Notification, while any Subagent it started is still at work.
 _Avoid_: Child agent, worker, delegate
 
 **Notification**:
-The input that hands a finished Subagent's result to the Agent that started it. It reaches that Agent between two steps of its current Run, or starts a new Run when none is going. A Subagent the User stopped sends one too, but it waits for the next User message instead of starting a Run.
+The input that hands a finished Subagent's result to the Agent that started it. It reaches that Agent between two steps of its current Run, or starts a new Run when none is going. A Subagent the User stopped sends one too, but it waits for the next User message instead of starting a Run, as does one that arrives while the Agent waits on a Question.
 _Avoid_: Callback, event, result message
 
+**Alert**:
+What Orqestra sends to a User's browser, once they have turned Alerts on there, when background work has a result for them: a top-level Conversation's Run ended other than by the User stopping it, an Agent asked a Question, a Firing failed, or a Scheduled Task was paused or finished on its own. It names the Conversation or Scheduled Task and how it stands, never what the Agent wrote, and opening it shows that Conversation, or the Scheduled Task when no Conversation came of it. A browser already showing that Conversation shows no Alert. A Subagent finishing or a Timer ringing sends none of its own; the Run they lead to does. A Scheduled Task can be set not to alert when it completes, but its failures and Questions always alert.
+_Avoid_: Notification (that is a Subagent's result), push, notice, message
+
+**Unread**:
+How a top-level Conversation stands once a Run has ended with a reply the User has not seen, until they open it. A Run the User stopped leaves it as it was, and a Subagent's Conversation is never unread itself.
+_Avoid_: New, unseen, badge
+
+**Timer**:
+What an Agent sets to come back to its own Conversation after a delay of a minute up to a day, such as to check on a long command or an outside result, with a note to itself. When it rings, the note arrives in the Inbox as an input marked as sent by the Timer, not by the User, and wakes the Conversation. A Conversation has at most one Timer set, a new one replacing it; while it waits the Conversation stays idle, and the User sees when it will ring. Only so many may ring since the User's last message. Only a top-level Agent sets one, never a Subagent. The Agent or the User can cancel it, and stopping the Conversation, retrying past the Turn that set it, asking a Question or deleting the Conversation cancels it too.
+_Avoid_: Reminder, wakeup, alarm, one-time Scheduled Task
+
+**Question**:
+What an Agent asks the User when it cannot go on without them, one per Turn, optionally with a few suggested answers. Asking it ends the Run, and the Conversation waits for the User, showing so after it is no longer Unread, until their next message arrives as the answer; a suggested answer is sent as that message. It never expires; retrying the Turn that asked it, or deleting the Conversation, withdraws it. While it waits, Notifications wait with it, and a Firing whose Conversation ends on one has not failed. Only a top-level Agent asks one; a Subagent that needs something from the User says so in its result.
+_Avoid_: Attention, approval, prompt, waiting state
+
+**Scheduled Task**:
+A prompt a User sets to be sent to an Agent on a schedule, owned by and visible only to that User: its name, prompt (text only), Agent (one the User can pick), Model and thinking level, schedule (once at a time, every interval, or a cron expression, in the time zone stored on the task), whether its Conversations are Incognito, whether it alerts the User when it completes, and whether it is enabled. Only the User creates it, from scratch or from a Task Draft. Each Firing starts a new Conversation; pausing stops future Firings without stopping one under way, an edit applies from the next Firing, and deleting it leaves the Conversations it started as ordinary ones. Three Firings failing in a row pause it on its own. A one-time task, or one past its end, is finished once it has fired, and is kept until the User reschedules or deletes it.
+_Avoid_: Routine, cron job, reminder, automation
+
+**Task Draft**:
+A Scheduled Task an Agent proposes in a Conversation, shown to the User as a card with its name, prompt, schedule and next Firing, which creates nothing until the User opens it, adjusts it and saves it as their own Scheduled Task. The Agent fills in only the name, prompt and schedule; the rest starts from the Turn and Conversation it was drafted in. Drafting does not end the Run, and the Agent never learns whether the User saved it. A draft can be saved more than once, each save a new Scheduled Task. Only a top-level Agent drafts one.
+_Avoid_: Proposal, suggestion, template
+
+**Firing**:
+One time a Scheduled Task comes due: it starts a new Conversation, with its own Sandbox, whose first message is the task's prompt, sent as the User's message but marked as sent by the task. A Firing whose previous Conversation is still running is skipped and recorded; one whose Agent can no longer be picked, or whose Model is disabled, fails.
+_Avoid_: Trigger, occurrence, scheduled run, execution
+
 **Inbox**:
-Where every input to a Conversation waits, a User message, a Notification or further instructions to a Subagent, until its Run delivers them between two steps, in the order they arrived.
+Where every input to a Conversation waits, a User message, a Notification, a Timer's note or further instructions to a Subagent, until its Run delivers them between two steps, in the order they arrived.
 _Avoid_: Queue, mailbox, pending messages
 
 **Wake**:
@@ -97,7 +125,7 @@ Every Provider and Model Orqestra knows about, with their defaults such as conte
 _Avoid_: Preset, registry, template
 
 **Conversation**:
-An ordered series of messages between one User and the Agent, owned by and visible only to that User. A Subagent's Conversation is nested under the one that started it and is seen only through it.
+An ordered series of messages between one User and the Agent, owned by and visible only to that User. A Subagent's Conversation is nested under the one that started it and is seen only through it; one started by a Firing records which Scheduled Task started it, and otherwise is like any other.
 _Avoid_: Session, thread, chat
 
 **Attachment**:
@@ -105,12 +133,16 @@ A file in a Conversation's Sandbox that goes with a message: one the User upload
 _Avoid_: Upload, artifact, document
 
 **Turn**:
-One input, a user message or a Notification, and the Agent's reply to it, with the Model and thinking level picked for that input. Compaction never splits a Turn.
+One input, a user message, a Notification or a Timer's note, and the Agent's reply to it, with the Model and thinking level picked for that input. Compaction never splits a Turn.
 _Avoid_: Exchange, round
 
 **Run**:
-The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time; inputs that arrive meanwhile are delivered between its steps, and it ends only once none are left. Each Subagent runs in Runs of its own, and the User stopping a Conversation stops its Subagents too.
+The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time; inputs that arrive meanwhile are delivered between its steps, and it ends only once none are left. Each Subagent runs in Runs of its own, and the User stopping a Conversation stops its Subagents too and cancels its Timer.
 _Avoid_: Job, task, generation
+
+**Unattended Run**:
+A Run started by a Firing's prompt or a Timer's note, in a Conversation where no User message has arrived since, together with the Runs of the Subagents it starts. It stops after a limited number of steps or a limited time, set by the Admin, ending with what it has so far, and is never retried on its own. The User's next message in that Conversation makes its later Runs ordinary ones again.
+_Avoid_: Background run, headless run, autonomous run
 
 ### Memory
 

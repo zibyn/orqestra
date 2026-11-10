@@ -19,8 +19,12 @@ Now a Subagent is a **child Conversation** with Runs of its own, the way Claude 
 
 - A Subagent outlives the Run that started it. It ends when it finishes, when it is stopped, or when its Conversation is deleted. The starting Agent can continue a finished Subagent by sending it a message.
 - A Turn now starts from an input: a User message or a Notification. Retry and compaction treat both alike.
-- Still no nesting: a Subagent cannot start Subagents.
+- Still no nesting: a Subagent cannot start Subagents. (Superseded by the amendment below.)
 - The User's Stop stops the Conversation's Run and all its Subagents; their Notifications are delivered with the next User message instead of waking the Agent.
 - A User message sent while a Run is going waits in the inbox and is delivered between two steps, instead of being refused.
 - The User can view and stop a Subagent but not write to it, so its result always goes to the Agent that started it.
 - `subagent_wait` goes. Without a limit, Notifications could keep waking an Agent that keeps delegating, so each User message has a budget of Subagent starts and continuations.
+
+## Amendment (2026-11-10): nesting allowed
+
+Subagents may now start Subagents, down to a maximum depth the Admin sets in the console's Limits (default 2, from 1 to 3; 1 is the old behaviour); at the deepest level the Subagent Tools are withdrawn. The budget of starts and continuations and the limit of Subagents running at once are counted across the whole tree, on its root, and only a User message to the root renews the budget. A Subagent that still has Subagents running or queued is itself still running and sends no Notification until they have all ended. A stop, by the User or by `subagent_stop`, stops the whole subtree below the stopped Conversation. Subagents still cannot set Timers. See issue #59.
