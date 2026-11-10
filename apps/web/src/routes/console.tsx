@@ -11,6 +11,7 @@ import {
 	BotIcon,
 	BoxesIcon,
 	ContainerIcon,
+	GaugeIcon,
 	type LucideIcon,
 	PlugIcon,
 	SearchIcon,
@@ -60,7 +61,8 @@ type NavItem = {
 		| "/console/search"
 		| "/console/mcp"
 		| "/console/skills"
-		| "/console/sandbox";
+		| "/console/sandbox"
+		| "/console/limits";
 	label: () => string;
 	icon: LucideIcon;
 };
@@ -86,6 +88,10 @@ const nav: { label: () => string; items: NavItem[] }[] = [
 				icon: ContainerIcon,
 			},
 		],
+	},
+	{
+		label: m.limits,
+		items: [{ to: "/console/limits", label: m.limits, icon: GaugeIcon }],
 	},
 ];
 

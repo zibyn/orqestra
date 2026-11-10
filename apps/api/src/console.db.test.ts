@@ -33,7 +33,7 @@ describe.skipIf(!url)("the console through the api", () => {
 	// leaves only a default Agent, as the baseline does, also for the next package's tests
 	const reset = async () => {
 		await db.execute(
-			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, agent, skill cascade`,
+			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, agent, skill, limits cascade`,
 		);
 		await config.agents.save({
 			id: "general",
@@ -131,6 +131,24 @@ describe.skipIf(!url)("the console through the api", () => {
 		).toMatchObject({ url: "http://127.0.0.1:9", tokenReadable: true });
 		await call("DELETE", "/sandbox-provider");
 		expect((await call("GET", "/sandbox-provider")).body.provider).toBeNull();
+	});
+
+	it("saves the Limits, refusing a Subagent depth past 3", async () => {
+		const { limits } = (await call("GET", "/limits")).body;
+		expect(limits.maxSubagentDepth).toBe(2);
+		expect(
+			await call("PUT", "/limits", { ...limits, unattendedMaxSteps: 7 }),
+		).toEqual({ status: 200, body: { errors: {} } });
+		expect((await call("GET", "/limits")).body.limits).toEqual({
+			...limits,
+			unattendedMaxSteps: 7,
+		});
+		const refused = await call("PUT", "/limits", {
+			...limits,
+			maxSubagentDepth: 4,
+		});
+		expect(refused.status).toBe(422);
+		expect(Object.keys(refused.body.errors)).toEqual(["maxSubagentDepth"]);
 	});
 
 	it("saves an Agent Definition and deletes it", async () => {

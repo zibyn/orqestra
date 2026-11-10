@@ -13,7 +13,13 @@ import {
 } from "./memories.ts";
 import type { Recall } from "./recall.ts";
 import type { Ended } from "./runs.ts";
-import type { RunHandle, StreamEvent, Transcript, Turn } from "./serve.ts";
+import {
+	type RunHandle,
+	RunTimedOut,
+	type StreamEvent,
+	type Transcript,
+	type Turn,
+} from "./serve.ts";
 
 const unavailable = async (): Promise<never> => {
 	throw new Error("memoryRun has no Subagents: pass `subagents`");
@@ -29,6 +35,7 @@ export function memoryRun({
 	turn,
 	inbox = [],
 	isSubagent = false,
+	unattended = false,
 	incognito = false,
 	renamed = false,
 	subagents = { start: unavailable, message: unavailable, stop: unavailable },
@@ -41,6 +48,7 @@ export function memoryRun({
 	/** Inputs that arrive once the Run has begun. */
 	inbox?: Message[];
 	isSubagent?: boolean;
+	unattended?: boolean;
 	/** The Run's top-level Conversation is Incognito: the Run gets no Memories. */
 	incognito?: boolean;
 	renamed?: boolean;
@@ -69,6 +77,7 @@ export function memoryRun({
 	const run: RunHandle = {
 		conversationId: "memory",
 		isSubagent,
+		unattended,
 		turn,
 		transcript,
 		renamed,
@@ -112,6 +121,8 @@ export function memoryRun({
 		push: (...messages: Message[]) => pending.push(...messages),
 		/** Stops the Run, as the User would. */
 		stop: () => stopper.abort(),
+		/** Aborts an Unattended Run past its wall-clock time, as `serveRuns` does. */
+		timeOut: () => stopper.abort(new RunTimedOut(1)),
 		/** The last `finish` returned no input. */
 		get over() {
 			return over;

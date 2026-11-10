@@ -16,6 +16,8 @@ import type { JsonRpcMessage } from "@earendil-works/pi-mcp";
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import {
 	type AgentDefinition,
+	DEFAULT_LIMITS,
+	messageText,
 	type OrqestraConfig,
 	resolveTurn,
 } from "@orqestra/config";
@@ -79,6 +81,7 @@ const config = {
 	},
 	mcpServers: {},
 	skills: {},
+	limits: DEFAULT_LIMITS,
 };
 const turn = (agentId = "faux") => resolveTurn(config, agentId) as Turn;
 
@@ -293,6 +296,82 @@ describe("runAgent", () => {
 			{ outcome: "partial", result: "what I found" },
 		]);
 		expect(m.titles).toEqual([]);
+	});
+
+	describe("an Unattended Run", () => {
+		const searching = (n: number) =>
+			Array.from({ length: n }, (_, i) =>
+				fauxAssistantMessage([
+					fauxText(`step ${i + 1}`),
+					fauxToolCall("search", { query: "more" }),
+				]),
+			);
+		const limited = {
+			...deps(),
+			config: {
+				...config,
+				limits: { ...DEFAULT_LIMITS, unattendedMaxSteps: 3 },
+			},
+		};
+
+		it("makes its last request at the Limits' step cap without Tools, and ends partial", async () => {
+			let last: Context | undefined;
+			script([
+				...searching(2),
+				(context) => {
+					last = context;
+					return fauxAssistantMessage("what I found");
+				},
+			]);
+			const m = memoryRun({
+				transcript: transcript(user("check the build")),
+				turn: turn(),
+				unattended: true,
+			});
+			await runAgent(m.run, limited);
+
+			expect(JSON.stringify(last?.messages)).toContain("step limit");
+			expect(last?.tools ?? []).toEqual([]);
+			expect(m.outcomes).toEqual([
+				{ outcome: "partial", result: "what I found" },
+			]);
+			expect(m.over).toBe(true);
+		});
+
+		it("ends partial when it runs out of time, keeping what was generated", async () => {
+			const long = "word ".repeat(2000);
+			script([fauxAssistantMessage(long)]);
+			const m = memoryRun({
+				transcript: transcript(user("write a lot")),
+				turn: turn(),
+				unattended: true,
+			});
+			const stream = m.run.stream;
+			m.run.stream = async (event) => {
+				if (event.type === "delta") m.timeOut();
+				await stream(event);
+			};
+			await runAgent(m.run, limited);
+
+			expect((m.saved[0] as AssistantMessage).stopReason).toBe("aborted");
+			expect(m.outcomes).toEqual([
+				{ outcome: "partial", result: expect.stringContaining("word") },
+			]);
+		});
+
+		it("is no limit on an attended Run", async () => {
+			script([...searching(4), fauxAssistantMessage("all done")]);
+			const m = memoryRun({
+				transcript: transcript(user("dig")),
+				turn: turn(),
+			});
+			await runAgent(m.run, limited);
+
+			expect(
+				m.saved.filter((s) => s.role === "assistant").map(messageText),
+			).toEqual(["step 1", "step 2", "step 3", "step 4", "all done"]);
+			expect(m.outcomes).toEqual([undefined]);
+		});
 	});
 
 	it("delivers a message sent while running at the next step boundary, into the model's context", async () => {

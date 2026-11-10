@@ -64,7 +64,7 @@ export {
 	type Recalled,
 } from "./recall.ts";
 export type { ConversationEvent, Ended } from "./runs.ts";
-export { MAX_SUBAGENTS } from "./runs.ts";
+export { MAX_SUBAGENTS, queueInput } from "./runs.ts";
 export { ensureSandbox } from "./sandbox.ts";
 export {
 	BudgetExceeded,
@@ -74,6 +74,7 @@ export {
 	NoSuchTemplate,
 	type RunHandle,
 	type RunHandler,
+	RunTimedOut,
 	type StreamEvent,
 	TemplateOffline,
 	type Transcript,
@@ -238,6 +239,7 @@ export function createConversations({
 						model: message.model,
 						thinkingLevel: message.thinkingLevel,
 						subagentId: message.subagentId,
+						origin: message.origin,
 						queued: sql<boolean>`false`,
 					})
 					.from(message)
@@ -251,6 +253,7 @@ export function createConversations({
 						model: inbox.model,
 						thinkingLevel: inbox.thinkingLevel,
 						subagentId: inbox.subagentId,
+						origin: inbox.origin,
 						// its id is the inbox's, not a message's
 						queued: sql<boolean>`true`,
 					})
@@ -408,10 +411,10 @@ export function createConversations({
 				// while a Run goes, it delivers this at its next step boundary; the lock keeps it from going idle past it
 				if (id) {
 					await lockRoot(tx, id);
-					// a User message renews the Agent's Subagent budget
+					// a User message renews the Agent's Subagent budget, and the User is back: Runs are attended again
 					await tx
 						.update(conversation)
-						.set({ subagentsSinceUser: 0 })
+						.set({ subagentsSinceUser: 0, unattended: false })
 						.where(eq(conversation.id, id));
 				} else {
 					[{ id }] = await tx

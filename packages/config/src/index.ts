@@ -94,6 +94,8 @@ export interface Settings {
 		cpu: number;
 		memory: number;
 	};
+	/** Omitted when none were saved: DEFAULT_LIMITS. */
+	limits?: Limits;
 	/** Every Skill with its current version. */
 	skills: {
 		name: string;
@@ -103,6 +105,30 @@ export interface Settings {
 		disableModelInvocation: boolean;
 	}[];
 }
+
+/** The Limits an Admin sets in /console/limits; durations in seconds. */
+export interface Limits {
+	maxScheduledTasksPerUser: number;
+	/** The shortest interval between two Firings of a recurring Scheduled Task. */
+	minFiringInterval: number;
+	timerRingsPerUserMessage: number;
+	/** Model requests an Unattended Run may make; the last one, without Tools, is for its final answer. */
+	unattendedMaxSteps: number;
+	/** Wall-clock time an Unattended Run may take before it is aborted. */
+	unattendedMaxDuration: number;
+	/** 1 to 3. */
+	maxSubagentDepth: number;
+}
+
+/** The Limits until an Admin saves them. */
+export const DEFAULT_LIMITS: Limits = {
+	maxScheduledTasksPerUser: 10,
+	minFiringInterval: 60 * 60,
+	timerRingsPerUserMessage: 10,
+	unattendedMaxSteps: 50,
+	unattendedMaxDuration: 30 * 60,
+	maxSubagentDepth: 2,
+};
 
 /** A Skill Runs can use; read its files with `skillFiles(versionId)`. */
 export interface SkillInfo {
@@ -127,6 +153,7 @@ export interface OrqestraConfig {
 	skills: Record<string, SkillInfo>;
 	/** Undefined when none is configured or its token cannot be decrypted: every Skill is then unavailable. */
 	sandboxProvider?: SandboxProvider;
+	limits: Limits;
 	/** pi's streamSimple with the Provider's configured API key. */
 	streamSimple: StreamSimple;
 }
@@ -293,6 +320,7 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		mcpServers,
 		skills,
 		sandboxProvider,
+		limits: settings.limits ?? DEFAULT_LIMITS,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);
 			if (provider && provider.apiKey === undefined)

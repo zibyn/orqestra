@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { db, type Tx } from "@orqestra/db";
-import { conversation, inbox, message, subagent } from "@orqestra/db/schema";
+import {
+	conversation,
+	type InputOrigin,
+	inbox,
+	message,
+	subagent,
+} from "@orqestra/db/schema";
 import { createPostgresBackend, Queue } from "bullmq";
 import { and, asc, count, desc, eq, exists, inArray, sql } from "drizzle-orm";
 
@@ -171,6 +177,23 @@ export async function ensureRun(conversationId: string) {
 	return true;
 }
 
+/**
+ * Under the root's lock (which `tx` holds): puts an input sent by a Scheduled Task or delivered by a Timer in the inbox, as a wake input,
+ * and makes the Conversation's Runs Unattended Runs until the User's next message. The caller then calls `ensureRun`.
+ */
+export async function queueInput(
+	tx: Tx,
+	input: Omit<typeof inbox.$inferInsert, "wake" | "subagentId"> & {
+		origin: InputOrigin;
+	},
+) {
+	await tx.insert(inbox).values({ ...input, wake: true });
+	await tx
+		.update(conversation)
+		.set({ unattended: true })
+		.where(eq(conversation.id, input.conversationId));
+}
+
 /** The Model and thinking level of a Conversation's latest message: an input to it without a pick of its own goes on with them. */
 export async function lastModel(tx: Tx, conversationId: string) {
 	const [last] = await tx
@@ -339,6 +362,7 @@ export async function drain(
 					model: i.model,
 					thinkingLevel: i.thinkingLevel,
 					subagentId: i.subagentId,
+					origin: i.origin,
 				})),
 			);
 		else if (typeof finish === "function")

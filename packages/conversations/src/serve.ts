@@ -73,6 +73,14 @@ export class TemplateOffline extends Error {
 	}
 }
 
+/** The reason an Unattended Run's signal aborts with once it has run past the Limits' wall-clock time: a stop, but not the User's. */
+export class RunTimedOut extends Error {
+	override name = "RunTimedOut";
+	constructor(readonly seconds: number) {
+		super(`The unattended Run ran past its ${seconds}-second limit`);
+	}
+}
+
 export type Turn = NonNullable<ReturnType<typeof resolveTurn>>;
 export type TranscriptMessage = {
 	id: number;
@@ -93,12 +101,17 @@ export type StreamEvent =
 export type RunHandle = {
 	conversationId: string;
 	isSubagent: boolean;
+	/**
+	 * Nobody is watching: an Unattended Run, under the Limits' step cap; past their wall-clock time its signal aborts with RunTimedOut.
+	 * Judged as the Run starts, from its top-level Conversation.
+	 */
+	unattended: boolean;
 	/** The Agent, Model and thinking level replying; a Subagent without instructions of its own gets the general worker's. */
 	turn: Turn;
 	transcript: Transcript;
 	/** The User renamed the Conversation: it is not to be titled. */
 	renamed: boolean;
-	/** Aborts when the Run is stopped. */
+	/** Aborts when the Run is stopped, with RunTimedOut when an Unattended Run ran out of time. */
 	signal: AbortSignal;
 	/** Inputs that arrived since, in order, now part of the transcript; empty when none did. */
 	deliver(): Promise<Message[]>;
@@ -113,7 +126,7 @@ export type RunHandle = {
 	): Promise<void>;
 	/**
 	 * Ends the reply: returns the inputs that arrived meanwhile, to reply to next, or none, and the Run is over.
-	 * A Subagent reports its `outcome`; a stopped Run is over whatever it reports.
+	 * A Subagent reports its `outcome`, and so does an Unattended Run; a stopped Run is over whatever it reports, a timed-out Subagent ending partial.
 	 */
 	finish(outcome?: Ended): Promise<Message[]>;
 	/** Names the Conversation, unless the User renamed it meanwhile. */
@@ -182,9 +195,14 @@ async function spend(tx: Tx, conversationId: string, more: number) {
 async function stopped(
 	conv: { id: string; parentId: string | null },
 	result: string,
+	signal: AbortSignal,
 ) {
+	// out of time is no stop of the User's: the parent gets what it has
 	if (conv.parentId)
-		return endSubagent(conv.id, { outcome: "stopped", result });
+		return endSubagent(conv.id, {
+			outcome: signal.reason instanceof RunTimedOut ? "partial" : "stopped",
+			result,
+		});
 	await stopSubagents(conv.id);
 	await endRun(conv.id, "idle");
 }
@@ -222,6 +240,7 @@ async function execute(
 	const emit = (event: ConversationEvent) =>
 		notify(conv.parentId ?? conversationId, event);
 	let over = false;
+	let clock: ReturnType<typeof setTimeout> | undefined;
 	try {
 		if (sub) {
 			const row = await db.query.subagent.findFirst({
@@ -230,20 +249,42 @@ async function execute(
 			if (row?.outcome === "stopped") stop.abort(); // stopped while queued
 		}
 		const cfg = await config();
-		const run = await open(cfg, conv, stop.signal, emit, () => {
-			over = true;
-		});
+		// a Subagent goes by its parent: Subagents start no Subagents, so that is the top-level Conversation
+		const root = conv.parentId
+			? await db.query.conversation.findFirst({
+					where: eq(conversation.id, conv.parentId),
+				})
+			: conv;
+		const unattended = !!root?.unattended;
+		if (unattended) {
+			const seconds = cfg.limits.unattendedMaxDuration;
+			clock = setTimeout(
+				() => stop.abort(new RunTimedOut(seconds)),
+				seconds * 1000,
+			);
+		}
+		const run = await open(
+			cfg,
+			conv,
+			{ incognito: !!root?.incognito, unattended },
+			stop.signal,
+			emit,
+			() => {
+				over = true;
+			},
+		);
 		await handler(run, cfg);
 		if (!over && !stop.signal.aborted)
 			throw new Error("The Run ended without finishing");
-		if (!over) await stopped(conv, "");
+		if (!over) await stopped(conv, "", stop.signal);
 	} catch (error) {
 		// stopped before the reply was saved (while compacting, say): nothing to save
-		if (stop.signal.aborted && !over) return stopped(conv, "");
+		if (stop.signal.aborted && !over) return stopped(conv, "", stop.signal);
 		// the failed reply's live copy goes
 		await emit({ type: "end", subagent: sub });
 		throw error;
 	} finally {
+		clearTimeout(clock);
 		// the next Run of this Conversation may have begun meanwhile, while this one titled it
 		if (active.get(conversationId) === stop) active.delete(conversationId);
 	}
@@ -252,6 +293,7 @@ async function execute(
 async function open(
 	cfg: OrqestraConfig,
 	conv: typeof conversation.$inferSelect,
+	root: { incognito: boolean; unattended: boolean },
 	signal: AbortSignal,
 	emit: (event: ConversationEvent) => Promise<unknown>,
 	end: () => void,
@@ -294,19 +336,12 @@ async function open(
 		orderBy: desc(compaction.id),
 	});
 	const saved = () => emit({ type: "saved" });
-	// a Subagent goes by its parent: Subagents start no Subagents, so that is the top-level Conversation
-	const incognito = conv.parentId
-		? !!(
-				await db.query.conversation.findFirst({
-					columns: { incognito: true },
-					where: eq(conversation.id, conv.parentId),
-				})
-			)?.incognito
-		: conv.incognito;
+	const { incognito, unattended } = root;
 
 	return {
 		conversationId,
 		isSubagent: !!sub,
+		unattended,
 		turn,
 		transcript: {
 			messages: rows.map((r) => ({
@@ -355,7 +390,7 @@ async function open(
 		async finish(outcome) {
 			if (signal.aborted) {
 				end();
-				await stopped(conv, outcome?.result ?? "");
+				await stopped(conv, outcome?.result ?? "", signal);
 				return [];
 			}
 			const next = (await drain(

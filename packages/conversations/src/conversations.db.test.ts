@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
 	type AgentDefinition,
+	DEFAULT_LIMITS,
 	GENERAL_WORKER,
 	messageText,
 	type OrqestraConfig,
@@ -34,6 +35,7 @@ const {
 	BudgetExceeded,
 	createConversations,
 	MAX_SUBAGENTS,
+	RunTimedOut,
 	MAX_SUBAGENTS_PER_USER_MESSAGE,
 	userMemories,
 } = await import("./index.ts");
@@ -85,6 +87,7 @@ const config = {
 		},
 	},
 	sandboxProvider: provider,
+	limits: { ...DEFAULT_LIMITS },
 } as unknown as OrqestraConfig;
 /** Each Skill version's SKILL.md, as the test has it now. */
 const skillMds = new Map<number, string>();
@@ -1434,6 +1437,115 @@ describe.skipIf(!url)(
 					(await conversations.list(userId)).map((c) => [c.id, c.incognito]),
 				),
 			).toEqual({ [id]: true, [started]: true, [plain]: false });
+		});
+
+		describe("Unattended Runs", () => {
+			afterAll(() => {
+				config.limits = { ...DEFAULT_LIMITS };
+			});
+			/** As a Scheduled Task or a Timer would: an input with an origin, under the root's lock. */
+			const queued = async (id: string, text: string) => {
+				await db.transaction(async (tx) => {
+					await runs.lockRoot(tx, id);
+					await runs.queueInput(tx, {
+						conversationId: id,
+						message: { role: "user", content: text, timestamp: Date.now() },
+						model: "faux/faux-1",
+						thinkingLevel: "off",
+						origin: "timer",
+					});
+				});
+				await runs.ensureRun(id);
+			};
+
+			it("are a Conversation's Runs, its Subagents' included, from an input with an origin until the User's next message", async () => {
+				const seen: boolean[] = [];
+				const note =
+					(then: string | Call[]): Step =>
+					({ run }) => {
+						seen.push(run.unattended);
+						return then;
+					};
+				script({
+					parent: [
+						note("hi"),
+						note([start("look")]),
+						say("started"),
+						note("done"),
+						note("again"),
+					],
+					sub: [note("found")],
+				});
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(2));
+				await queued(id, "check the build");
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle" && seen.length === 4,
+				);
+				await send("thanks", id);
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle" && seen.length === 5,
+				);
+				expect(seen).toEqual([false, true, true, true, false]);
+				const origins = (await get(id))?.messages
+					.filter((m) => m.message.role === "user")
+					.map((m) => m.origin);
+				expect(origins).toEqual([null, "timer", null, null]);
+			});
+
+			it("are aborted past the wall-clock limit, as a stop that is no User's, and end partial; attended Runs are not", async () => {
+				config.limits = { ...DEFAULT_LIMITS, unattendedMaxDuration: 1 };
+				let reason: unknown;
+				let outcome: string | undefined;
+				script({
+					parent: [
+						say("hi"),
+						call(start("dig")),
+						say("started"),
+						async ({ run }) => {
+							await untilAborted(run.signal);
+							reason = run.signal.reason;
+							return "half";
+						},
+						// an attended Run taking longer than the limit
+						async () => {
+							await new Promise((r) => setTimeout(r, 1500));
+							return "slow but whole";
+						},
+					],
+					sub: [
+						async ({ run }) => {
+							await untilAborted(run.signal);
+							outcome =
+								run.signal.reason instanceof RunTimedOut
+									? "timed out"
+									: "stopped";
+							return "part of it";
+						},
+					],
+				});
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(2));
+				await queued(id, "dig in the background");
+				// the Subagent's Notification wakes the parent as a partial result, and that Run is timed out too
+				const view = await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle" && v.messages.length === 8,
+				);
+				expect(outcome).toBe("timed out");
+				expect(view?.subagents.map((s) => s.outcome)).toEqual(["partial"]);
+				expect(messageText(view?.messages[6].message as Message)).toContain(
+					'status="partial"',
+				);
+				expect(reason).toBeInstanceOf(RunTimedOut);
+				await send("take your time", id);
+				const attended = await waitFor(() => get(id), idle(10));
+				expect(messageText(attended?.messages[9].message as Message)).toBe(
+					"slow but whole",
+				);
+			});
 		});
 
 		it("hides a Conversation from everyone but its owner", async () => {

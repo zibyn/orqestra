@@ -8,7 +8,7 @@ const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
 const { config, liveConfig } = await import("./live.ts");
 const { catalogProviders } = await import("./index.ts");
-const { skillFiles } = await import("./live.ts");
+const { skillFiles, limitsInput } = await import("./live.ts");
 const { zip } = await import("./test-zip.ts");
 
 const general = {
@@ -42,7 +42,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 	// leaves only a default Agent, as the baseline does, also for the next package's tests
 	const reset = async () => {
 		await db.execute(
-			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, agent, skill cascade`,
+			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, agent, skill, limits cascade`,
 		);
 		await config.agents.save({
 			id: "general",
@@ -547,6 +547,41 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 			await config.sandboxProvider.delete();
 			expect(await config.sandboxProvider.get()).toBeNull();
 			expect((await config.current()).sandboxProvider).toBeUndefined();
+		});
+	});
+
+	describe("Limits", () => {
+		const defaults = {
+			maxScheduledTasksPerUser: 10,
+			minFiringInterval: 3600,
+			timerRingsPerUserMessage: 10,
+			unattendedMaxSteps: 50,
+			unattendedMaxDuration: 1800,
+			maxSubagentDepth: 2,
+		};
+
+		it("are the defaults until an Admin saves them, and Runs read the saved ones at once", async () => {
+			expect(await config.limits.get()).toEqual(defaults);
+			expect((await config.current()).limits).toEqual(defaults);
+			const changed = {
+				...defaults,
+				unattendedMaxSteps: 5,
+				maxSubagentDepth: 3,
+			};
+			expect(await config.limits.save(changed)).toEqual({ errors: {} });
+			expect(await config.limits.get()).toEqual(changed);
+			expect((await config.current()).limits).toEqual(changed);
+		});
+
+		it("refuse a maximum Subagent depth outside 1 to 3, and counts below 1", () => {
+			for (const maxSubagentDepth of [0, 4])
+				expect(
+					limitsInput.safeParse({ ...defaults, maxSubagentDepth }).success,
+				).toBe(false);
+			expect(
+				limitsInput.safeParse({ ...defaults, unattendedMaxSteps: 0 }).success,
+			).toBe(false);
+			expect(limitsInput.safeParse(defaults).success).toBe(true);
 		});
 	});
 

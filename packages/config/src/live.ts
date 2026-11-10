@@ -2,6 +2,7 @@ import { db } from "@orqestra/db";
 import {
 	agent,
 	enabledModel,
+	limits,
 	mcpServer,
 	provider,
 	sandboxProvider,
@@ -11,7 +12,7 @@ import {
 } from "@orqestra/db/schema";
 import { availableTools } from "@orqestra/tools";
 import { eq, sql } from "drizzle-orm";
-import { admin, servedBy } from "./admin.ts";
+import { admin, limitsInput, servedBy } from "./admin.ts";
 import {
 	loadConfig,
 	modelRef,
@@ -28,6 +29,7 @@ const CONFIG_CHANNEL = "config_changed";
 export type { McpTestResult, SandboxTestResult } from "@orqestra/tools";
 export {
 	agentInput,
+	limitsInput,
 	mcpServerEnabledInput,
 	mcpServerInput,
 	modelEnabledInput,
@@ -56,6 +58,7 @@ async function loadSettings(): Promise<Settings> {
 		agents,
 		skills,
 		[sandbox],
+		[saved],
 	] = await Promise.all([
 		db.select().from(provider),
 		db.select().from(enabledModel),
@@ -75,6 +78,7 @@ async function loadSettings(): Promise<Settings> {
 			.innerJoin(skillVersion, eq(skill.currentVersionId, skillVersion.id))
 			.orderBy(skill.name),
 		db.select().from(sandboxProvider),
+		db.select().from(limits),
 	]);
 	return {
 		providers: providers.map((p) => ({
@@ -103,6 +107,8 @@ async function loadSettings(): Promise<Settings> {
 			})),
 		})),
 		skills,
+		// a stored row, read again by limitsInput so a bad one fails the load like a bad Agent Definition
+		limits: saved && limitsInput.parse(saved),
 		sandboxProvider: sandbox && {
 			url: sandbox.url,
 			token: decryptSecret(sandbox.token, key),

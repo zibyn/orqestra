@@ -2,6 +2,7 @@ import { db, type Tx } from "@orqestra/db";
 import {
 	agent,
 	enabledModel,
+	limits,
 	mcpServer,
 	provider,
 	sandboxProvider,
@@ -24,6 +25,7 @@ import {
 	agentDefinition,
 	agentId,
 	catalogProviders,
+	DEFAULT_LIMITS,
 	definitionIssues,
 	mcpServerId,
 	mcpToolRef,
@@ -135,6 +137,17 @@ export const sandboxProviderInput = z.object({
 	cpu: z.number().positive(),
 	/** Bytes. */
 	memory: z.number().int().positive(),
+});
+const count = z.number().int().positive();
+export const limitsInput = z.object({
+	maxScheduledTasksPerUser: count,
+	/** Seconds. */
+	minFiringInterval: count,
+	timerRingsPerUserMessage: count,
+	unattendedMaxSteps: count,
+	/** Seconds. */
+	unattendedMaxDuration: count,
+	maxSubagentDepth: z.number().int().min(1).max(3),
 });
 export const agentInput = z.object({
 	id: agentId,
@@ -661,6 +674,29 @@ const sandboxProviders = ({ write }: Deps) => ({
 	delete: () => write((tx) => tx.delete(sandboxProvider)),
 });
 
+// one row, with a fixed id
+const limitsOf = ({ write }: Deps) => ({
+	/** As saved, or the defaults. */
+	async get() {
+		const row = await db.query.limits.findFirst();
+		if (!row) return DEFAULT_LIMITS;
+		const { id: _, ...saved } = row;
+		return saved;
+	},
+	/** The next Run reads them. */
+	async save(
+		input: z.infer<typeof limitsInput>,
+	): Promise<{ errors: SaveErrors }> {
+		await write((tx) =>
+			tx
+				.insert(limits)
+				.values({ id: 1, ...input })
+				.onConflictDoUpdate({ target: limits.id, set: input }),
+		);
+		return { errors: {} };
+	},
+});
+
 const isDefault = (stored: { definition: unknown } | undefined) =>
 	!!stored && agentDefinition.parse(stored.definition).default;
 
@@ -760,6 +796,7 @@ export const admin = (deps: Deps) => ({
 	searchProviders: searchProviders(deps),
 	mcpServers: mcpServers(deps),
 	sandboxProvider: sandboxProviders(deps),
+	limits: limitsOf(deps),
 	agents: agents(deps),
 	skills: skills(deps),
 });

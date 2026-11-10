@@ -6,6 +6,7 @@ import { agents } from "./agents.ts";
 import { conversationRoutes, notFound } from "./conversations.ts";
 import { download, upload } from "./files.ts";
 import type { User } from "./identity.ts";
+import { limits } from "./limits.ts";
 import { mcpServers } from "./mcp-servers.ts";
 import { memoryRoutes } from "./memories.ts";
 import { providers } from "./providers.ts";
@@ -80,6 +81,7 @@ export function createApp({
 				.use(searchProviders(user))
 				.use(mcpServers(user))
 				.use(sandboxProvider(user))
+				.use(limits(user))
 				.use(agents(user))
 				.derive(signedInOnly)
 				.get("/session", ({ user }) => user)
