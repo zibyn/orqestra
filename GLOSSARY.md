@@ -167,7 +167,7 @@ _Avoid_: Background run, headless run, autonomous run
 ### Memory
 
 **Memory**:
-One note an Agent keeps about a User across Conversations, such as a preference, a fact about them or work in progress, written by the Agent during a Run and shaped like a file: a path, a short description and a Markdown body. Memories belong to the User, not to an Agent: every Agent whose Agent Definition turns memory on reads and writes the same ones, while a Subagent can only read them. A Memory never expires; the Agent updates or deletes it when it turns out stale or wrong. Only the User can see, edit and delete their Memories, not even an Admin; turning memory off leaves them unused until it is turned back on, and they outlive the Conversation that wrote them.
+One note an Agent keeps about a User across Conversations, such as a preference, a fact about them or work in progress, written by the Agent during a Run and shaped like a file: a path, a short description and a Markdown body. Memories belong to the User, not to an Agent: every Agent whose Agent Definition turns memory on reads and writes the same ones, while a Subagent can only read them. A Memory never expires; the Agent updates or deletes it when it turns out stale or wrong. Only the User can see, edit and delete their Memories, and Orqestra offers an Admin no view of them; turning memory off leaves them unused until it is turned back on, and they outlive the Conversation that wrote them.
 _Avoid_: Fact, profile, note, knowledge
 
 **Memory Index**:
