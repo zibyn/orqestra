@@ -1,4 +1,4 @@
-// An orrery client kept in memory, for testing what uses Sandboxes without an orrery.
+// An orrery client and object storage kept in memory, for testing what uses Sandboxes and Attachments without an orrery or S3.
 import {
 	type Exec,
 	type Frame,
@@ -6,6 +6,7 @@ import {
 	OrreryError,
 	type SandboxState,
 } from "./orrery.ts";
+import type { ObjectStore } from "./store.ts";
 
 type Ran = {
 	stdout?: string;
@@ -202,4 +203,29 @@ export function memoryOrrery({
 			down = value;
 		},
 	};
+}
+
+/** Object storage kept in memory, by key; `objects` shows what it holds. */
+export function memoryStore() {
+	const objects = new Map<string, Uint8Array<ArrayBuffer>>();
+	const store: ObjectStore = {
+		put: async (key, body) => {
+			// a stream that fails midway stores nothing
+			objects.set(key, new Uint8Array(await new Response(body).arrayBuffer()));
+		},
+		get: async (key) => {
+			const bytes = objects.get(key);
+			return (
+				bytes && {
+					body: new Response(bytes).body as ReadableStream<Uint8Array>,
+					size: bytes.length,
+				}
+			);
+		},
+		deletePrefix: async (prefix) => {
+			for (const key of objects.keys())
+				if (key.startsWith(prefix)) objects.delete(key);
+		},
+	};
+	return { store, objects };
 }

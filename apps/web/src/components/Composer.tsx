@@ -40,7 +40,7 @@ export const levelLabels: Record<Level, () => string> = {
 
 /**
  * Message input with the Agent (new Conversations only), Model and thinking pickers; a picker with one option is hidden.
- * Agents with a Sandbox take attachments, which `onSend` uploads.
+ * Attachments are picked here; `onSend` uploads them.
  */
 export function Composer({
 	agents,
@@ -77,8 +77,6 @@ export function Composer({
 		picked.thinking && model.thinking.allowed.includes(picked.thinking)
 			? picked.thinking
 			: model.thinking.default;
-	// picked for an Agent with a Sandbox, then another picked: they stay out of the message
-	const attached = agent.attachments ? files : [];
 	// `/` then the start of `skill:name`, before any space, lists the Skills it matches
 	const typed = /^\/(\S*)$/.exec(text)?.[1];
 	const matches =
@@ -105,7 +103,7 @@ export function Composer({
 					setSending(true);
 					setError("");
 					try {
-						await onSend({ text, model: model.ref, thinking, files: attached });
+						await onSend({ text, model: model.ref, thinking, files });
 						setText("");
 						setFiles([]);
 					} catch (e) {
@@ -170,9 +168,9 @@ export function Composer({
 						}
 					}}
 				/>
-				{attached.length > 0 && (
+				{files.length > 0 && (
 					<PromptInputHeader aria-label={m.attachments()} role="list">
-						{attached.map((file, i) => (
+						{files.map((file, i) => (
 							<Attachment
 								// biome-ignore lint/suspicious/noArrayIndexKey: two picks of one file share every other key
 								key={i}
@@ -199,35 +197,31 @@ export function Composer({
 					</PromptInputHeader>
 				)}
 				<PromptInputFooter>
-					{agent.attachments && (
-						<>
-							<input
-								ref={picker}
-								type="file"
-								multiple
-								hidden
-								onChange={(e) => {
-									const picked = [...(e.target.files ?? [])];
-									e.target.value = "";
-									const big = picked.find((f) => f.size > MAX_UPLOAD_BYTES);
-									setError(big ? tooLarge(big) : "");
-									setFiles([
-										...files,
-										...picked.filter((f) => f.size <= MAX_UPLOAD_BYTES),
-									]);
-								}}
-							/>
-							<InputGroupButton
-								size="icon-sm"
-								variant="outline"
-								className="rounded-full"
-								aria-label={m.attach_files()}
-								onClick={() => picker.current?.click()}
-							>
-								<PlusIcon />
-							</InputGroupButton>
-						</>
-					)}
+					<input
+						ref={picker}
+						type="file"
+						multiple
+						hidden
+						onChange={(e) => {
+							const picked = [...(e.target.files ?? [])];
+							e.target.value = "";
+							const big = picked.find((f) => f.size > MAX_UPLOAD_BYTES);
+							setError(big ? tooLarge(big) : "");
+							setFiles([
+								...files,
+								...picked.filter((f) => f.size <= MAX_UPLOAD_BYTES),
+							]);
+						}}
+					/>
+					<InputGroupButton
+						size="icon-sm"
+						variant="outline"
+						className="rounded-full"
+						aria-label={m.attach_files()}
+						onClick={() => picker.current?.click()}
+					>
+						<PlusIcon />
+					</InputGroupButton>
 					{onAgentChange && agents.length > 1 && (
 						<PromptInputMenu
 							label={m.agent()}

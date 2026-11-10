@@ -15,6 +15,7 @@ import {
 import type { MemoryChange } from "@orqestra/config/shared";
 import { db } from "@orqestra/db";
 import {
+	attachment,
 	compaction,
 	conversation,
 	inbox,
@@ -23,11 +24,12 @@ import {
 	timer,
 } from "@orqestra/db/schema";
 import {
+	type ObjectStore,
 	OrreryError,
 	orrery as orreryClient,
 	workspacePath,
 } from "@orqestra/tools";
-import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import { alerts } from "./alerts.ts";
 import { MEMORY_CHANGES, undoChange } from "./memories.ts";
@@ -48,7 +50,12 @@ import { ensureSandbox, SandboxGone, wakeSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 import { tasksOf } from "./tasks.ts";
 import { cancelTimer } from "./timers.ts";
-import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
+import {
+	copyUploads,
+	safeFileName,
+	storeUpload,
+	uploadPath,
+} from "./uploads.ts";
 
 export { MAX_UPLOAD_BYTES } from "@orqestra/config";
 export {
@@ -137,13 +144,16 @@ export function createConversations({
 	config,
 	skillFiles,
 	orrery = orreryClient,
+	store,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
 	/** A Skill version's files, read when a User invokes it. */
 	skillFiles: (versionId: number) => Promise<SkillFile[]>;
-	/** The Sandbox Provider's client, for deleting Sandboxes and uploading attachments; tests pass a fake. */
+	/** The Sandbox Provider's client, for deleting Sandboxes and copying attachments into them; tests pass a fake. */
 	orrery?: typeof orreryClient;
+	/** Object storage, where Attachments are kept; tests pass `memoryStore()`. */
+	store: ObjectStore;
 }) {
 	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
 	async function expandSkill(
@@ -212,7 +222,6 @@ export function createConversations({
 					description: a.description,
 					default: a.default,
 					pickable: a.pickable,
-					attachments: !!cfg.sandboxProvider,
 					defaultModel: a.defaultModel,
 					// the User may invoke those the Agent may not
 					skills: turnSkills(cfg, a).map(({ name, description }) => ({
@@ -363,9 +372,9 @@ export function createConversations({
 		},
 
 		/**
-		 * Streams one attachment into the Conversation's Sandbox (creating or waking it) as `/workspace/uploads/<name>`,
-		 * renamed when the name is taken; returns its name and path. Undefined when the Conversation is not the user's.
-		 * Throws UploadTooLarge past MAX_UPLOAD_BYTES, and whatever the Sandbox Provider fails with.
+		 * Streams one attachment into object storage, to go with a message sent later, renamed when the name is taken in the Conversation;
+		 * returns its name. Undefined when the Conversation is not the user's.
+		 * Throws UploadTooLarge past MAX_UPLOAD_BYTES, and whatever object storage fails with.
 		 */
 		async upload(
 			userId: string,
@@ -377,20 +386,13 @@ export function createConversations({
 			const conv = await owned(userId, id);
 			// a Subagent's Conversation is the Agent's to write to, not the User's
 			if (!conv || conv.parentId) return undefined;
-			const cfg = await config();
-			const turn = resolveTurn(cfg, conv.agentId);
-			if (!turn || !cfg.sandboxProvider)
+			if (!resolveTurn(await config(), conv.agentId))
 				throw new ConversationError(
-					"This Agent takes no attachments",
+					"This Agent is offline",
 					"file",
-					"no_attachments",
+					"agent_offline",
 				);
-			// orrery's 65-second request timeout is too short to stream 50 MB from a slow browser
-			const client = orrery({ ...cfg.sandboxProvider, timeoutMs: 10 * 60_000 });
-			const sandbox = await ensureSandbox(id, client, cfg.sandboxProvider, {
-				signal,
-			});
-			return writeUpload(client, sandbox.id, name, body, { signal });
+			return storeUpload(store, conv, name, body, { signal });
 		},
 
 		/** Puts a user message in the inbox (starting a Conversation when there is no id) and has the Agent reply. */
@@ -402,21 +404,20 @@ export function createConversations({
 				text: string;
 				model?: string;
 				thinking?: ThinkingLevel;
-				/** Names `upload` returned; the message gives the Agent their paths. */
+				/** Names `upload` returned; with a Sandbox Provider they are copied into the Sandbox before the Agent sees the message. */
 				attachments?: string[];
 				/** Starts an Incognito Conversation; an existing one keeps what it started as. */
 				incognito?: boolean;
 			},
 		) {
-			const attachments = (input.attachments ?? []).map((name) => {
-				if (safeFileName(name) !== name)
-					throw new ConversationError(
-						"Not an attachment's name",
-						"attachments",
-						"not_attachment",
-					);
-				return { name, path: uploadPath(name) };
-			});
+			const names = [...new Set(input.attachments)];
+			const notAttachment = new ConversationError(
+				"Not an attachment's name",
+				"attachments",
+				"not_attachment",
+			);
+			if (names.some((name) => safeFileName(name) !== name))
+				throw notAttachment;
 			const cfg = await config();
 			const existing = input.conversationId
 				? await owned(userId, input.conversationId)
@@ -445,6 +446,30 @@ export function createConversations({
 					"agent_not_pickable",
 				);
 			const content = await expandSkill(cfg, turn.agent, input.text);
+			const rows =
+				existing && names.length
+					? await db
+							.select()
+							.from(attachment)
+							.where(
+								and(
+									eq(attachment.conversationId, existing.id),
+									inArray(attachment.name, names),
+								),
+							)
+					: [];
+			if (rows.length !== names.length) throw notAttachment;
+			const attachments = names.map((name) => ({
+				name,
+				path: uploadPath(name),
+			}));
+			const provider = cfg.sandboxProvider;
+			if (existing && rows.length && provider) {
+				// orrery's 65-second request timeout is too short to copy 50 MB
+				const client = orrery({ ...provider, timeoutMs: 10 * 60_000 });
+				const sandbox = await ensureSandbox(existing.id, client, provider);
+				await copyUploads(store, client, sandbox.id, rows);
+			}
 
 			const conversationId = await db.transaction(async (tx) => {
 				let id = existing?.id;
@@ -467,6 +492,16 @@ export function createConversations({
 						.values({ userId, agentId, incognito: input.incognito })
 						.returning({ id: conversation.id });
 				}
+				if (rows.length)
+					await tx
+						.update(attachment)
+						.set({ sent: true })
+						.where(
+							inArray(
+								attachment.id,
+								rows.map((r) => r.id),
+							),
+						);
 				await tx.insert(inbox).values({
 					conversationId: id,
 					message: attachments.length
@@ -476,7 +511,9 @@ export function createConversations({
 									{ type: "text", text: content },
 									{
 										type: "text",
-										text: `\n\nAttached files, in your Sandbox:\n${attachments.map((a) => `- ${a.path}`).join("\n")}`,
+										text: provider
+											? `\n\nAttached files, in your Sandbox:\n${attachments.map((a) => `- ${a.path}`).join("\n")}`
+											: `\n\nAttached files, which the Parse tool reads by name:\n${names.map((name) => `- ${name}`).join("\n")}`,
 									},
 								],
 								// the User sees their names in place of the second text

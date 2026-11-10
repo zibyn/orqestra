@@ -160,4 +160,5 @@ export async function openToolbox(
 export { type McpTestResult, testMcpServer } from "./mcp.ts";
 export * from "./orrery.ts";
 export * from "./sandbox.ts";
+export type { ObjectStore } from "./store.ts";
 export { tar } from "./tar.ts";

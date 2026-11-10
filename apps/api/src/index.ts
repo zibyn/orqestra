@@ -1,5 +1,6 @@
 import { config, skillFiles } from "@orqestra/config/live";
 import { createConversations } from "@orqestra/conversations";
+import { s3Store } from "@orqestra/tools/s3";
 import { z } from "zod";
 import { createApp } from "./app.ts";
 import { polaris } from "./polaris.ts";
@@ -44,6 +45,14 @@ if (!env.success) {
 	process.exit(1);
 }
 
+let store: ReturnType<typeof s3Store>;
+try {
+	store = s3Store();
+} catch (error) {
+	console.error((error as Error).message);
+	process.exit(1);
+}
+
 // a misconfigured instance does not come up
 await config.current().catch((error) => {
 	console.error(error.message);
@@ -52,6 +61,10 @@ await config.current().catch((error) => {
 
 createApp({
 	...polaris(env.data),
-	conversations: createConversations({ config: config.current, skillFiles }),
+	conversations: createConversations({
+		config: config.current,
+		skillFiles,
+		store,
+	}),
 }).listen(3001);
 console.log("api listening on 3001");

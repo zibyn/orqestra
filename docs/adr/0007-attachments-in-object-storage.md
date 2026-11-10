@@ -12,3 +12,4 @@ Attachments used to be files in the Conversation's Sandbox, with Orqestra keepin
 - When a message is sent, its Attachments are copied into the Sandbox at `/workspace/uploads/<name>` if there is a Sandbox Provider, so the Agent reads them where it always has.
 - Objects are deleted with their Conversation and with a reply withdrawn by a retry; uploads never sent with a message are swept after a day.
 - Parse results are cached beside the original, one per page range.
+- Attachments from before this were not moved: a User's earlier uploads stay in the Sandbox for as long as it lives, and files attached earlier, kept only there, can no longer be downloaded.

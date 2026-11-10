@@ -10,6 +10,7 @@ import { fauxProvider } from "@earendil-works/pi-ai";
 import type { AgentDefinition, OrqestraConfig } from "@orqestra/config";
 import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
+import { memoryStore } from "@orqestra/tools/testing";
 import { createApp, type User } from "./app.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL, wiped before every test (see test-env.ts)
@@ -39,6 +40,7 @@ const config = {
 	skills: {},
 } as unknown as OrqestraConfig;
 const conversations = createConversations({
+	store: memoryStore().store,
 	config: async () => config,
 	skillFiles: async () => [],
 });

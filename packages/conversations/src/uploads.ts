@@ -1,5 +1,8 @@
 import { MAX_UPLOAD_BYTES } from "@orqestra/config";
-import { type Orrery, OrreryError } from "@orqestra/tools";
+import { db } from "@orqestra/db";
+import { attachment } from "@orqestra/db/schema";
+import type { ObjectStore, Orrery } from "@orqestra/tools";
+import { eq } from "drizzle-orm";
 
 /** Where attachments go in the Sandbox, relative to /workspace. */
 const UPLOADS = "uploads";
@@ -47,56 +50,78 @@ function freeName(name: string, taken: Set<string>) {
 	return free;
 }
 
-/** Passes `body` through, erroring once more than the limit has come. */
-function limited(body: ReadableStream<Uint8Array>, over: () => void) {
-	let size = 0;
-	return body.pipeThrough(
-		new TransformStream<Uint8Array, Uint8Array>({
-			transform(chunk, controller) {
-				size += chunk.byteLength;
-				if (size > MAX_UPLOAD_BYTES) {
-					over();
-					controller.error(new UploadTooLarge());
-				} else controller.enqueue(chunk);
-			},
-		}),
-	);
-}
-
 /**
- * Streams one file into the ready Sandbox's uploads folder under a free name, refusing it once it passes
- * MAX_UPLOAD_BYTES; orrery writes to a temporary file, so a refused or broken upload leaves nothing.
+ * Streams one file into object storage, refusing it once it passes MAX_UPLOAD_BYTES, and records it as an unsent
+ * Attachment of the Conversation under a free name. A refused or broken upload leaves nothing.
  */
-export async function writeUpload(
-	client: Orrery,
-	sandbox: string,
+export async function storeUpload(
+	store: ObjectStore,
+	conv: { id: string; rootId: string },
 	name: string,
 	body: ReadableStream<Uint8Array>,
 	{ signal }: { signal?: AbortSignal } = {},
 ) {
-	const taken = await client.listFiles(sandbox, UPLOADS, { signal }).then(
-		(items) => new Set(items.map((i) => i.name)),
-		(error) => {
-			if (error instanceof OrreryError && error.code === "not_found")
-				return new Set<string>();
-			throw error;
-		},
-	);
-	// shortcut: two uploads of one name at once may pick the same free name, the later winning; needs an exclusive create in orrery
-	const free = freeName(safeFileName(name), taken);
-	let tooLarge = false;
+	// under the top-level Conversation's id, so deleting it deletes its Subagents' objects too
+	const key = `${conv.rootId}/${conv.id}/${crypto.randomUUID()}`;
+	let size = 0;
 	try {
-		await client.writeFile(
-			sandbox,
-			`${UPLOADS}/${free}`,
-			limited(body, () => {
-				tooLarge = true;
-			}),
+		await store.put(
+			key,
+			body.pipeThrough(
+				new TransformStream<Uint8Array, Uint8Array>({
+					transform(chunk, controller) {
+						size += chunk.byteLength;
+						if (size > MAX_UPLOAD_BYTES) controller.error(new UploadTooLarge());
+						else controller.enqueue(chunk);
+					},
+				}),
+			),
 			{ signal },
 		);
 	} catch (error) {
-		// fetch reports a failed body as its own TypeError
-		throw tooLarge ? new UploadTooLarge() : error;
+		// a store may report a failed body as an error of its own
+		throw size > MAX_UPLOAD_BYTES ? new UploadTooLarge() : error;
 	}
-	return { name: free, path: uploadPath(free) };
+	try {
+		const wanted = safeFileName(name);
+		// the unique (conversation, name) decides between uploads of one name at once: the loser picks again
+		for (;;) {
+			const taken = await db
+				.select({ name: attachment.name })
+				.from(attachment)
+				.where(eq(attachment.conversationId, conv.id));
+			const [row] = await db
+				.insert(attachment)
+				.values({
+					conversationId: conv.id,
+					name: freeName(wanted, new Set(taken.map((t) => t.name))),
+					size,
+					key,
+				})
+				.onConflictDoNothing()
+				.returning({ name: attachment.name });
+			if (row) return row;
+		}
+	} catch (error) {
+		await store.deletePrefix(key);
+		throw error;
+	}
+}
+
+/** Copies Attachments from object storage into the ready Sandbox at /workspace/uploads/<name>. */
+export async function copyUploads(
+	store: ObjectStore,
+	client: Orrery,
+	sandbox: string,
+	attachments: { name: string; key: string }[],
+	{ signal }: { signal?: AbortSignal } = {},
+) {
+	for (const { name, key } of attachments) {
+		const object = await store.get(key);
+		if (!object)
+			throw new Error(`The Attachment ${name} is missing from storage`);
+		await client.writeFile(sandbox, `${UPLOADS}/${name}`, object.body, {
+			signal,
+		});
+	}
 }

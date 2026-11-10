@@ -12,7 +12,7 @@ export const tooLarge = (file: File) =>
 		limit: `${MAX_UPLOAD_BYTES / 1024 / 1024} MB`,
 	});
 
-/** Uploads the files one by one into the Conversation's Sandbox (browser only); returns the names they were stored under. */
+/** Uploads the files one by one to the Conversation (browser only); returns the names they were stored under. */
 export async function uploadFiles(conversationId: string, files: File[]) {
 	const names: string[] = [];
 	for (const file of files) {

@@ -18,7 +18,7 @@ import {
 import type { AgentDefinition } from "@orqestra/config";
 import type { ConversationEvent } from "@orqestra/conversations";
 import { openToolbox } from "@orqestra/tools";
-import { memoryOrrery } from "@orqestra/tools/testing";
+import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
 
 // Smoke tests of the assembled worker: the runtime replying through the real @orqestra/conversations
 // (lifecycle scenarios are tested there, runtime ones in src/runtime): needs TEST_DATABASE_URL, which src/test-env.ts sets up
@@ -31,6 +31,7 @@ const { startAgentWorker } = await import("./worker.ts");
 const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
 const conversations = createConversations({
+	store: memoryStore().store,
 	config: config.current,
 	skillFiles,
 });
@@ -167,6 +168,7 @@ describe.skipIf(!url)(
 			stopWorker = await startAgentWorker(config.current, {
 				concurrency: 1,
 				orrery: () => orrery.client,
+				store: memoryStore().store,
 				// Search answers with no results
 				toolbox: (services, allowed, options) =>
 					openToolbox(services, allowed, {

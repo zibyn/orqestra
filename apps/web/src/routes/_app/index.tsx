@@ -70,7 +70,7 @@ function NewConversation() {
 					running={false}
 					onStop={() => {}}
 					onSend={async ({ files, ...input }) => {
-						// attachments go into the Sandbox of a Conversation started for them; a failed upload reuses it
+						// attachments go with a Conversation started for them; a failed upload reuses it
 						let conversationId =
 							started.current?.agentId === agentId &&
 							started.current.incognito === incognito

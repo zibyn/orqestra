@@ -10,8 +10,8 @@ const error = (status: number, field: string, code: string) =>
 	Response.json({ errors: { [field]: { code } } }, { status });
 
 /**
- * One attachment, the raw request body, streamed into the Conversation's Sandbox; `?name=` is the file's name.
- * Answers {name, path} as stored (renamed when taken); 413 past MAX_UPLOAD_BYTES.
+ * One attachment, the raw request body, streamed into object storage; `?name=` is the file's name.
+ * Answers {name} as stored (renamed when taken); 413 past MAX_UPLOAD_BYTES.
  */
 export async function upload(
 	conversations: Conversations,
@@ -33,11 +33,10 @@ export async function upload(
 		return file ?? error(404, "conversation", "not_found");
 	} catch (e) {
 		if (e instanceof UploadTooLarge) return error(413, "file", "too_large");
-		// the only one: the Agent takes no attachments
-		if (e instanceof ConversationError)
-			return error(409, "file", "no_attachments");
-		console.error("Upload into the Sandbox failed:", e);
-		return error(502, "file", "sandbox_failed");
+		// the only one: the Agent is offline
+		if (e instanceof ConversationError) return error(409, e.field, e.code);
+		console.error("Upload into object storage failed:", e);
+		return error(502, "file", "storage_failed");
 	}
 }
 

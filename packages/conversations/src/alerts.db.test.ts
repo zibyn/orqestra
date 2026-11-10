@@ -4,6 +4,7 @@ import {
 	DEFAULT_LIMITS,
 	type OrqestraConfig,
 } from "@orqestra/config";
+import { memoryStore } from "@orqestra/tools/testing";
 import {
 	afterAll,
 	beforeAll,
@@ -79,6 +80,7 @@ const base = {
 } as unknown as OrqestraConfig;
 let config = base;
 const conversations = createConversations({
+	store: memoryStore().store,
 	config: async () => config,
 	skillFiles: async () => [],
 });

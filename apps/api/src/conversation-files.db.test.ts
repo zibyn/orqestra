@@ -4,7 +4,7 @@ import type { AgentDefinition, OrqestraConfig } from "@orqestra/config";
 import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import * as schema from "@orqestra/db/schema";
-import { memoryOrrery } from "@orqestra/tools/testing";
+import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 
@@ -38,6 +38,7 @@ const config = {
 
 let o = memoryOrrery();
 const conversations = createConversations({
+	store: memoryStore().store,
 	config: async () => config,
 	skillFiles: async () => [],
 	orrery: () => o.client,
@@ -101,15 +102,18 @@ describe.skipIf(skip)("a Conversation's uploads and files", () => {
 		await db.execute(sql`truncate conversation cascade`);
 	});
 
-	it("takes an upload into the Sandbox, and serves it back once the Agent attaches it", async () => {
+	it("takes an upload, and serves it back from the Sandbox once sent and the Agent attaches it", async () => {
 		const id = await newConversation();
 		const up = await app("u1")(upload(id, "data"));
 		expect(up.status).toBe(200);
-		expect(await up.json()).toEqual({
-			name: "a.txt",
-			path: "/workspace/uploads/a.txt",
-		});
+		expect(await up.json()).toEqual({ name: "a.txt" });
+		expect(o.calls).toEqual([]);
 
+		await conversations.send("u1", {
+			conversationId: id,
+			text: "here",
+			attachments: ["a.txt"],
+		});
 		await attach(id, "/workspace/uploads/a.txt");
 		const down = await app("u1")(download(id, "/workspace/uploads/a.txt"));
 		expect(down.status).toBe(200);

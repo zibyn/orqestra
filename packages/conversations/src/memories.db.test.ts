@@ -1,4 +1,5 @@
 import type { OrqestraConfig } from "@orqestra/config";
+import { memoryStore } from "@orqestra/tools/testing";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { Memories, Memory } from "./memories.ts";
 
@@ -270,6 +271,7 @@ describe.skipIf(!url)(
 	"Undoing a Memory change from the Conversation (Postgres)",
 	() => {
 		const conversations = createConversations({
+			store: memoryStore().store,
 			// no Agents: the Conversation is read-only, which undoing ignores
 			config: async () =>
 				({ agents: [], models: [] }) as unknown as OrqestraConfig,

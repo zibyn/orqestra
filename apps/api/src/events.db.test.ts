@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
+import { memoryStore } from "@orqestra/tools/testing";
 import type { Session } from "./app.ts";
 
 // GET /api/conversations/:id/events against the real @orqestra/conversations: needs TEST_DATABASE_URL, which src/test-env.ts sets up
@@ -12,6 +13,7 @@ const { createApp } = await import("./app.ts");
 
 const ada = { id: "ada", name: "Ada", admin: false };
 const conversations = createConversations({
+	store: memoryStore().store,
 	config: config.current,
 	skillFiles,
 });

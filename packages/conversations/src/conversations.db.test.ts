@@ -42,7 +42,7 @@ const {
 const runs = await import("./runs.ts");
 const timers = await import("./timers.ts");
 const { memoryRun } = await import("./testing.ts");
-const { memoryOrrery } = await import("@orqestra/tools/testing");
+const { memoryOrrery, memoryStore } = await import("@orqestra/tools/testing");
 const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 };
 
 // Models only for the Turn: the scripted handler below replies in their place
@@ -93,6 +93,7 @@ const config = {
 /** Each Skill version's SKILL.md, as the test has it now. */
 const skillMds = new Map<number, string>();
 const conversations = createConversations({
+	store: memoryStore().store,
 	config: async () => config,
 	skillFiles: async (versionId) => [
 		{ path: "scripts/run.py", content: new TextEncoder().encode("print()") },
@@ -106,6 +107,7 @@ const userId = "u1";
 // one that deletes Sandboxes in `o`
 const sandboxed = (o: ReturnType<typeof memoryOrrery>) =>
 	createConversations({
+		store: memoryStore().store,
 		config: async () => ({ ...config, sandboxProvider: provider }),
 		skillFiles: async () => [],
 		orrery: () => o.client,

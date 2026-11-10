@@ -1,7 +1,10 @@
 import { config } from "@orqestra/config/live";
+import { s3Store } from "@orqestra/tools/s3";
 import { startAgentWorker } from "./worker.ts";
 
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set");
+// throws on missing S3_* variables
+const store = s3Store();
 
 // throws on a missing ORQESTRA_ENCRYPTION_KEY or invalid stored config so the worker never starts with it
 const loaded = await config.current();
@@ -21,6 +24,7 @@ const close = await startAgentWorker(config.current, {
 	concurrency: count("WORKER_CONCURRENCY"),
 	subagentConcurrency: count("SUBAGENT_CONCURRENCY"),
 	providerConcurrency: count("PROVIDER_CONCURRENCY"),
+	store,
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {

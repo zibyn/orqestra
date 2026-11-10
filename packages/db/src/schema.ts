@@ -191,6 +191,33 @@ export const message = pgTable(
 	],
 );
 
+// A file that goes with a message; its bytes are in object storage at `key` (ADR 0007)
+export const attachment = pgTable(
+	"attachment",
+	{
+		id: serial("id").primaryKey(),
+		conversationId: uuid("conversation_id")
+			.notNull()
+			.references(() => conversation.id, { onDelete: "cascade" }),
+		// unique in the Conversation: the path it is copied to in the Sandbox, /workspace/uploads/<name>
+		name: text("name").notNull(),
+		size: integer("size").notNull(),
+		key: text("key").notNull(),
+		// the message it belongs to, once one is saved; a User's upload goes with its message through the Inbox, and keeps none
+		messageId: integer("message_id").references(() => message.id, {
+			onDelete: "cascade",
+		}),
+		// false: uploaded, but not yet sent with a message
+		sent: boolean("sent").default(false).notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [
+		unique().on(table.conversationId, table.name),
+		// deleting a message (a retry does) finds its Attachments
+		index("attachment_messageId_idx").on(table.messageId),
+	],
+);
+
 // Every input to a Conversation waits here until its Run delivers it into `message` between two steps
 export const inbox = pgTable(
 	"inbox",
