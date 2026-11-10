@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { Message } from "@earendil-works/pi-ai";
+import { messageText } from "@orqestra/config";
 import { db, type Tx } from "@orqestra/db";
 import {
 	conversation,
@@ -22,6 +24,7 @@ import {
 	inArray,
 	isNotNull,
 	isNull,
+	or,
 	sql,
 } from "drizzle-orm";
 
@@ -316,15 +319,35 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 	return parentId;
 }
 
-/** Whether any of a Conversation's own Subagents is queued or running (or waiting for its own). */
+/** A Subagent's latest reply, which one stopped while it waits for its own passes on: none for one still queued. */
+async function lastAnswer(tx: Tx, conversationId: string) {
+	const [last] = await tx
+		.select({ message: message.message })
+		.from(message)
+		.where(
+			and(
+				eq(message.conversationId, conversationId),
+				sql`${message.message}->>'role' = 'assistant'`,
+			),
+		)
+		.orderBy(desc(message.id))
+		.limit(1);
+	return last ? messageText(last.message as Message) : "";
+}
+
+/** Whether any of a Conversation's own Subagents is queued or running (or waiting for its own), or stopped but its Run not yet over. */
 async function busy(tx: Tx, parentId: string) {
 	const [row] = await tx
 		.select({ id: subagent.conversationId })
 		.from(subagent)
+		.innerJoin(conversation, eq(conversation.id, subagent.conversationId))
 		.where(
 			and(
 				subagentOf(parentId),
-				inArray(subagent.outcome, ["queued", "running"]),
+				or(
+					inArray(subagent.outcome, ["queued", "running"]),
+					eq(conversation.status, "running"),
+				),
 			),
 		)
 		.limit(1);
@@ -531,8 +554,13 @@ export async function drain(
 				})),
 			);
 		else if (typeof finish === "function") {
-			// its own Subagents still work: it waits for them idle, freeing its slot, and ends with a summary Run once they are done
-			if (await busy(tx, conversationId)) {
+			// its own Subagents still work: it waits for them idle, freeing its slot, and ends with a summary Run once they are done;
+			// a stopped one has nothing to sum up for
+			const own = await tx.query.subagent.findFirst({
+				columns: { outcome: true },
+				where: eq(subagent.conversationId, conversationId),
+			});
+			if (own?.outcome !== "stopped" && (await busy(tx, conversationId))) {
 				await tx
 					.update(conversation)
 					.set({ status: "idle" })
@@ -573,9 +601,9 @@ export async function drain(
 
 /**
  * Stops a parent's Subagents (those `numbers`, else all) that are queued or running, and every Subagent under them.
- * Those without a Run (queued, or waiting for their own Subagents) end at once; running ones are marked stopped,
+ * Those without a Run end at once, one waiting for its own Subagents with its last answer; running ones are marked stopped,
  * which their Run sees when it starts or the stop request reaches it, and keep their slot until it ends.
- * Their Notifications wake nobody, except a parent waiting for its Subagents, which sums up once the last has ended.
+ * Their Notifications wake nobody, except a parent waiting for its Subagents, which sums up once the last has ended, stopped ones' Runs included.
  * Returns the numbers of the parent's own it stopped.
  */
 export async function stopSubagents(parentId: string, numbers?: number[]) {
@@ -613,7 +641,10 @@ export async function stopSubagents(parentId: string, numbers?: number[]) {
 				.where(inArray(subagent.conversationId, running));
 		for (const r of rows)
 			if (r.status !== "running")
-				await settle(tx, r.id, { outcome: "stopped", result: "" });
+				await settle(tx, r.id, {
+					outcome: "stopped",
+					result: await lastAnswer(tx, r.id),
+				});
 		return { targets, running };
 	});
 	if (!targets.length) return [];

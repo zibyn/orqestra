@@ -113,6 +113,13 @@
       "when": 1794289476795,
       "tag": "0015_push_subscription",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794290862906,
+      "tag": "0016_stopped_job",
+      "breakpoints": true
     }
   ]
 }

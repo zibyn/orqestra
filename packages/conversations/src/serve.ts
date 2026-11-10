@@ -250,14 +250,20 @@ async function failed(conversationId: string, error: Error) {
 async function execute(
 	config: () => Promise<OrqestraConfig>,
 	conversationId: string,
+	jobId: string | undefined,
 	handler: RunHandler,
 ) {
+	// listening for a Stop before reading the row, which holds one sent before this listened
+	const stop = new AbortController();
+	active.set(conversationId, stop);
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
-	if (!conv) return; // deleted while queued
-	const stop = new AbortController();
-	active.set(conversationId, stop);
+	if (!conv) {
+		active.delete(conversationId);
+		return; // deleted while queued
+	}
+	if (jobId && conv.stoppedJobId === jobId) stop.abort();
 	const sub = conv.parentId ? conversationId : undefined;
 	// a Subagent's events go to its root's page
 	const emit = (event: ConversationEvent) => notify(conv.rootId, event);
@@ -623,7 +629,7 @@ export async function serveRuns(
 	).map(([queue, concurrency]) => {
 		const worker = new Worker(
 			queue,
-			(job) => execute(config, job.data.conversationId, handler),
+			(job) => execute(config, job.data.conversationId, job.id, handler),
 			{
 				concurrency,
 				// bullmq tables live in their own "bullmq" schema; migrate is advisory-locked across processes

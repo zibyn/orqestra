@@ -409,6 +409,38 @@ describe.skipIf(!url)(
 			expect(ranQueued).toBe(false);
 		});
 
+		it("stops a Run the worker took but has not begun", async () => {
+			script({ parent: [hang] });
+			const findFirst = db.query.conversation.findFirst.bind(
+				db.query.conversation,
+			);
+			let id = "";
+			let stopping: Promise<unknown> | undefined;
+			// the worker's first read of the Conversation: the job is taken, the Run not yet listening for a Stop
+			const spy = vi
+				.spyOn(db.query.conversation, "findFirst")
+				.mockImplementation(((...args: Parameters<typeof findFirst>) => {
+					if (id && !stopping) {
+						// stop reads the Conversation too, so `stopping` is set first
+						let stopped!: () => void;
+						stopping = new Promise<void>((r) => {
+							stopped = r;
+						});
+						void conversations.stop(userId, id).then(stopped);
+						return stopping.then(() => findFirst(...args));
+					}
+					return findFirst(...args);
+				}) as typeof findFirst);
+			try {
+				id = await send("hi");
+				// no reads of ours until the worker's
+				await waitFor(async () => stopping, Boolean);
+				await waitFor(() => get(id), idle(1));
+			} finally {
+				spy.mockRestore();
+			}
+		});
+
 		it("stops a Run before it saved anything, such as while it compacts", async () => {
 			let compacting = false;
 			script({
@@ -1191,6 +1223,7 @@ describe.skipIf(!url)(
 			});
 
 			it(`shares the budget of ${MAX_SUBAGENTS_PER_USER_MESSAGE} starts across the tree, renewed only by a User message to the root`, async () => {
+				const { gate: leadWaits, release } = gate();
 				const refusals: unknown[] = [];
 				const tryStart = (n: number): Call => ({
 					name: "subagent",
@@ -1223,9 +1256,26 @@ describe.skipIf(!url)(
 						say("Summed up"),
 						say("One more done"),
 					],
-					deep: Array.from({ length: 15 }, () => say("done")),
+					// they end only once the lead waits, so no Notification wakes it for an extra turn
+					deep: Array.from({ length: 15 }, () => async () => {
+						await leadWaits;
+						return "done";
+					}),
 				});
 				const id = await send("go");
+				const started = await waitFor(
+					() => get(id),
+					(v) => v?.subagents.length === 16,
+				);
+				await waitFor(
+					() =>
+						db.query.conversation.findFirst({
+							where: (c, { eq }) =>
+								eq(c.id, started?.subagents[0].id as string),
+						}),
+					(c) => c?.status === "idle",
+				);
+				release();
 				const first = await waitFor(
 					() => get(id),
 					(v) =>
@@ -1355,6 +1405,98 @@ describe.skipIf(!url)(
 				expect(JSON.stringify(view?.messages[4].message.content)).toContain(
 					"Dig was stopped",
 				);
+			});
+
+			it("passes on the last answer of a Subagent stopped while it waits for its own", async () => {
+				script({
+					parent: [call(start("lead")), say("Asked")],
+					sub: [call(start("dig")), say("Found half")],
+					deep: [hang],
+				});
+				const id = await send("go");
+				const waiting = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.subagents.length === 2 &&
+						v.subagents.every((s) => s.outcome === "running") &&
+						v.status === "idle",
+				);
+				const lead = waiting?.subagents[0].id as string;
+				await waitFor(
+					() =>
+						db.query.conversation.findFirst({
+							where: (c, { eq }) => eq(c.id, lead),
+						}),
+					(c) => c?.status === "idle",
+				);
+				await conversations.stopSubagent(userId, lead);
+				const [row] = await db
+					.select()
+					.from(schema.subagent)
+					.where(sql`${schema.subagent.conversationId} = ${lead}`);
+				expect(row).toMatchObject({ outcome: "stopped", result: "Found half" });
+			});
+
+			it("has a waiting Subagent sum up only once a stopped one of its own has ended too", async () => {
+				const { gate: slowStop, release: stopEnds } = gate();
+				const { gate: other, release: otherEnds } = gate();
+				let summedUp = false;
+				// each deep Run goes by its brief, whichever starts first
+				const deep: Step = async ({ run, seen }) => {
+					if (JSON.stringify(seen[0]).includes("slow")) {
+						await untilAborted(run.signal);
+						await slowStop;
+						throw new Error("aborted");
+					}
+					await other;
+					return "other done";
+				};
+				script({
+					parent: [call(start("lead")), say("Asked"), say("Done")],
+					sub: [
+						call(start("slow", "other")),
+						say("Waiting"),
+						() => {
+							summedUp = true;
+							return "Summed up";
+						},
+					],
+					deep: [deep, deep],
+				});
+				const id = await send("go");
+				const waiting = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.subagents.length === 3 &&
+						v.subagents.every((s) => s.outcome === "running") &&
+						v.status === "idle",
+				);
+				const lead = waiting?.subagents[0].id as string;
+				await waitFor(
+					() =>
+						db.query.conversation.findFirst({
+							where: (c, { eq }) => eq(c.id, lead),
+						}),
+					(c) => c?.status === "idle",
+				);
+				const slow = waiting?.subagents.find(
+					(s) => s.parentId === lead && s.number === 1,
+				);
+				try {
+					await conversations.stopSubagent(userId, slow?.id as string);
+					otherEnds();
+					await waitFor(
+						() => get(id),
+						(v) => v?.subagents.some((s) => s.outcome === "completed") ?? false,
+					);
+					await new Promise((r) => setTimeout(r, 300));
+					// the stopped one still runs, so the lead keeps waiting
+					expect(summedUp).toBe(false);
+				} finally {
+					stopEnds();
+				}
+				await waitFor(() => get(id), idle(6));
+				expect(summedUp).toBe(true);
 			});
 
 			it("streams a nested Subagent's reply to the root's page under its id", async () => {

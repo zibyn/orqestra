@@ -54,6 +54,8 @@ export const conversation = pgTable(
 			.notNull(),
 		// the BullMQ job id of the latest Run, so queueing that Run twice adds one job
 		jobId: text("job_id"),
+		// the job of a Run the User stopped: one a worker took before it heard the Stop learns of it here
+		stoppedJobId: text("stopped_job_id"),
 		// on a root: Subagents its tree's Agents started or continued since the User's last message
 		subagentsSinceUser: integer("subagents_since_user").default(0).notNull(),
 		// its orrery Sandbox, created the first time its Agent needs one; null until then

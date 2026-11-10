@@ -577,7 +577,15 @@ export function createConversations({
 				// stopped: a Firing's Run that never began ends partial
 				await drain(id, "partial");
 				await saved(id);
-			} else await requestStop([id]);
+			} else {
+				// a worker that took the job but is not yet listening finds the Stop on the row
+				if (conv.jobId)
+					await db
+						.update(conversation)
+						.set({ stoppedJobId: conv.jobId })
+						.where(eq(conversation.id, id));
+				await requestStop([id]);
+			}
 			await stopSubagents(id);
 			return true;
 		},
