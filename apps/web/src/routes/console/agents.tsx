@@ -2,6 +2,7 @@ import {
 	type AgentDefinitionInput,
 	mcpServerOf,
 	mcpToolRef,
+	searchToolNames,
 	slugify,
 	thinkingLevel,
 	toolName,
@@ -439,16 +440,16 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 							label: m.mcp_server_tool({ name: s.name }),
 						})),
 					]}
-					checked={def.tools ?? toolName.options}
+					checked={def.tools ?? searchToolNames}
 					onToggle={(tool, on) => {
 						const tools = on
-							? [...(def.tools ?? toolName.options), tool]
-							: (def.tools ?? toolName.options).filter((t) => t !== tool);
-						// Search and Scrape without MCP Servers is what omitting `tools` means
+							? [...(def.tools ?? searchToolNames), tool]
+							: (def.tools ?? searchToolNames).filter((t) => t !== tool);
+						// Search and Scrape alone, without Parse or MCP Servers, is what omitting `tools` means
 						update({
 							tools:
-								toolName.options.every((t) => tools.includes(t)) &&
-								!tools.some(mcpServerOf)
+								tools.length === searchToolNames.length &&
+								searchToolNames.every((t) => tools.includes(t))
 									? undefined
 									: tools,
 						});

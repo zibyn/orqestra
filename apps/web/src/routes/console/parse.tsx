@@ -214,7 +214,7 @@ function ParserTestOutcome({ result }: { result: ParserTestResult }) {
 		auth: m.document_parser_test_auth,
 		unreachable: m.document_parser_test_unreachable,
 		timeout: m.document_parser_test_timeout,
-		failed: m.sandbox_test_failed,
+		failed: m.document_parser_test_failed,
 	}[result.reason];
 	return (
 		<Alert variant="destructive">

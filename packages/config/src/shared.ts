@@ -84,7 +84,7 @@ export const agentDefinition = z.strictObject({
 			allowed: z.array(thinkingLevel).min(1).optional(),
 		})
 		.optional(),
-	/** Omitted means every built-in Tool (Search, Scrape and Parse), never an MCP Server. */
+	/** Omitted means Search and Scrape, never Parse or an MCP Server. */
 	tools: z.array(toolRef).optional(),
 	/** Allowed Skills by name; omitted means none. */
 	skills: z.array(z.string()).optional(),

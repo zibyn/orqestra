@@ -236,6 +236,7 @@
   "document_parser_test_auth": "Saved, but MinerU refused the key: {detail}",
   "document_parser_test_unreachable": "Saved, but MinerU cannot be reached; check the address: {detail}",
   "document_parser_test_timeout": "Saved, but MinerU did not answer in time.",
+  "document_parser_test_failed": "Saved, but the test against MinerU failed: {detail}",
   "attach_files": "Attach files",
   "remove_attachment": "Remove {name}",
   "attachments": "Attachments",

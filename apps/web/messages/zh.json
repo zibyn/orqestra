@@ -236,6 +236,7 @@
   "document_parser_test_auth": "已保存，但 MinerU 拒绝了 key：{detail}",
   "document_parser_test_unreachable": "已保存，但无法连接 MinerU，请检查地址：{detail}",
   "document_parser_test_timeout": "已保存，但 MinerU 没有及时响应。",
+  "document_parser_test_failed": "已保存，但 MinerU 测试失败：{detail}",
   "attach_files": "添加附件",
   "remove_attachment": "移除 {name}",
   "attachments": "附件",

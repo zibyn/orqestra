@@ -24,7 +24,6 @@ import {
 	searchProviders,
 	searchToolNames,
 	type ToolRef,
-	toolName,
 } from "./shared.ts";
 
 export * from "./shared.ts";
@@ -269,7 +268,8 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 				? fallback
 				: (available[0] ?? ""),
 			thinking: thinking ?? {},
-			tools: tools ?? [...toolName.options],
+			// Parse spends the Document Parser's quota, so an Agent Definition has it only when it lists it
+			tools: tools ?? [...searchToolNames],
 			skills: skills ?? [],
 			unavailableModels: (named ?? []).filter((ref) => !known.includes(ref)),
 		});
@@ -401,7 +401,7 @@ export function resolveThinking(
 export const GENERAL_WORKER =
 	"You carry out one task for another agent, starting without any prior context. Work through it with the tools you have, then reply with a complete, self-contained answer: it is all the other agent will see.";
 
-/** The built-in Agent a Subagent without a template runs as: any enabled Model, every built-in Tool, no MCP Server, no Skill. */
+/** The built-in Agent a Subagent without a template runs as: any enabled Model, Search and Scrape (not Parse), no MCP Server, no Skill. */
 const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
 	id: "",
 	name: "General worker",
@@ -411,7 +411,7 @@ const generalWorker = (models: Model<Api>[]): AgentDefinition => ({
 	allModels: true,
 	defaultModel: models[0] ? modelRef(models[0]) : "",
 	thinking: {},
-	tools: [...toolName.options],
+	tools: [...searchToolNames],
 	skills: [],
 	memory: false,
 	pickable: false,
