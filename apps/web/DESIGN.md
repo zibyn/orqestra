@@ -89,7 +89,9 @@ Use the Tailwind names (`bg-background`, `text-muted-foreground`, `border-border
 
 - **Both shells** (`src/routes/_app.tsx`, `src/routes/console.tsx`) use `Sidebar variant="inset"`: the sidebar sits on the canvas and the view is one bordered `SidebarInset` panel. The top bar is `h-12`. Below `md` the sidebar becomes a drawer opened by `SidebarTrigger` and the panel fills the screen.
 - **App shell**: the panel is exactly the viewport minus its margin, and only the message list scrolls inside it.
-  - Sidebar header: the "New conversation" button. Content: the Conversation list. Footer: the user menu (name, theme, language, `/console` for Admins, sign out).
+  - Sidebar header: the "New conversation" button. Content: a "Scheduled Tasks" group above the Conversation list, one collapsible item per task (`CalendarClockIcon`, its name, a destructive `XCircleIcon` once it paused itself) folding open on its latest Firings' Conversations; those stay out of the ordinary list. Footer: the user menu (name, theme, language, "Receive Alerts in this browser", Memory, Scheduled Tasks, `/console` for Admins, sign out).
+  - An Unread Conversation (and a task with one) has its name in `font-medium` and a `bg-foreground` dot at the end of its row; one waiting on a Question shows a `CircleHelpIcon` there instead. Both are at rest, so neither takes `signal`.
+  - Scheduled Tasks (`/tasks`) is a `ConsolePage` + `ItemList` like the console's, its drawer a `FormSheet` with the task's Firings as an `ItemList` below the form.
 - **New conversation** (`/`): the greeting (`text-4xl font-semibold`) and the Composer form one block centred a little above the middle of the panel; it is the first thing a person sees, so nothing else competes with it (no icon, no hint).
 - **Messages** are centered in a column of `max-w-3xl` (48rem) with `px-4` gutters.
   - User messages: right-aligned, `bg-muted` bubble, `rounded-2xl px-4 py-2.5`, max ~80% width.
@@ -97,10 +99,10 @@ Use the Tailwind names (`bg-background`, `text-muted-foreground`, `border-border
   - Built from the shadcn chat components: the thread is a `MessageScroller` (each turn a `MessageScrollerItem`, the User's turn its scroll anchor), turns are `Message`, the User's bubble is `Bubble variant="muted"`. Thinking, Tool calls and Subagents are `TraceLine`s, one `Trace` per run of them; Tool output is a `CodeBlock`; dividers (compaction, Notifications) are `Marker variant="separator"`; files are `Attachment`; the Composer is an `InputGroup`.
 - **Standalone pages** (login, setup): a single `Card` centered on the screen, `max-w-sm`.
 - **Console**: its own `Sidebar` (also `collapsible="icon"`), page padding `px-4 py-6`, `md:px-10 md:py-10`.
-  - Sidebar header: Orqestra / Console. Content: nav groups (Models: Providers, Agents, Skills; Tools: Search Providers, MCP Servers, Sandbox Provider) and "Back to conversations" at the bottom. Footer: the same user menu as the app (`NavUser`).
+  - Sidebar header: Orqestra / Console. Content: nav groups (Models: Providers, Agents, Skills; Tools: Search Providers, MCP Servers, Sandbox Provider; Limits: Limits) and "Back to conversations" at the bottom. Footer: the same user menu as the app (`NavUser`).
   - Top bar: `SidebarTrigger`, a vertical `Separator` and a `Breadcrumb` (Console › page).
   - Pages use `ConsolePage` (centered `max-w-5xl`: title, one-line description, primary "Add" action in the header). Items are rows of one bordered `ItemList` (name with an outline `Badge` for its id, a muted line, then actions on the right: enable `Switch`, outline "Edit", icon `DeleteButton`), with an empty state when there are none; warnings use a destructive `Alert` under the row.
-  - Adding and editing never happen in the list: they open a `FormSheet` (a right-side `Sheet`) whose `SheetForm` scrolls the fields and pins submit / cancel to the bottom. Page-wide settings that aren't items (Sandbox Provider, which Search Provider serves each Tool) stay inline in a `Card`.
+  - Adding and editing never happen in the list: they open a `FormSheet` (a right-side `Sheet`) whose `SheetForm` scrolls the fields and pins submit / cancel to the bottom. Page-wide settings that aren't items (Sandbox Provider, which Search Provider serves each Tool, the Limits) stay inline in a `Card`.
 
 ## Components
 
