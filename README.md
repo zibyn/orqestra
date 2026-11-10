@@ -132,7 +132,13 @@ orrery snapshot build orqestra-skills -f Dockerfile
 
 ### 配置 Document Parser（MinerU）
 
-Parse 把 Attachment（PDF、图片、Office 文档）转成 Markdown，由 MinerU 提供。Admin 在 `/console/parse` 填写地址（默认 `https://mineru.net`）和 key（加密保存、只写不读；mineru.net 必填，在 mineru.net 的 API 管理页申请），可随时停用。最多配置一个；没有启用时 Parse 不可用，Agent 不带它运行。保存时会用该 key 查询一次 mineru.net，失败时显示原因，配置照常保存。目前只支持 mineru.net 的 v4 精准解析 API（单个文件最多 200 页、200 MB，超出时 Agent 会按页段解析）；自部署的 MinerU 见 #75。
+Parse 把 Attachment（PDF、图片、Office 文档）转成 Markdown，由 MinerU 提供。Admin 在 `/console/parse` 填写地址（默认 `https://mineru.net`）和 key（加密保存、只写不读；mineru.net 必填，在 mineru.net 的 API 管理页申请），可随时停用。最多配置一个；没有启用时 Parse 不可用，Agent 不带它运行。保存时会用该地址和 key 试连一次，失败时显示原因，配置照常保存。
+
+按地址的主机选择协议：
+
+- `mineru.net`：v4 精准解析 API（单个文件最多 200 页、200 MB，超出时 Agent 会按页段解析）。
+- 其他地址：自部署 MinerU 的 v1 Tasks API，支持 **MinerU 4.1**（按 4.1.7 的文档和源码实现，4.1 以前没有 v1 Tasks）。key 可不填，不填时不发 Authorization；key 只发给该地址的同源请求，不发给它指向的对象存储。页数上限取 `/v1/usage` 的 `limits.max_pages_per_file`（MinerU 自带的服务为 null，即不限）。
+- 反向代理到 mineru.net 的地址会被当成自部署而走 v1，不可用。
 
 ### 添加 Agent
 

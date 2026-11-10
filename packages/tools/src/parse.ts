@@ -3,6 +3,7 @@ import { inflateRawSync } from "node:zlib";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import type { McpFetch } from "@earendil-works/pi-mcp";
+import { isMineruNet } from "./refs.ts";
 import type { ObjectStore } from "./store.ts";
 
 // Parse: an Attachment turned into Markdown by the Document Parser (MinerU), cached in object storage per page range.
@@ -40,16 +41,22 @@ class MinerUError extends Error {
 }
 
 /** What one of MinerU's error codes means, in plain words; MinerU's own message otherwise. */
-function explain(code: unknown, msg: string, totalPages?: number) {
+function explain(
+	code: unknown,
+	msg: string,
+	totalPages?: number,
+	maxPages = 200,
+) {
 	if (code === -60006)
 		return new MinerUError(
-			`The document has too many pages for MinerU to parse at once (at most 200)${totalPages ? `: it has ${totalPages}` : ""}. Call parse again with \`pages\`, at most 200 of them at a time, e.g. "1-200".`,
+			`The document has too many pages for MinerU to parse at once (at most ${maxPages})${totalPages ? `: it has ${totalPages}` : ""}. Call parse again with \`pages\`, at most ${maxPages} of them at a time, e.g. "1-${maxPages}".`,
 		);
 	if (code === -60018)
 		return new MinerUError(
 			"MinerU's daily parsing quota is used up; try again tomorrow.",
 		);
-	if (code === "A0202" || code === "A0211")
+	// mineru.net's codes, then v1's
+	if (code === "A0202" || code === "A0211" || code === "invalid_api_key")
 		return new MinerUError(
 			"MinerU refused the Document Parser's key (invalid or expired); an Admin must enter a new one in the console.",
 		);
@@ -72,6 +79,20 @@ type Call = (
 	path: string,
 	init?: { method?: string; body?: unknown },
 ) => Promise<Json>;
+/** Throws what went wrong when an answer of MinerU's is not a success. */
+type Check = (json: Json, response: Response, text: string) => void;
+
+const v4Check: Check = (json, response, text) => {
+	if (json.code !== 0 || !response.ok)
+		throw explain(json.code ?? response.status, json.msg ?? text.slice(0, 500));
+};
+const v1Check: Check = (json, response, text) => {
+	if (!response.ok)
+		throw explain(
+			json.error?.code ?? response.status,
+			json.error?.message ?? text.slice(0, 500),
+		);
+};
 
 /** mineru.net's precise parsing API (v4). */
 const v4 = (call: Call, fetch: Fetch, signal: AbortSignal): Mapping => ({
@@ -111,6 +132,64 @@ const v4 = (call: Call, fetch: Fetch, signal: AbortSignal): Mapping => ({
 	},
 });
 
+/** Self-hosted MinerU's Tasks API (v1), as of MinerU 4.1. */
+const v1 = (call: Call, fetch: Fetch, signal: AbortSignal): Mapping => ({
+	async start({ name, bytes, pages }) {
+		// v1 has no page-limit error of its own; a deployment states its limit, null for none
+		const { limits } = await call("/v1/usage");
+		const maxPages = limits?.max_pages_per_file;
+		if (typeof maxPages === "number" && !pages) {
+			const totalPages = pdfPages(name, bytes);
+			if (totalPages > maxPages)
+				throw explain(-60006, "", totalPages, maxPages);
+		}
+		const task = await call("/v1/tasks", {
+			method: "POST",
+			body: {
+				files: [{ file_name: name, bytes: bytes.byteLength }],
+				ocr_mode: "auto",
+				...(pages ? { page_range: pages } : {}),
+			},
+		});
+		// none when MinerU already holds these bytes
+		const upload = task.files?.[0]?.upload;
+		if (upload) {
+			const put = await fetch(upload.url, {
+				method: "PUT",
+				headers: upload.headers,
+				body: bytes,
+				signal,
+			});
+			if (!put.ok)
+				throw new MinerUError(
+					`MinerU's upload answered ${put.status}: ${(await put.text()).slice(0, 500)}`,
+				);
+		}
+		return task.task_id;
+	},
+	async poll(id) {
+		const task = await call(`/v1/tasks/${encodeURIComponent(id)}`);
+		const file = task.files?.[0];
+		if (file?.status === "completed") return file.result_url;
+		if (["failed", "canceled"].includes(file?.status ?? task.status)) {
+			const error = file?.error ?? task.error;
+			throw explain(error?.code ?? task.status, error?.message ?? "");
+		}
+		return undefined;
+	},
+});
+
+/** A PDF's page count, 0 for any other file. */
+function pdfPages(name: string, bytes: Uint8Array) {
+	if (!name.toLowerCase().endsWith(".pdf")) return 0;
+	// shortcut: counts page objects in the clear, so pages inside compressed object streams (PDF 1.5+) are missed and MinerU decides; use a PDF parser if a deployment's limit matters
+	return (
+		Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+			.toString("latin1")
+			.match(/\/Type\s*\/Page(?![A-Za-z])/g)?.length ?? 0
+	);
+}
+
 /** The first file of the zip whose path `wanted` accepts, as text; stored and deflated entries only, no zip64. */
 function zipEntry(bytes: Uint8Array, wanted: (path: string) => boolean) {
 	const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -145,7 +224,7 @@ function zipEntry(bytes: Uint8Array, wanted: (path: string) => boolean) {
 		at +=
 			46 + nameLength + buf.readUInt16LE(at + 30) + buf.readUInt16LE(at + 32);
 	}
-	throw new MinerUError("MinerU's result has no full.md");
+	throw new MinerUError("MinerU's result has no Markdown");
 }
 
 /** The MinerU client: one flow over the API `parser`'s address speaks. */
@@ -156,7 +235,7 @@ export function mineru(
 ) {
 	const base = baseUrl.replace(/\/+$/, "");
 	const call =
-		(signal: AbortSignal): Call =>
+		(signal: AbortSignal, check: Check): Call =>
 		async (path, { method = "GET", body } = {}) => {
 			const response = await fetch(`${base}${path}`, {
 				method,
@@ -177,33 +256,56 @@ export function mineru(
 					`MinerU answered ${response.status}: ${text.slice(0, 500)}`,
 				);
 			}
-			if (json.code !== 0 || !response.ok)
-				throw explain(
-					json.code ?? response.status,
-					json.msg ?? text.slice(0, 500),
-				);
+			check(json, response, text);
 			return json;
 		};
+	const origin = URL.parse(base)?.origin;
+	/** fetch for the URLs MinerU hands out: the key goes to the address's origin only, never to storage. */
+	const handedOut: Fetch = (url, init) =>
+		fetch(url, {
+			...init,
+			headers: {
+				...(apiKey && new URL(url).origin === origin
+					? { authorization: `Bearer ${apiKey}` }
+					: {}),
+				...(init?.headers as Record<string, string>),
+			},
+		});
+	/** The result at `url`, relative to the address or not, redirects followed. */
+	const download = async (url: string, signal: AbortSignal) => {
+		let at = new URL(url, `${base}/`);
+		for (let hop = 0; hop < 6; hop++) {
+			const response = await handedOut(at, { redirect: "manual", signal });
+			const location = response.headers.get("location");
+			if (response.status >= 300 && response.status < 400 && location) {
+				at = new URL(location, at);
+				continue;
+			}
+			if (!response.ok)
+				throw new MinerUError(`MinerU's result answered ${response.status}`);
+			return new Uint8Array(await response.arrayBuffer());
+		}
+		throw new MinerUError("MinerU's result redirected too many times");
+	};
 	return {
-		/** The file's Markdown (full.md), polling until MinerU is done or `signal` aborts. */
+		/** The file's Markdown, polling until MinerU is done or `signal` aborts. */
 		async parse(
 			file: { name: string; bytes: Uint8Array<ArrayBuffer>; pages?: string },
 			signal: AbortSignal,
 		) {
-			// v4 only so far: self-hosted MinerU's v1 Tasks (#75) become a second Mapping, picked with isMineruNet
-			const api = v4(call(signal), fetch, signal);
+			// shortcut: picked by host, so a reverse proxy in front of mineru.net speaks v1 and fails; add a protocol setting if one is needed
+			const api = isMineruNet(base)
+				? v4(call(signal, v4Check), handedOut, signal)
+				: v1(call(signal, v1Check), handedOut, signal);
 			const id = await api.start(file);
 			let url = await api.poll(id);
 			while (!url) {
 				await sleep(pollMs, undefined, { signal });
 				url = await api.poll(id);
 			}
-			const zip = await fetch(url, { signal });
-			if (!zip.ok)
-				throw new MinerUError(`MinerU's result answered ${zip.status}`);
-			return zipEntry(
-				new Uint8Array(await zip.arrayBuffer()),
-				(path) => path === "full.md" || path.endsWith("/full.md"),
+			// v4 names it full.md, v1 markdown.md
+			return zipEntry(await download(url, signal), (path) =>
+				/(^|\/)(full|markdown)\.md$/.test(path),
 			);
 		},
 	};
@@ -217,7 +319,7 @@ export type DocumentParserTestResult =
 			detail: string;
 	  };
 
-/** Checks the Document Parser's address and key within `timeoutMs`, asking for a batch that does not exist; never throws. */
+/** Checks the Document Parser's address and key within `timeoutMs`, asking mineru.net for a batch that does not exist, a self-hosted MinerU for its usage; never throws. */
 export async function testDocumentParser(
 	{ baseUrl, apiKey }: DocumentParser,
 	{
@@ -225,10 +327,10 @@ export async function testDocumentParser(
 		timeoutMs = 15_000,
 	}: { fetch?: Fetch; timeoutMs?: number } = {},
 ): Promise<DocumentParserTestResult> {
+	const v4 = isMineruNet(baseUrl);
 	try {
-		// shortcut: v4's path only; self-hosted MinerU (v1, #75) needs its own
 		const response = await fetch(
-			`${baseUrl.replace(/\/+$/, "")}/api/v4/extract-results/batch/connection-test`,
+			`${baseUrl.replace(/\/+$/, "")}${v4 ? "/api/v4/extract-results/batch/connection-test" : "/v1/usage"}`,
 			{
 				headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
 				signal: AbortSignal.timeout(timeoutMs),
@@ -246,10 +348,10 @@ export async function testDocumentParser(
 			return {
 				ok: false,
 				reason: "auth",
-				detail: json?.msg ?? text.slice(0, 500),
+				detail: json?.msg ?? json?.error?.message ?? text.slice(0, 500),
 			};
-		// any answer of MinerU's, "no such batch" too, means the key was taken
-		if (json?.code === undefined)
+		// any answer of mineru.net's, "no such batch" too, means the key was taken
+		if (v4 ? json?.code === undefined : json?.object !== "usage")
 			return {
 				ok: false,
 				reason: "failed",
@@ -358,7 +460,7 @@ const parameters = () =>
 		pages: Type.Optional(
 			Type.String({
 				description:
-					'Which pages to parse, e.g. "1-50" or "2,4-6"; all by default. Needed for documents over 200 pages',
+					'Which pages to parse, e.g. "1-50" or "2,4-6"; all by default. Needed for documents over the page limit of MinerU',
 			}),
 		),
 		offset: Type.Optional(
