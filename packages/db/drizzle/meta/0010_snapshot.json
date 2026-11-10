@@ -1,5 +1,5 @@
 {
-  "id": "38e2a00c-0dea-4bf2-b9d8-77f65f3edd87",
+  "id": "627334e1-f8f2-4bb0-8bfa-817fde737fe9",
   "prevId": "e60e330c-2c6d-498c-ba0b-727bba3239bb",
   "version": "7",
   "dialect": "postgresql",
@@ -204,8 +204,15 @@
           "notNull": true,
           "default": false
         },
-        "unattended": {
-          "name": "unattended",
+        "unread": {
+          "name": "unread",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "awaiting_reply": {
+          "name": "awaiting_reply",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
@@ -351,12 +358,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "origin": {
-          "name": "origin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "wake": {
           "name": "wake",
           "type": "boolean",
@@ -407,71 +408,6 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.limits": {
-      "name": "limits",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "default": 1
-        },
-        "max_scheduled_tasks_per_user": {
-          "name": "max_scheduled_tasks_per_user",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "min_firing_interval": {
-          "name": "min_firing_interval",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "timer_rings_per_user_message": {
-          "name": "timer_rings_per_user_message",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "unattended_max_steps": {
-          "name": "unattended_max_steps",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "unattended_max_duration": {
-          "name": "unattended_max_duration",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "max_subagent_depth": {
-          "name": "max_subagent_depth",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "limits_single_row": {
-          "name": "limits_single_row",
-          "value": "\"limits\".\"id\" = 1"
-        },
-        "limits_max_subagent_depth": {
-          "name": "limits_max_subagent_depth",
-          "value": "\"limits\".\"max_subagent_depth\" between 1 and 3"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.mcp_server": {
@@ -674,12 +610,6 @@
         "subagent_id": {
           "name": "subagent_id",
           "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "origin": {
-          "name": "origin",
-          "type": "text",
           "primaryKey": false,
           "notNull": false
         },

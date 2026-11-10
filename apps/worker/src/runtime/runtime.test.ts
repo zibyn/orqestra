@@ -291,6 +291,8 @@ describe("runAgent", () => {
 		);
 		expect(offered).toContain("search");
 		expect(offered).not.toContain("subagent");
+		// nor ask the User: only the top-level Agent talks to them
+		expect(offered).not.toContain("ask_user");
 		expect(JSON.stringify(last?.messages)).toContain("step limit");
 		expect(m.outcomes).toEqual([
 			{ outcome: "partial", result: "what I found" },
@@ -372,6 +374,45 @@ describe("runAgent", () => {
 			).toEqual(["step 1", "step 2", "step 3", "step 4", "all done"]);
 			expect(m.outcomes).toEqual([undefined]);
 		});
+	});
+
+	it("ends the Run with the Question the Agent asks the User, titled from it", async () => {
+		script(
+			[
+				fauxAssistantMessage(
+					fauxToolCall("ask_user", {
+						question: "Which pi?",
+						suggestions: ["The agent", "The number"],
+					}),
+				),
+			],
+			"Pi",
+		);
+		const m = memoryRun({ transcript: transcript(user("pi?")), turn: turn() });
+		await runAgent(m.run, deps());
+
+		expect(roles(m.saved)).toEqual(["assistant", "toolResult"]);
+		expect((m.saved[1] as ToolResultMessage).isError).toBe(false);
+		expect(m.questions).toEqual([true]);
+		expect(m.over).toBe(true);
+		expect(m.titles).toEqual(["Pi"]);
+	});
+
+	it("refuses a second Question in the same Turn", async () => {
+		script([
+			fauxAssistantMessage([
+				fauxToolCall("ask_user", { question: "Which pi?" }),
+				fauxToolCall("ask_user", { question: "And why?" }),
+			]),
+		]);
+		const m = memoryRun({ transcript: transcript(user("pi?")), turn: turn() });
+		await runAgent(m.run, deps());
+
+		const results = m.saved.filter(
+			(s): s is ToolResultMessage => s.role === "toolResult",
+		);
+		expect(results.map((r) => r.isError)).toEqual([false, true]);
+		expect(m.questions).toEqual([true]);
 	});
 
 	it("delivers a message sent while running at the next step boundary, into the model's context", async () => {
@@ -542,7 +583,7 @@ describe("runAgent with Skills", () => {
 	// pi carries the prompt in the transcript's first, system, message
 	const systemPrompt = (c?: Context) =>
 		(c?.messages[0] as unknown as { role: string; content: string }).content;
-	// besides the Subagent Tools every top-level Agent has
+	// besides the Subagent Tools and ask_user every top-level Agent has
 	const offeredTools = (c?: Context) =>
 		(
 			c?.messages.flatMap(
@@ -551,7 +592,7 @@ describe("runAgent with Skills", () => {
 						(t) => t.name,
 					) ?? [],
 			) ?? []
-		).filter((n) => !n.startsWith("subagent"));
+		).filter((n) => !n.startsWith("subagent") && n !== "ask_user");
 
 	it("lists the Skills the model may invoke in the prompt, and offers read, bash and attach", async () => {
 		let context: Context | undefined;

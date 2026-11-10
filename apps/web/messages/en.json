@@ -257,5 +257,7 @@
   "limit_timer_rings_per_user_message": "Timer rings per User message",
   "limit_unattended_max_steps": "Steps of an Unattended Run",
   "limit_unattended_max_duration": "Duration of an Unattended Run (minutes)",
-  "limit_max_subagent_depth": "Subagent nesting depth (1–3)"
+  "limit_max_subagent_depth": "Subagent nesting depth (1–3)",
+  "unread": "Unread",
+  "awaiting_reply": "Waiting for your reply"
 }

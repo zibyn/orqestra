@@ -96,6 +96,15 @@ export const conversationRoutes = (
 			},
 			{ params: idParams },
 		)
+		/** The User opened the Conversation: it is no longer Unread. */
+		.post(
+			"/conversations/:id/seen",
+			async ({ user, params, status }) => {
+				if (!(await conversations.seen(user.id, params.id)))
+					return status(404, notFound);
+			},
+			{ params: idParams },
+		)
 		/** Reverses the Memory change of one of the Agent's Tool calls in the Conversation. */
 		.post(
 			"/conversations/:id/memory-undo",

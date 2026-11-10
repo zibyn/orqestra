@@ -127,8 +127,9 @@ export type RunHandle = {
 	/**
 	 * Ends the reply: returns the inputs that arrived meanwhile, to reply to next, or none, and the Run is over.
 	 * A Subagent reports its `outcome`, and so does an Unattended Run; a stopped Run is over whatever it reports, a timed-out Subagent ending partial.
+	 * A reply that asked the User a `question` waits for them: only a message of theirs goes on, Notifications wait with it.
 	 */
-	finish(outcome?: Ended): Promise<Message[]>;
+	finish(outcome?: Ended, options?: { question?: boolean }): Promise<Message[]>;
 	/** Names the Conversation, unless the User renamed it meanwhile. */
 	setTitle(title: string): Promise<void>;
 	/** The Conversation's Sandbox, ready to use: created the first time, started if stopped (`woke`); see `ensureSandbox`. */
@@ -387,7 +388,7 @@ async function open(
 			});
 			await saved();
 		},
-		async finish(outcome) {
+		async finish(outcome, { question = false } = {}) {
 			if (signal.aborted) {
 				end();
 				await stopped(conv, outcome?.result ?? "", signal);
@@ -395,7 +396,11 @@ async function open(
 			}
 			const next = (await drain(
 				conversationId,
-				sub ? () => outcome ?? { outcome: "completed", result: "" } : true,
+				sub
+					? () => outcome ?? { outcome: "completed", result: "" }
+					: question
+						? "question"
+						: true,
 			)) as Message[];
 			await saved();
 			if (!next.length) end();

@@ -55,6 +55,10 @@ export const conversation = pgTable(
 		incognito: boolean("incognito").default(false).notNull(),
 		// its Runs are Unattended Runs, under the Limits' step and wall-clock caps: an input with an `origin` sets it, a User message clears it; Subagents go by their root's
 		unattended: boolean("unattended").default(false).notNull(),
+		// a top-level Run ended with a reply the User has yet to open; never set on a Subagent's
+		unread: boolean("unread").default(false).notNull(),
+		// its last Run ended with a Question (`ask_user`); the User's next message clears it
+		awaitingReply: boolean("awaiting_reply").default(false).notNull(),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()

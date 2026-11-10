@@ -9,6 +9,7 @@ import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
 import { generateTitle } from "./title.ts";
 import {
 	MAX_SUBAGENT_STEPS,
+	questionTool,
 	relay,
 	STEP_LIMIT,
 	subagentTools,
@@ -81,6 +82,8 @@ export async function runAgent(
 				? config.limits.unattendedMaxSteps
 				: Number.POSITIVE_INFINITY;
 		let steps = 0;
+		// only the top-level Agent asks the User; the step that asked ends the Run
+		const question = questionTool();
 		const agent = new Agent({
 			initialState: {
 				systemPrompt:
@@ -93,13 +96,16 @@ export async function runAgent(
 					...(memory
 						? [...memoryTools(memory, sub), recallTool(run.recall)]
 						: []),
-					...(sub ? [] : subagentTools(config, run.subagents)),
+					...(sub
+						? []
+						: [...subagentTools(config, run.subagents), question.tool]),
 				],
 				messages,
 			},
 			streamFn: streamSimple,
 			sessionId: conversationId,
-			finishTurn: () => (++steps >= maxSteps ? { action: "end" } : undefined),
+			finishTurn: () =>
+				++steps >= maxSteps || question.asked ? { action: "end" } : undefined,
 			// inputs that arrived during a step go to the model right after it
 			prepareNextTurnWithContext: async ({ context }) => {
 				const messages = await run.deliver();
@@ -157,11 +163,17 @@ export async function runAgent(
 			// fails the job so the reason (e.g. an unreadable API key) is logged; the Run is then marked failed
 			if (answer.stopReason === "error")
 				throw new Error(answer.errorMessage ?? "The reply failed");
-			next = await run.finish(sub || run.unattended ? ended() : undefined);
+			next = await run.finish(sub || run.unattended ? ended() : undefined, {
+				question: question.asked,
+			});
 			if (!next.length) break;
+			question.reset();
 		}
 		if (sub) return;
-		const answer = agent.state.messages.at(-1) as AssistantMessage;
+		// a Question leaves its Tool result last
+		const answer = (agent.state.messages as Message[])
+			.filter((m): m is AssistantMessage => m.role === "assistant")
+			.at(-1) as AssistantMessage;
 
 		// titled after the first turn that produced a reply, stopped ones included
 		const first = !rows.some((r) => r.message.role === "assistant");

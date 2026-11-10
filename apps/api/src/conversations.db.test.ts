@@ -97,7 +97,15 @@ describe.skipIf(!url)("Conversations through the api", () => {
 		const { status, body } = await app(ada)("GET", "/api/conversations");
 		expect(status).toBe(200);
 		expect(body).toEqual([
-			{ id, title: null, status: "idle", incognito: false, background: false },
+			{
+				id,
+				title: null,
+				status: "idle",
+				incognito: false,
+				unread: false,
+				awaitingReply: false,
+				background: false,
+			},
 		]);
 	});
 
@@ -171,6 +179,14 @@ describe.skipIf(!url)("Conversations through the api", () => {
 				.status,
 		).toBe(200);
 		expect((await conversations.get(ada.id, id))?.title).toBe("Plans");
+		await db.$client.query(
+			"update conversation set unread = true where id = $1",
+			[id],
+		);
+		expect((await call("POST", `/api/conversations/${id}/seen`)).status).toBe(
+			200,
+		);
+		expect((await conversations.get(ada.id, id))?.unread).toBe(false);
 		expect((await call("POST", `/api/conversations/${id}/stop`)).status).toBe(
 			200,
 		);
@@ -248,6 +264,7 @@ describe.skipIf(!url)("Conversations through the api", () => {
 			["DELETE", `/api/conversations/${id}`],
 			["POST", `/api/conversations/${id}/stop`],
 			["POST", `/api/conversations/${id}/retry`],
+			["POST", `/api/conversations/${id}/seen`],
 			["POST", `/api/conversations/${id}/memory-undo`, { toolCallId: "t" }],
 			["POST", "/api/messages", { conversationId: id, text: "hi" }],
 			["GET", `/api/subagents/${sub}`],

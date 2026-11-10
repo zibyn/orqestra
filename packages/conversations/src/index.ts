@@ -217,6 +217,8 @@ export function createConversations({
 					title: conversation.title,
 					status: conversation.status,
 					incognito: conversation.incognito,
+					unread: conversation.unread,
+					awaitingReply: conversation.awaitingReply,
 					// Subagents queued or at work, which the sidebar marks while the parent itself is idle
 					// (spelled out: drizzle leaves the columns of a select's fields unqualified)
 					background: sql<boolean>`exists (select 1 from subagent s join conversation child on child.id = s.conversation_id where child.parent_id = conversation.id and s.outcome in ('queued', 'running'))`,
@@ -284,6 +286,8 @@ export function createConversations({
 				title: conv.title,
 				status: conv.status,
 				incognito: conv.incognito,
+				unread: conv.unread,
+				awaitingReply: conv.awaitingReply,
 				// the Agent was removed from config or has no Model left
 				readOnly: !resolveTurn(await config(), conv.agentId),
 				messages: [...messages, ...pending].map((m) => ({
@@ -411,10 +415,14 @@ export function createConversations({
 				// while a Run goes, it delivers this at its next step boundary; the lock keeps it from going idle past it
 				if (id) {
 					await lockRoot(tx, id);
-					// a User message renews the Agent's Subagent budget, and the User is back: Runs are attended again
+					// a User message renews the Agent's Subagent budget, answers its Question, and the User is back: Runs are attended again
 					await tx
 						.update(conversation)
-						.set({ subagentsSinceUser: 0, unattended: false })
+						.set({
+							subagentsSinceUser: 0,
+							awaitingReply: false,
+							unattended: false,
+						})
 						.where(eq(conversation.id, id));
 				} else {
 					[{ id }] = await tx
@@ -449,7 +457,7 @@ export function createConversations({
 			return conversationId;
 		},
 
-		/** Re-runs a failed reply to the last user message; false when the Conversation is not the user's. */
+		/** Re-runs a failed reply to the last user message, or one that asked a Question, which it withdraws; false when the Conversation is not the user's. */
 		async retry(userId: string, id: string) {
 			const conv = await owned(userId, id);
 			if (!conv) return false;
@@ -462,9 +470,18 @@ export function createConversations({
 			const dropped = await db.transaction(async (tx) => {
 				const claimed = await tx
 					.update(conversation)
-					.set({ status: "running", jobId: newJobId() })
+					.set({ status: "running", jobId: newJobId(), awaitingReply: false })
 					.where(
-						and(eq(conversation.id, id), eq(conversation.status, "failed")),
+						and(
+							eq(conversation.id, id),
+							or(
+								eq(conversation.status, "failed"),
+								and(
+									eq(conversation.status, "idle"),
+									eq(conversation.awaitingReply, true),
+								),
+							),
+						),
 					)
 					.returning({ id: conversation.id });
 				if (!claimed.length)
@@ -518,6 +535,16 @@ export function createConversations({
 			} else await requestStop([id]);
 			await stopSubagents(id);
 			return true;
+		},
+
+		/** The User opened the Conversation: it is no longer Unread. False when it is not the user's. */
+		async seen(userId: string, id: string) {
+			const seen = await db
+				.update(conversation)
+				.set({ unread: false })
+				.where(and(eq(conversation.id, id), eq(conversation.userId, userId)))
+				.returning({ id: conversation.id });
+			return seen.length > 0;
 		},
 
 		/** False when the Conversation is not the user's. */

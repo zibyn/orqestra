@@ -8,7 +8,17 @@ import {
 	subagent,
 } from "@orqestra/db/schema";
 import { createPostgresBackend, Queue } from "bullmq";
-import { and, asc, count, desc, eq, exists, inArray, sql } from "drizzle-orm";
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	exists,
+	inArray,
+	isNull,
+	sql,
+} from "drizzle-orm";
 
 /** Locks the row of a Conversation's root (a Subagent's parent, else itself): every Run start and finish decides under it. */
 export const lockRoot = (tx: Tx, conversationId: string) =>
@@ -137,7 +147,12 @@ export async function ensureRun(conversationId: string) {
 			.select({ id: inbox.id })
 			.from(inbox)
 			.where(
-				and(eq(inbox.conversationId, conversationId), eq(inbox.wake, true)),
+				and(
+					eq(inbox.conversationId, conversationId),
+					eq(inbox.wake, true),
+					// a Question waits for the User: Notifications go with the reply
+					conv.awaitingReply ? isNull(inbox.subagentId) : undefined,
+				),
 			)
 			.limit(1);
 		if (!wake) return undefined;
@@ -326,12 +341,13 @@ export async function endSubagent(conversationId: string, ended: Ended) {
 
 /**
  * Delivers a Conversation's inbox into `message`, in arrival order, under its root's lock; returns what it delivered.
- * With `finish`, an inbox without a wake input ends the Run instead: the Conversation goes idle, and a Subagent's settles with how it `finish`ed.
+ * With `finish`, an inbox without a wake input ends the Run instead: the Conversation goes idle and Unread, and a Subagent's settles with how it `finish`ed.
+ * A `"question"` finish waits for the User: only their message goes on, and it ends awaiting their reply.
  * That is checked under the same lock a sender starts a Run under, so no input is left behind.
  */
 export async function drain(
 	conversationId: string,
-	finish: boolean | (() => Ended) = false,
+	finish: boolean | "question" | (() => Ended) = false,
 ) {
 	let parentId: string | undefined;
 	const delivered = await db.transaction(async (tx) => {
@@ -342,7 +358,11 @@ export async function drain(
 					.select({ id: inbox.id })
 					.from(inbox)
 					.where(
-						and(eq(inbox.conversationId, conversationId), eq(inbox.wake, true)),
+						and(
+							eq(inbox.conversationId, conversationId),
+							eq(inbox.wake, true),
+							finish === "question" ? isNull(inbox.subagentId) : undefined,
+						),
 					)
 					.limit(1)
 			: [true];
@@ -368,9 +388,14 @@ export async function drain(
 		else if (typeof finish === "function")
 			parentId = await settle(tx, conversationId, finish());
 		else if (finish)
+			// it ends with its reply, which the User has yet to see
 			await tx
 				.update(conversation)
-				.set({ status: "idle" })
+				.set({
+					status: "idle",
+					unread: true,
+					awaitingReply: finish === "question",
+				})
 				.where(eq(conversation.id, conversationId));
 		// pi UserMessages
 		return inputs.map((i) => i.message);
