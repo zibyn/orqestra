@@ -73,7 +73,7 @@ export async function runAgent(
 				compaction.firstKeptId,
 				compaction.tokensBefore,
 			);
-		// a Subagent gets no Subagent Tools, and a step limit whose last request goes without Tools,
+		// a Subagent at the deepest level gets no Subagent Tools; every Subagent gets a step limit whose last request goes without Tools,
 		// so it answers with what it has rather than stopping mid-search
 		let steps = 0;
 		const agent = new Agent({
@@ -88,7 +88,7 @@ export async function runAgent(
 					...(memory
 						? [...memoryTools(memory, sub), recallTool(run.recall)]
 						: []),
-					...(sub ? [] : subagentTools(config, run.subagents)),
+					...(run.subagents ? subagentTools(config, run.subagents) : []),
 				],
 				messages,
 			},

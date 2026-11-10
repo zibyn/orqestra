@@ -142,10 +142,21 @@ type Ctx = { run: RunHandle; seen: Message[]; toolCallId: string };
 type Call = { name: string; run: (ctx: Ctx) => Promise<string> };
 type Step = (ctx: Ctx) => string | Call[] | Promise<string | Call[]>;
 
-let queues: { parent: Step[]; sub: Step[] } = { parent: [], sub: [] };
-/** Subagents run alongside their parent, so each Run takes the next step meant for whoever runs it. */
-function script(steps: { parent: Step[]; sub?: Step[] }) {
-	queues = { parent: [...steps.parent], sub: [...(steps.sub ?? [])] };
+let queues: { parent: Step[]; sub: Step[]; deep: Step[] } = {
+	parent: [],
+	sub: [],
+	deep: [],
+};
+/**
+ * Subagents run alongside their parent, so each Run takes the next step meant for whoever runs it:
+ * `sub` for Subagents that may start Subagents of their own, `deep` for those at the deepest level.
+ */
+function script(steps: { parent: Step[]; sub?: Step[]; deep?: Step[] }) {
+	queues = {
+		parent: [...steps.parent],
+		sub: [...(steps.sub ?? [])],
+		deep: [...(steps.deep ?? [])],
+	};
 }
 /** A handler that replaces the script for one test. */
 let override: ((run: RunHandle) => Promise<void>) | undefined;
@@ -154,7 +165,9 @@ async function scripted(run: RunHandle) {
 	if (override) return override(run);
 	const seen = run.transcript.messages.map((m) => m.message);
 	for (;;) {
-		const step = (run.isSubagent ? queues.sub : queues.parent).shift();
+		const step = (
+			!run.isSubagent ? queues.parent : run.subagents ? queues.sub : queues.deep
+		).shift();
 		if (!step) throw new Error("No scripted step left");
 		const reply = await step({ run, seen, toolCallId: "" });
 		if (typeof reply === "string") {
@@ -194,6 +207,11 @@ async function scripted(run: RunHandle) {
 	}
 }
 
+/** The Run's Subagent Tools, which a Run at the deepest level lacks. */
+const subagents = (run: RunHandle) => {
+	if (!run.subagents) throw new Error("This Run has no Subagent Tools");
+	return run.subagents;
+};
 const say =
 	(text: string): Step =>
 	() =>
@@ -210,7 +228,7 @@ const start = (...briefs: string[]): Call => ({
 	name: "subagent",
 	run: async ({ run, toolCallId }) =>
 		`Started subagent ${(
-			await run.subagents.start(
+			await subagents(run).start(
 				toolCallId,
 				briefs.map((brief) => ({ brief })),
 			)
@@ -219,13 +237,13 @@ const start = (...briefs: string[]): Call => ({
 const message = (number: number, text: string): Call => ({
 	name: "subagent_message",
 	run: async ({ run }) =>
-		(await run.subagents.message(number, text)).continued
+		(await subagents(run).message(number, text)).continued
 			? `Subagent ${number} continues.`
 			: "Sent.",
 });
 const stopSubagents = (numbers: number[]): Call => ({
 	name: "subagent_stop",
-	run: async ({ run }) => `Stopping ${await run.subagents.stop(numbers)}`,
+	run: async ({ run }) => `Stopping ${await subagents(run).stop(numbers)}`,
 });
 /** Resolves once `signal` aborts, at once if it already has: a Stop can land before the step listens. */
 const untilAborted = (signal: AbortSignal) =>
@@ -522,7 +540,7 @@ describe.skipIf(!url)(
 						name: "subagent",
 						run: async ({ run, toolCallId }) =>
 							String(
-								await run.subagents.start(toolCallId, [
+								await subagents(run).start(toolCallId, [
 									{ brief: "b", template: "small" },
 								]),
 							),
@@ -551,7 +569,7 @@ describe.skipIf(!url)(
 						name: "subagent",
 						run: async ({ run, toolCallId }) =>
 							String(
-								await run.subagents.start(toolCallId, [
+								await subagents(run).start(toolCallId, [
 									{ brief: "b", template: "nope" },
 								]),
 							),
@@ -835,7 +853,7 @@ describe.skipIf(!url)(
 						name: "subagent",
 						run: async ({ run, toolCallId }) => {
 							const tasks = Array.from({ length: 17 }, () => ({ brief: "b" }));
-							refused = await run.subagents
+							refused = await subagents(run)
 								.start(toolCallId, tasks)
 								.catch((e) => e);
 							return "";
@@ -1035,6 +1053,308 @@ describe.skipIf(!url)(
 						JSON.stringify(m).includes("task-notification"),
 				),
 			).toHaveLength(2);
+		});
+
+		describe("nested Subagents", () => {
+			it("nests a Subagent under a Subagent down to the deepest level, which starts none, and the middle one notifies only after a summary Run", async () => {
+				const { gate: dug, release } = gate();
+				let deepest: RunHandle["subagents"] | null = null;
+				let summarized = "";
+				script({
+					parent: [call(start("lead")), say("Asked the lead"), say("All done")],
+					sub: [
+						call(start("dig")),
+						say("Waiting on my helper"),
+						({ seen }) => {
+							summarized = JSON.stringify(seen.at(-1));
+							return "summary: dug";
+						},
+					],
+					deep: [
+						async ({ run }) => {
+							deepest = run.subagents;
+							await dug;
+							return "dug";
+						},
+					],
+				});
+				const id = await send("go");
+				// the lead's Run is over, but its helper still works: no Notification yet, and the lead waits idle
+				const waiting = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.status === "idle" &&
+						v.subagents.length === 2 &&
+						v.subagents[1].outcome === "running" &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				const [lead, helper] = waiting?.subagents ?? [];
+				expect(lead).toMatchObject({
+					parentId: id,
+					depth: 1,
+					outcome: "running",
+				});
+				expect(helper).toMatchObject({
+					parentId: lead.id,
+					depth: 2,
+					number: 1,
+				});
+				await waitFor(
+					() =>
+						db.query.conversation.findFirst({
+							where: (c, { eq }) => eq(c.id, lead.id),
+						}),
+					(c) => c?.status === "idle",
+				);
+				expect(waiting?.messages.some((m) => m.subagentId === lead.id)).toBe(
+					false,
+				);
+				expect(deepest).toBeUndefined();
+
+				release();
+				const view = await waitFor(() => get(id), idle(6));
+				expect(view?.subagents.map((s) => s.outcome)).toEqual([
+					"completed",
+					"completed",
+				]);
+				// one Notification from the lead, with its summary
+				const notified = view?.messages.filter((m) => m.subagentId);
+				expect(notified?.map((m) => m.subagentId)).toEqual([lead.id]);
+				expect(JSON.stringify(notified?.[0].message.content)).toContain(
+					"summary: dug",
+				);
+				expect(summarized).toContain("task-notification");
+				expect(
+					(await conversations.subagentTranscript(userId, lead.id))?.map(
+						(m) => m.role,
+					),
+				).toEqual([
+					"user",
+					"assistant",
+					"toolResult",
+					"assistant",
+					"user",
+					"assistant",
+				]);
+			});
+
+			it("gives Subagents no Subagent Tools when the depth limit is 1, as before nesting", async () => {
+				const before = runs.limits.maxSubagentDepth;
+				runs.limits.maxSubagentDepth = async () => 1;
+				try {
+					let had: RunHandle["subagents"] | null = null;
+					script({
+						parent: [call(start("lead")), say("Asked"), say("Done")],
+						deep: [
+							({ run }) => {
+								had = run.subagents;
+								return "done";
+							},
+						],
+					});
+					const id = await send("go");
+					await waitFor(() => get(id), idle(6));
+					expect(had).toBeUndefined();
+				} finally {
+					runs.limits.maxSubagentDepth = before;
+				}
+			});
+
+			it(`shares the budget of ${MAX_SUBAGENTS_PER_USER_MESSAGE} starts across the tree, renewed only by a User message to the root`, async () => {
+				const refusals: unknown[] = [];
+				const tryStart = (n: number): Call => ({
+					name: "subagent",
+					run: async ({ run, toolCallId }) => {
+						await run.subagents
+							?.start(
+								toolCallId,
+								Array.from({ length: n }, () => ({ brief: "b" })),
+							)
+							.catch((e) => refusals.push(e));
+						return "";
+					},
+				});
+				script({
+					parent: [
+						call(start("lead")),
+						say("Asked"),
+						say("Lead done"),
+						// after the User's next message
+						call(tryStart(1)),
+						say("Asked again"),
+						say("Done"),
+					],
+					sub: [
+						call(tryStart(8)),
+						call(tryStart(7)),
+						// the root's start and these 15 spent it all
+						call(tryStart(1)),
+						say("Waiting"),
+						say("Summed up"),
+						say("One more done"),
+					],
+					deep: Array.from({ length: 15 }, () => say("done")),
+				});
+				const id = await send("go");
+				const first = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.status === "idle" &&
+						v.subagents.length === 16 &&
+						v.subagents.every((s) => s.outcome === "completed") &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				expect(refusals).toHaveLength(1);
+				expect(refusals[0]).toBeInstanceOf(BudgetExceeded);
+				expect(refusals[0]).toMatchObject({ used: 16 });
+				// fifteen Notifications reached the lead, and one the root
+				expect(first?.messages.filter((m) => m.subagentId)).toHaveLength(1);
+
+				await send("and one more", id);
+				await waitFor(
+					() => get(id),
+					(v) =>
+						v?.status === "idle" &&
+						v.subagents.length === 17 &&
+						v.subagents.every((s) => s.outcome === "completed") &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				expect(refusals).toHaveLength(1);
+			});
+
+			it(`runs at most ${MAX_SUBAGENTS} Subagents of a tree at once, not counting one that waits for its own`, async () => {
+				const { gate: done, release } = gate();
+				const gated: Step = async () => {
+					await done;
+					return "done";
+				};
+				script({
+					parent: [call(start("lead")), say("Asked"), say("Done")],
+					sub: [
+						call(start("1", "2", "3", "4", "5")),
+						say("Waiting"),
+						say("Summed up"),
+					],
+					deep: Array.from({ length: 5 }, () => gated),
+				});
+				const id = await send("go");
+				const busy = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.subagents.length === 6 &&
+						v.subagents.filter((s) => s.outcome === "running").length === 5,
+				);
+				expect(busy?.subagents.map((s) => s.outcome)).toEqual([
+					"running",
+					...Array(MAX_SUBAGENTS).fill("running"),
+					"queued",
+				]);
+				release();
+				const view = await waitFor(() => get(id), idle(6));
+				expect(view?.subagents.every((s) => s.outcome === "completed")).toBe(
+					true,
+				);
+			});
+
+			it("stops the whole subtree when the User stops, with Notifications that wake nobody", async () => {
+				script({
+					parent: [call(start("lead")), say("Asked")],
+					sub: [call(start("dig")), hang],
+					deep: [hang],
+				});
+				const id = await send("go");
+				await waitFor(
+					() => get(id),
+					(v) =>
+						v?.subagents.length === 2 &&
+						v.subagents.every((s) => s.outcome === "running") &&
+						v.status === "idle",
+				);
+				await conversations.stop(userId, id);
+				const view = await waitFor(
+					() => get(id),
+					(v) => !!v?.subagents.every((s) => s.outcome === "stopped"),
+				);
+				await new Promise((r) => setTimeout(r, 300));
+				const notifications = await db
+					.select()
+					.from(schema.inbox)
+					.where(sql`${schema.inbox.subagentId} is not null`);
+				expect(notifications).toHaveLength(2);
+				expect(notifications.every((n) => !n.wake)).toBe(true);
+				// the root did not reply again
+				const replies = (v: typeof view) =>
+					v?.messages.filter((m) => m.message.role === "assistant").length;
+				expect(replies(await get(id))).toBe(replies(view));
+				expect((await get(id))?.status).toBe("idle");
+			});
+
+			it("has a Subagent that waits for its own sum up once the User stops the last of them from its panel", async () => {
+				script({
+					parent: [call(start("lead")), say("Asked"), say("Done")],
+					sub: [call(start("dig")), say("Waiting"), say("Dig was stopped")],
+					deep: [hang],
+				});
+				const id = await send("go");
+				const waiting = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.subagents.length === 2 &&
+						v.subagents.every((s) => s.outcome === "running") &&
+						v.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				// the lead's Run has ended, and it waits
+				await waitFor(
+					() =>
+						db.query.conversation.findFirst({
+							where: (c, { eq }) =>
+								eq(c.id, waiting?.subagents[0].id as string),
+						}),
+					(c) => c?.status === "idle",
+				);
+				await conversations.stopSubagent(
+					userId,
+					waiting?.subagents[1].id as string,
+				);
+				const view = await waitFor(() => get(id), idle(6));
+				expect(view?.subagents.map((s) => s.outcome)).toEqual([
+					"completed",
+					"stopped",
+				]);
+				expect(JSON.stringify(view?.messages[4].message.content)).toContain(
+					"Dig was stopped",
+				);
+			});
+
+			it("streams a nested Subagent's reply to the root's page under its id", async () => {
+				const { gate: listening, release } = gate();
+				script({
+					parent: [call(start("lead")), say("Asked"), say("Done")],
+					sub: [call(start("dig")), say("Waiting"), say("Summed up")],
+					deep: [
+						async ({ run }) => {
+							await listening;
+							await run.stream({ type: "start" });
+							return "dug";
+						},
+					],
+				});
+				const id = await send("go");
+				const stream = await conversations.subscribe(
+					userId,
+					id,
+					new AbortController().signal,
+				);
+				release();
+				const events = await collect(stream as ReadableStream, (es) =>
+					es.some((e) => e.type === "start" && e.subagent),
+				);
+				const view = await waitFor(() => get(id), idle(6));
+				expect(events.find((e) => e.type === "start")).toMatchObject({
+					subagent: view?.subagents[1].id,
+				});
+			});
 		});
 
 		it("tells the parent's page when a Subagent compacts", async () => {

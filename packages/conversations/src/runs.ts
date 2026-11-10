@@ -2,13 +2,38 @@ import { randomUUID } from "node:crypto";
 import { db, type Tx } from "@orqestra/db";
 import { conversation, inbox, message, subagent } from "@orqestra/db/schema";
 import { createPostgresBackend, Queue } from "bullmq";
-import { and, asc, count, desc, eq, exists, inArray, sql } from "drizzle-orm";
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	exists,
+	inArray,
+	isNotNull,
+	sql,
+} from "drizzle-orm";
 
-/** Locks the row of a Conversation's root (a Subagent's parent, else itself): every Run start and finish decides under it. */
+/** Locks the row of a Conversation's root, the top-level Conversation of its tree: every Run start and finish in the tree decides under it. */
 export const lockRoot = (tx: Tx, conversationId: string) =>
 	tx.execute(
-		sql`select 1 from ${conversation} where ${conversation.id} = (select coalesce(${conversation.parentId}, ${conversation.id}) from ${conversation} where ${conversation.id} = ${conversationId}) for update`,
+		sql`select 1 from ${conversation} where ${conversation.id} = (select ${conversation.rootId} from ${conversation} where ${conversation.id} = ${conversationId}) for update`,
 	);
+
+/** The root of a Conversation's tree, whose page shows the whole tree; undefined when it is gone. */
+export const rootOf = async (conversationId: string) =>
+	(
+		await db.query.conversation.findFirst({
+			columns: { rootId: true },
+			where: eq(conversation.id, conversationId),
+		})
+	)?.rootId;
+
+/**
+ * How deep Subagents may nest: a Subagent at this depth gets no Subagent Tools; 1 lets only top-level Agents start them.
+ * shortcut: a constant until #63's `limits` table lands; read `limits.max_subagent_depth` then. Tests replace it.
+ */
+export const limits = { maxSubagentDepth: async () => 2 };
 
 /** Matches the `subagent` rows of a parent Conversation's Subagents. */
 export const subagentOf = (parentId: string) =>
@@ -20,7 +45,7 @@ export const subagentOf = (parentId: string) =>
 			.where(eq(conversation.parentId, parentId)),
 	);
 
-/** Subagents of one parent Conversation running at once; more wait their turn. */
+/** Subagents of one tree running at once; more wait their turn. */
 export const MAX_SUBAGENTS = 4;
 
 /** BullMQ queues with one job `{ conversationId }` per Run: top-level Conversations', and Subagents' apart so these cannot starve them. */
@@ -34,7 +59,7 @@ export const conversationChannel = (conversationId: string) =>
 /** NOTIFY channel whose payload is the id of the Conversation whose run should stop (web -> worker). */
 export const STOP_CHANNEL = "conversation_stop";
 
-/** Sends a ConversationEvent to the pages showing this Conversation; a Subagent's events go to its parent's id. */
+/** Sends a ConversationEvent to the pages showing this Conversation; a Subagent's events go to its root's id. */
 export const notify = (conversationId: string, event: ConversationEvent) =>
 	db.execute(
 		sql`select pg_notify(${conversationChannel(conversationId)}, ${JSON.stringify(event)})`,
@@ -136,13 +161,15 @@ export async function ensureRun(conversationId: string) {
 			.limit(1);
 		if (!wake) return undefined;
 		if (conv.parentId) {
-			// counted by Run, not outcome: a stopped Subagent holds its slot until its Run has ended
+			// counted by Run, not outcome, across the tree: a stopped Subagent holds its slot until its Run has ended,
+			// and one waiting idle for its own Subagents holds none
 			const [{ running }] = await tx
 				.select({ running: count() })
 				.from(conversation)
 				.where(
 					and(
-						eq(conversation.parentId, conv.parentId),
+						eq(conversation.rootId, conv.rootId),
+						isNotNull(conversation.parentId),
 						eq(conversation.status, "running"),
 					),
 				);
@@ -205,8 +232,12 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 	const conv = await tx.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
-	// idle with no Run waiting for a slot: settled already
-	if (!row || !conv || (conv.status === "idle" && row.outcome !== "queued"))
+	// idle and neither waiting for a slot nor for its own Subagents: settled already
+	if (
+		!row ||
+		!conv ||
+		(conv.status === "idle" && !["queued", "running"].includes(row.outcome))
+	)
 		return undefined;
 	const end =
 		row.outcome === "stopped"
@@ -227,6 +258,10 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 	// the Notification is answered on the Model the parent last replied with
 	const parentId = conv.parentId as string;
 	const last = await lastModel(tx, parentId);
+	// a parent that waits for its Subagents wakes for the last of them, stopped or not, to sum up
+	const wake = (await waiting(tx, parentId))
+		? !(await busy(tx, parentId))
+		: end.outcome !== "stopped";
 	await tx.insert(inbox).values({
 		conversationId: parentId,
 		message: {
@@ -237,20 +272,53 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 		model: last?.model ?? "",
 		thinkingLevel: last?.thinkingLevel ?? "off",
 		subagentId: conversationId,
-		wake: end.outcome !== "stopped",
+		wake,
 	});
 	return parentId;
 }
 
-/** After a Subagent ended: the parent answers its Notification, and the Subagents waiting for a slot get one. */
-async function wakeAfter(parentId: string) {
-	await saved(parentId);
-	const waiting = await db
+/** Whether any of a Conversation's own Subagents is queued or running (or waiting for its own). */
+async function busy(tx: Tx, parentId: string) {
+	const [row] = await tx
 		.select({ id: subagent.conversationId })
 		.from(subagent)
 		.where(
 			and(
 				subagentOf(parentId),
+				inArray(subagent.outcome, ["queued", "running"]),
+			),
+		)
+		.limit(1);
+	return !!row;
+}
+
+/** A Subagent whose Run ended while its own Subagents still work: idle, but not yet ended, it holds back its Notification. */
+async function waiting(tx: Tx, conversationId: string) {
+	const [row] = await tx
+		.select({ outcome: subagent.outcome })
+		.from(subagent)
+		.innerJoin(conversation, eq(conversation.id, subagent.conversationId))
+		.where(
+			and(
+				eq(subagent.conversationId, conversationId),
+				eq(conversation.status, "idle"),
+			),
+		);
+	return row?.outcome === "running";
+}
+
+/** After a Subagent's Run ended: the parent answers its Notification, and the tree's Subagents waiting for a slot get one. */
+async function wakeAfter(parentId: string) {
+	const rootId = await rootOf(parentId);
+	if (!rootId) return;
+	await saved(rootId);
+	const waiting = await db
+		.select({ id: subagent.conversationId })
+		.from(subagent)
+		.innerJoin(conversation, eq(conversation.id, subagent.conversationId))
+		.where(
+			and(
+				eq(conversation.rootId, rootId),
 				exists(
 					db
 						.select()
@@ -264,7 +332,7 @@ async function wakeAfter(parentId: string) {
 				),
 			),
 		)
-		.orderBy(asc(subagent.number));
+		.orderBy(asc(conversation.createdAt), asc(subagent.number));
 	// one that cannot start is marked failed by ensureRun; the Subagent that ended stays settled either way
 	for (const id of [parentId, ...waiting.map((w) => w.id)])
 		await ensureRun(id).catch((error) =>
@@ -341,9 +409,21 @@ export async function drain(
 					subagentId: i.subagentId,
 				})),
 			);
-		else if (typeof finish === "function")
-			parentId = await settle(tx, conversationId, finish());
-		else if (finish)
+		else if (typeof finish === "function") {
+			// its own Subagents still work: it waits for them idle, freeing its slot, and ends with a summary Run once they are done
+			if (await busy(tx, conversationId)) {
+				await tx
+					.update(conversation)
+					.set({ status: "idle" })
+					.where(eq(conversation.id, conversationId));
+				parentId = (
+					await tx.query.conversation.findFirst({
+						columns: { parentId: true },
+						where: eq(conversation.id, conversationId),
+					})
+				)?.parentId as string;
+			} else parentId = await settle(tx, conversationId, finish());
+		} else if (finish)
 			await tx
 				.update(conversation)
 				.set({ status: "idle" })
@@ -356,19 +436,17 @@ export async function drain(
 }
 
 /**
- * Stops a parent's Subagents (those `numbers`, else all) that are queued or running.
- * Queued ones end at once; running ones are marked stopped, which their Run sees when it starts or the stop request reaches it,
- * and keep their slot until it ends. Returns the numbers it stopped.
+ * Stops a parent's Subagents (those `numbers`, else all) that are queued or running, and every Subagent under them.
+ * Those without a Run (queued, or waiting for their own Subagents) end at once; running ones are marked stopped,
+ * which their Run sees when it starts or the stop request reaches it, and keep their slot until it ends.
+ * Their Notifications wake nobody, except a parent waiting for its Subagents, which sums up once the last has ended.
+ * Returns the numbers of the parent's own it stopped.
  */
 export async function stopSubagents(parentId: string, numbers?: number[]) {
-	const rows = await db.transaction(async (tx) => {
+	const { targets, running } = await db.transaction(async (tx) => {
 		await lockRoot(tx, parentId);
-		const rows = await tx
-			.select({
-				id: subagent.conversationId,
-				number: subagent.number,
-				outcome: subagent.outcome,
-			})
+		const targets = await tx
+			.select({ id: subagent.conversationId, number: subagent.number })
 			.from(subagent)
 			.where(
 				and(
@@ -377,25 +455,33 @@ export async function stopSubagents(parentId: string, numbers?: number[]) {
 					numbers && inArray(subagent.number, numbers),
 				),
 			);
-		for (const r of rows)
-			if (r.outcome === "queued")
-				await settle(tx, r.id, { outcome: "stopped", result: "" });
-		const running = rows.filter((r) => r.outcome === "running");
+		if (!targets.length) return { targets, running: [] };
+		// with the subtrees below them, shallowest first, so a parent is stopped before its Subagents settle
+		const { rows } = await tx.execute<{ id: string; status: string }>(
+			sql`with recursive tree as (
+				select id from conversation where id in ${targets.map((t) => t.id)}
+				union all
+				select c.id from conversation c join tree on c.parent_id = tree.id
+			)
+			select c.id, c.status from tree
+			join conversation c on c.id = tree.id
+			join subagent s on s.conversation_id = c.id
+			where s.outcome in ('queued', 'running')
+			order by c.depth`,
+		);
+		const running = rows.filter((r) => r.status === "running").map((r) => r.id);
 		if (running.length)
 			await tx
 				.update(subagent)
 				.set({ outcome: "stopped" })
-				.where(
-					inArray(
-						subagent.conversationId,
-						running.map((r) => r.id),
-					),
-				);
-		return rows;
+				.where(inArray(subagent.conversationId, running));
+		for (const r of rows)
+			if (r.status !== "running")
+				await settle(tx, r.id, { outcome: "stopped", result: "" });
+		return { targets, running };
 	});
-	await requestStop(
-		rows.filter((r) => r.outcome === "running").map((r) => r.id),
-	);
-	if (rows.length) await saved(parentId);
-	return rows.map((r) => r.number);
+	if (!targets.length) return [];
+	await requestStop(running);
+	await wakeAfter(parentId);
+	return targets.map((t) => t.number);
 }

@@ -65,7 +65,7 @@ function refusal(error: unknown) {
  */
 export function subagentTools(
 	config: Pick<OrqestraConfig, "agents">,
-	subagents: RunHandle["subagents"],
+	subagents: NonNullable<RunHandle["subagents"]>,
 ) {
 	const templates = config.agents
 		.map((a) => `- ${a.id} (${a.name}): ${a.description}`)

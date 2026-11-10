@@ -26,7 +26,7 @@ import {
 	orrery as orreryClient,
 	workspacePath,
 } from "@orqestra/tools";
-import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import pg from "pg";
 import { MEMORY_CHANGES, undoChange } from "./memories.ts";
 import {
@@ -261,9 +261,12 @@ export function createConversations({
 					.select({ firstKeptMessageId: compaction.firstKeptMessageId })
 					.from(compaction)
 					.where(eq(compaction.conversationId, id)),
+				// the whole tree's, so its panels drill down to Subagents of Subagents
 				db
 					.select({
 						id: subagent.conversationId,
+						parentId: sql<string>`${conversation.parentId}`,
+						depth: conversation.depth,
 						toolCallId: subagent.toolCallId,
 						number: subagent.number,
 						template: conversation.agentId,
@@ -272,8 +275,8 @@ export function createConversations({
 					})
 					.from(subagent)
 					.innerJoin(conversation, eq(conversation.id, subagent.conversationId))
-					.where(eq(conversation.parentId, id))
-					.orderBy(asc(subagent.number)),
+					.where(eq(conversation.rootId, id))
+					.orderBy(asc(conversation.depth), asc(subagent.number)),
 			]);
 			return {
 				id: conv.id,
@@ -474,9 +477,15 @@ export function createConversations({
 				await tx.execute(
 					sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
 				);
+				// with the Subagents those started in turn
 				return (
 					await tx.execute<{ id: string; sandboxId: string | null }>(
-						sql`delete from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id}) returning id, sandbox_id as "sandboxId"`,
+						sql`with recursive dropped as (
+							select id from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id})
+							union all
+							select c.id from conversation c join dropped on c.parent_id = dropped.id
+						)
+						delete from ${conversation} where ${conversation.id} in (select id from dropped) returning id, sandbox_id as "sandboxId"`,
 					)
 				).rows;
 			});
@@ -530,16 +539,16 @@ export function createConversations({
 		/** False when the Conversation is not the user's. */
 		async delete(userId: string, id: string) {
 			if (!(await owned(userId, id))) return false;
-			const children = await db
+			const tree = await db
 				.select({ id: conversation.id })
 				.from(conversation)
-				.where(eq(conversation.parentId, id));
+				.where(eq(conversation.rootId, id));
 			// its Run and its Subagents' stop first, then they go; a Run that outlives its Conversation saves nothing more
-			await requestStop([id, ...children.map((c) => c.id)]);
+			await requestStop(tree.map((c) => c.id));
 			// its Subagents' rows too, so the Sandbox ids are those last stored: a Run claims one under the row's lock
 			const deleted = await db
 				.delete(conversation)
-				.where(or(eq(conversation.id, id), eq(conversation.parentId, id)))
+				.where(eq(conversation.rootId, id))
 				.returning({ sandboxId: conversation.sandboxId });
 			await deleteSandboxes(deleted.map((d) => d.sandboxId));
 			return true;
