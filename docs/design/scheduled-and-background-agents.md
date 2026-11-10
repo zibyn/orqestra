@@ -1,6 +1,6 @@
 # 定时任务、后台运行与异步 Agent：设计
 
-> 状态：draft（2026-11-10）。来源：wayfinder 地图 [#52](https://github.com/zibyn/orqestra/issues/52)，每节标出所依据的决议票。术语以 `GLOSSARY.md` 为准；Subagent 嵌套见 `docs/adr/0001-subagents-are-child-conversations.md` 的修订。
+> 状态：accepted（2026-11-10）。来源：wayfinder 地图 [#52](https://github.com/zibyn/orqestra/issues/52)，每节标出所依据的决议票。术语以 `GLOSSARY.md` 为准；Subagent 嵌套见 `docs/adr/0001-subagents-are-child-conversations.md` 的修订。
 
 ## 1. 目标与非目标
 
@@ -173,7 +173,7 @@ inbox 写入 note(origin = 'timer', wake, model / thinking 取 timer 行)
 
 ## 6. 分期
 
-每期都能单独上线。顺序依据依赖关系：无人值守的护栏必须先于 Firing 和 Timer 上线。
+每期都能单独上线。无人值守的护栏必须先于 Firing 和 Timer 上线。
 
 1. **Limits 分组 + 护栏底座**：`limits` 表和控制台页面；`conversation.unattended` 和 `origin`；按 Unattended Run 计步和墙钟上限。现有 Run 都是有人值守的，所以这一期行为不变。
 2. **Unread + Question**：`unread`、`awaiting_reply`、`ask_user`、等待期间暂存 Notification、列表标记。
@@ -183,7 +183,7 @@ inbox 写入 note(origin = 'timer', wake, model / thinking 取 timer 行)
 6. **Subagent 嵌套**：`root_id` / `depth` 迁移，lockRoot、预算、并发、Stop、事件改为按根走，中间层延后发 Notification，面板面包屑。
 7. **Task Draft**：Tool、卡片、预填抽屉。依赖第 3 期。
 
-第 2、4、5、6 期之间互不依赖，可以并行。
+依赖：3、5 依赖 1；4 依赖 2、3（「等你回复」和 Firing 类 Alert）；7 依赖 3；1、2、6 可立即开工。
 
 ## 7. 实现时核实
 
