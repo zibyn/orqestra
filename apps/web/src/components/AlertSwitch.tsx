@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { DropdownMenuCheckboxItem } from "#/components/ui/dropdown-menu";
 import { api, ok } from "#/lib/api";
 import { m } from "#/paraglide/messages";
+import { getLocale } from "#/paraglide/runtime";
 
 const subscriptions = () => api().api.push.subscriptions;
 /** This browser's push subscription, if it has one. */
@@ -34,7 +35,10 @@ export function AlertSwitch() {
 		setBusy(true);
 		try {
 			if (enable) {
-				const registration = await navigator.serviceWorker.register("/sw.js");
+				// the Alerts' few words come in the app's language
+				const registration = await navigator.serviceWorker.register(
+					`/sw.js?locale=${getLocale()}`,
+				);
 				await navigator.serviceWorker.ready;
 				// asks for the permission to notify; throws when refused
 				const sub = await registration.pushManager.subscribe({

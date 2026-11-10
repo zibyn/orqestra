@@ -4,12 +4,15 @@ import { expect, test } from "vitest";
 type Window = { url: string; focused: boolean; focus?: () => void };
 
 /** Runs public/sw.js against a fake service worker scope with these windows open; returns its handlers and what they did. */
-function worker(windows: Window[], language = "en-US") {
+function worker(windows: Window[], script = "/sw.js?locale=en") {
 	const handlers: Record<string, (event: unknown) => void> = {};
 	const shown: { title: string; options: { body: string } }[] = [];
 	const opened: string[] = [];
 	const self = {
-		location: { origin: "https://orq.example" },
+		location: {
+			origin: "https://orq.example",
+			href: `https://orq.example${script}`,
+		},
 		addEventListener: (type: string, h: (e: unknown) => void) => {
 			handlers[type] = h;
 		},
@@ -22,10 +25,7 @@ function worker(windows: Window[], language = "en-US") {
 				shown.push({ title, options }),
 		},
 	};
-	new Function("self", "navigator", readFileSync("public/sw.js", "utf8"))(
-		self,
-		{ language },
-	);
+	new Function("self", readFileSync("public/sw.js", "utf8"))(self);
 	const dispatch = async (type: string, event: object) => {
 		let done: Promise<unknown> = Promise.resolve();
 		handlers[type]({
@@ -47,13 +47,16 @@ function worker(windows: Window[], language = "en-US") {
 
 const alert = { title: "News", status: "question", url: "/c/1" };
 
-test("shows an Alert, in the browser's language", async () => {
-	const sw = worker(
-		[{ url: "https://orq.example/c/2", focused: true }],
-		"zh-CN",
-	);
-	await sw.push(alert);
-	expect(sw.shown).toMatchObject([
+test("shows an Alert in the language the app registered it in, Chinese by default", async () => {
+	const windows = [{ url: "https://orq.example/c/2", focused: true }];
+	const en = worker(windows);
+	await en.push({ ...alert, status: "partial" });
+	expect(en.shown).toMatchObject([
+		{ title: "News", options: { body: "Partly done" } },
+	]);
+	const zh = worker(windows, "/sw.js");
+	await zh.push(alert);
+	expect(zh.shown).toMatchObject([
 		{ title: "News", options: { body: "等你回复" } },
 	]);
 });
