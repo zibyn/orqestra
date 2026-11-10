@@ -29,9 +29,13 @@ export function s3Store(
 		region: env.S3_REGION,
 	});
 	return {
-		async put(key, body) {
+		async put(key, body, { signal } = {}) {
 			try {
-				await s3.write(key, new Response(body));
+				// a stream body goes up as a multipart upload, 5 MiB parts sent as they fill; the signal errors it
+				await s3.write(
+					key,
+					new Response(body.pipeThrough(new TransformStream(), { signal })),
+				);
 			} catch (error) {
 				// a multipart upload that failed may have left an object
 				await s3.delete(key).catch(() => {});

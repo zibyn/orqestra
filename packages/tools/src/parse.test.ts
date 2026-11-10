@@ -105,6 +105,9 @@ const state = (item: object): Answer => ({
 });
 
 const pdf = new TextEncoder().encode("%PDF-1.7 report");
+const threePages = new TextEncoder().encode(
+	"%PDF-1.7\n1 0 obj <</Type /Pages /Count 3>>\n2 0 obj <</Type /Page>>\n3 0 obj <</Type/Page>>\n4 0 obj <</Type /Page /Parent 1 0 R>>",
+);
 
 const selfHosted: DocumentParser = {
 	baseUrl: "http://mineru.lan:8000/",
@@ -352,9 +355,6 @@ describe("parse through a self-hosted MinerU (v1 Tasks)", () => {
 	});
 
 	it("tells the Agent the document's pages and to pass `pages` when it is over /v1/usage's page limit", async () => {
-		const threePages = new TextEncoder().encode(
-			"%PDF-1.7\n1 0 obj <</Type /Pages /Count 3>>\n2 0 obj <</Type /Page>>\n3 0 obj <</Type/Page>>\n4 0 obj <</Type /Page /Parent 1 0 R>>",
-		);
 		const limited = fakeMineruV1({ maxPages: 2 });
 		const run = files({ "report.pdf": threePages });
 		await expect(
@@ -415,6 +415,13 @@ describe("parse through a self-hosted MinerU (v1 Tasks)", () => {
 		await expect(
 			parse(canceled.fetch, files().files, { name: "report.pdf" }, selfHosted),
 		).rejects.toThrow("MinerU failed (canceled)");
+		// the Task ended while its file's status lags behind
+		const ended = fakeMineruV1({
+			polls: [task({ status: "running" }, "failed")],
+		});
+		await expect(
+			parse(ended.fetch, files().files, { name: "report.pdf" }, selfHosted),
+		).rejects.toThrow("MinerU failed (failed)");
 		const refused = fakeMineruV1({
 			created: {
 				status: 401,
@@ -505,6 +512,15 @@ describe("parse", () => {
 		await expect(
 			parse(mineru.fetch, files().files, { name: "report.pdf" }),
 		).rejects.toThrow(/too many pages.*it has 312.*`pages`/);
+		// without MinerU's count, a PDF's own
+		const uncounted = fakeMineru({
+			polls: [state({ state: "failed", err_msg: "文件页数超过限制" })],
+		});
+		await expect(
+			parse(uncounted.fetch, files({ "report.pdf": threePages }).files, {
+				name: "report.pdf",
+			}),
+		).rejects.toThrow(/too many pages.*at most 200.*it has 3/);
 	});
 
 	it("puts MinerU's quota and other errors in plain words", async () => {

@@ -35,6 +35,11 @@ const PAGE_CHARS = 50_000;
 type Json = any;
 type Fetch = McpFetch;
 
+/** mineru.net's page limit per file: "文件页数不超出 200 页" (https://mineru.net/apiManage/docs). */
+const MINERU_NET_MAX_PAGES = 200;
+/** mineru.net's codes for a refused key. */
+const KEY_REFUSED = ["A0202", "A0211"];
+
 /** A MinerU error the Agent is told in plain words. */
 class MinerUError extends Error {
 	override name = "MinerUError";
@@ -45,7 +50,7 @@ function explain(
 	code: unknown,
 	msg: string,
 	totalPages?: number,
-	maxPages = 200,
+	maxPages = MINERU_NET_MAX_PAGES,
 ) {
 	if (code === -60006)
 		return new MinerUError(
@@ -56,11 +61,26 @@ function explain(
 			"MinerU's daily parsing quota is used up; try again tomorrow.",
 		);
 	// mineru.net's codes, then v1's
-	if (code === "A0202" || code === "A0211" || code === "invalid_api_key")
+	if (KEY_REFUSED.includes(code as string) || code === "invalid_api_key")
 		return new MinerUError(
 			"MinerU refused the Document Parser's key (invalid or expired); an Admin must enter a new one in the console.",
 		);
 	return new MinerUError(`MinerU failed (${code}): ${msg}`);
+}
+
+/** MinerU's JSON, undefined when `text` is not JSON. */
+function jsonOf(text: string): Json {
+	try {
+		return JSON.parse(text);
+	} catch {}
+}
+
+/** Throws when the PUT of a file to where MinerU said failed. */
+async function uploaded(put: Response) {
+	if (!put.ok)
+		throw new MinerUError(
+			`MinerU's upload answered ${put.status}: ${(await put.text()).slice(0, 500)}`,
+		);
 }
 
 /** One MinerU API: starts parsing a file and tells when its result zip is ready. */
@@ -72,7 +92,10 @@ interface Mapping {
 		pages?: string;
 	}): Promise<string>;
 	/** The result zip's URL once done, undefined while it is under way; throws why it failed. */
-	poll(id: string): Promise<string | undefined>;
+	poll(
+		id: string,
+		file: { name: string; bytes: Uint8Array },
+	): Promise<string | undefined>;
 }
 
 type Call = (
@@ -106,18 +129,12 @@ const v4 = (call: Call, fetch: Fetch, signal: AbortSignal): Mapping => ({
 			},
 		});
 		// the signed URL refuses a Content-Type; parsing starts once the upload is done
-		const put = await fetch(data.file_urls[0], {
-			method: "PUT",
-			body: bytes,
-			signal,
-		});
-		if (!put.ok)
-			throw new MinerUError(
-				`MinerU's upload answered ${put.status}: ${(await put.text()).slice(0, 500)}`,
-			);
+		await uploaded(
+			await fetch(data.file_urls[0], { method: "PUT", body: bytes, signal }),
+		);
 		return data.batch_id;
 	},
-	async poll(id) {
+	async poll(id, file) {
 		const { data } = await call(`/api/v4/extract-results/batch/${id}`);
 		const item = data.extract_result?.[0];
 		if (item?.state === "done") return item.full_zip_url;
@@ -126,7 +143,12 @@ const v4 = (call: Call, fetch: Fetch, signal: AbortSignal): Mapping => ({
 			const code =
 				item.err_code ??
 				(/-60006|页数|pages/.test(item.err_msg ?? "") ? -60006 : "failed");
-			throw explain(code, item.err_msg, item.extract_progress?.total_pages);
+			throw explain(
+				code,
+				item.err_msg,
+				// the PDF's own count when MinerU does not say
+				item.extract_progress?.total_pages || pdfPages(file.name, file.bytes),
+			);
 		}
 		return undefined;
 	},
@@ -154,16 +176,14 @@ const v1 = (call: Call, fetch: Fetch, signal: AbortSignal): Mapping => ({
 		// none when MinerU already holds these bytes
 		const upload = task.files?.[0]?.upload;
 		if (upload) {
-			const put = await fetch(upload.url, {
-				method: "PUT",
-				headers: upload.headers,
-				body: bytes,
-				signal,
-			});
-			if (!put.ok)
-				throw new MinerUError(
-					`MinerU's upload answered ${put.status}: ${(await put.text()).slice(0, 500)}`,
-				);
+			await uploaded(
+				await fetch(upload.url, {
+					method: "PUT",
+					headers: upload.headers,
+					body: bytes,
+					signal,
+				}),
+			);
 		}
 		return task.task_id;
 	},
@@ -171,7 +191,12 @@ const v1 = (call: Call, fetch: Fetch, signal: AbortSignal): Mapping => ({
 		const task = await call(`/v1/tasks/${encodeURIComponent(id)}`);
 		const file = task.files?.[0];
 		if (file?.status === "completed") return file.result_url;
-		if (["failed", "canceled"].includes(file?.status ?? task.status)) {
+		// an ended Task ends its file, whatever the file's status says yet
+		if (
+			[file?.status, task.status].some(
+				(s) => s === "failed" || s === "canceled",
+			)
+		) {
 			const error = file?.error ?? task.error;
 			throw explain(error?.code ?? task.status, error?.message ?? "");
 		}
@@ -248,14 +273,11 @@ export function mineru(
 				signal: AbortSignal.any([AbortSignal.timeout(60_000), signal]),
 			});
 			const text = await response.text();
-			let json: Json;
-			try {
-				json = JSON.parse(text);
-			} catch {
+			const json = jsonOf(text);
+			if (json === undefined)
 				throw new MinerUError(
 					`MinerU answered ${response.status}: ${text.slice(0, 500)}`,
 				);
-			}
 			check(json, response, text);
 			return json;
 		};
@@ -298,10 +320,10 @@ export function mineru(
 				? v4(call(signal, v4Check), handedOut, signal)
 				: v1(call(signal, v1Check), handedOut, signal);
 			const id = await api.start(file);
-			let url = await api.poll(id);
+			let url = await api.poll(id, file);
 			while (!url) {
 				await sleep(pollMs, undefined, { signal });
-				url = await api.poll(id);
+				url = await api.poll(id, file);
 			}
 			// v4 names it full.md, v1 markdown.md
 			return zipEntry(await download(url, signal), (path) =>
@@ -337,13 +359,10 @@ export async function testDocumentParser(
 			},
 		);
 		const text = await response.text();
-		let json: Json;
-		try {
-			json = JSON.parse(text);
-		} catch {}
+		const json = jsonOf(text);
 		if (
 			[401, 403].includes(response.status) ||
-			["A0202", "A0211"].includes(json?.code)
+			KEY_REFUSED.includes(json?.code)
 		)
 			return {
 				ok: false,
