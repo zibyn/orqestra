@@ -10,8 +10,8 @@ COPY . .
 RUN pnpm install --offline --frozen-lockfile && pnpm build
 # each its own package and production dependencies, without the store and the rest of the workspace;
 # the migrations keep packages/db's dev dependencies, since drizzle-kit is one;
-# the api's skips the release-age check, whose metadata (jose's) offline lacks: it deploys only the frozen lockfile's versions
-RUN pnpm --filter @orqestra/worker deploy --prod --offline /out/worker \
+# the api's and the worker's skip the release-age check, whose metadata offline lacks: they deploy only the frozen lockfile's versions
+RUN pnpm --filter @orqestra/worker deploy --prod --offline --config.minimum-release-age=0 /out/worker \
 	&& pnpm --filter @orqestra/api deploy --prod --offline --config.minimum-release-age=0 /out/api \
 	&& pnpm --filter @orqestra/db deploy --offline /out/migrate
 
