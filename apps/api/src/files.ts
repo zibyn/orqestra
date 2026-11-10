@@ -40,37 +40,25 @@ export async function upload(
 	}
 }
 
-const failures = {
-	not_found: 404,
-	no_file: 404,
-	gone: 410,
-	unavailable: 503,
-} as const;
-
-/** A file the Agent attached, read from the Conversation's Sandbox as it streams: Orqestra keeps no copy. */
+/** An Attachment of the Conversation, `?name=`, streamed from object storage. */
 export async function download(
 	conversations: Conversations,
 	userId: string,
 	id: string,
 	request: Request,
 ) {
-	const path = new URL(request.url).searchParams.get("path");
+	const name = new URL(request.url).searchParams.get("name");
 	const got =
-		z.uuid().safeParse(id).success && path
-			? await conversations.openFile(userId, id, path, request.signal)
+		z.uuid().safeParse(id).success && name
+			? await conversations.openFile(userId, id, name)
 			: { error: "not_found" as const };
-	if ("error" in got)
-		return error(
-			failures[got.error],
-			"file",
-			got.error === "no_file" ? "not_found" : got.error,
-		);
-	const { name, size, body } = got.file;
+	if ("error" in got) return error(404, "file", "not_found");
+	const { size, body } = got.file;
 	const headers = new Headers({
 		"content-type": "application/octet-stream",
 		"x-content-type-options": "nosniff",
-		"content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+		"content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(got.file.name)}`,
+		"content-length": String(size),
 	});
-	if (size !== undefined) headers.set("content-length", String(size));
 	return new Response(body, { headers });
 }

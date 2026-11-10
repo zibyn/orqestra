@@ -30,8 +30,10 @@ const { createConversations } = await import("@orqestra/conversations");
 const { startAgentWorker } = await import("./worker.ts");
 const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
+// one store, as the api and worker share one
+const { store } = memoryStore();
 const conversations = createConversations({
-	store: memoryStore().store,
+	store,
 	config: config.current,
 	skillFiles,
 });
@@ -65,9 +67,19 @@ const skilledAgent: AgentDefinition = {
 	skills: ["notes"],
 };
 const userId = "u1";
-// a command that runs until it is canceled
+// a command that runs until it is canceled, one that writes a report, and the check attach makes
 const orrery = memoryOrrery({
-	exec: (command) => (command === "sleep 1000" ? { running: true } : {}),
+	exec: (command, files) => {
+		if (command === "sleep 1000") return { running: true };
+		if (command === "make report")
+			files.set("out/report.txt", new TextEncoder().encode("first"));
+		const report = files.get("out/report.txt");
+		if (command.includes("realpath"))
+			return report
+				? { stdout: `${report.length}\n/workspace/out/report.txt` }
+				: { exit_code: 1 };
+		return {};
+	},
 });
 
 // Reads SSE events from a stream until `until` returns true
@@ -168,7 +180,7 @@ describe.skipIf(!url)(
 			stopWorker = await startAgentWorker(config.current, {
 				concurrency: 1,
 				orrery: () => orrery.client,
-				store: memoryStore().store,
+				store,
 				// Search answers with no results
 				toolbox: (services, allowed, options) =>
 					openToolbox(services, allowed, {
@@ -332,6 +344,54 @@ describe.skipIf(!url)(
 				(v) => v?.subagents[0]?.outcome === "stopped",
 			);
 			expect(view?.subagents[0].outcome).toBe("stopped");
+		});
+
+		it("keeps the file attach saw: the Sandbox changing or deleting it later changes nothing the User downloads", async () => {
+			script({
+				parent: [
+					fauxAssistantMessage(
+						fauxToolCall("bash", { command: "make report" }),
+					),
+					fauxAssistantMessage(
+						fauxToolCall("attach", { path: "out/report.txt" }),
+					),
+					fauxAssistantMessage("Here it is"),
+				],
+			});
+			const id = await conversations.send(userId, {
+				agentId: "faux",
+				text: "report",
+			});
+			const view = await waitFor(
+				() => conversations.get(userId, id),
+				(v) => v?.status === "idle" && v.messages.length === 6,
+			);
+			expect(view?.messages[4].message).toMatchObject({
+				isError: false,
+				details: {
+					attachment: {
+						path: "/workspace/out/report.txt",
+						name: "report.txt",
+						size: 5,
+					},
+				},
+			});
+			const download = async () => {
+				const got = await conversations.openFile(userId, id, "report.txt");
+				if (!("file" in got)) throw new Error(got.error);
+				return new Response(got.file.body).text();
+			};
+			const {
+				rows: [row],
+			} = await db.execute<{ sandbox_id: string }>(
+				sql`select sandbox_id from conversation where id = ${id}`,
+			);
+			orrery
+				.files(row.sandbox_id)
+				.set("out/report.txt", new TextEncoder().encode("second"));
+			expect(await download()).toBe("first");
+			await orrery.client.deleteSandbox(row.sandbox_id);
+			expect(await download()).toBe("first");
 		});
 	},
 );

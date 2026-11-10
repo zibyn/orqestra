@@ -74,26 +74,10 @@ const upload = (
 		body,
 		headers,
 	});
-const download = (id: string, path: string) =>
+const download = (id: string, name: string) =>
 	new Request(
-		`http://localhost/api/conversations/${id}/files?path=${encodeURIComponent(path)}`,
+		`http://localhost/api/conversations/${id}/files?name=${encodeURIComponent(name)}`,
 	);
-// what the Agent's attach Tool saves
-const attach = (conversationId: string, path: string) =>
-	db.insert(schema.message).values({
-		conversationId,
-		model: "faux/faux-1",
-		thinkingLevel: "off",
-		message: {
-			role: "toolResult",
-			toolCallId: "t1",
-			toolName: "attach",
-			content: [{ type: "text", text: "Attached" }],
-			details: { attachment: { path, name: "a.txt", size: 4 } },
-			isError: false,
-			timestamp: 0,
-		},
-	});
 const mb = new Uint8Array(1024 * 1024);
 
 describe.skipIf(skip)("a Conversation's uploads and files", () => {
@@ -102,22 +86,17 @@ describe.skipIf(skip)("a Conversation's uploads and files", () => {
 		await db.execute(sql`truncate conversation cascade`);
 	});
 
-	it("takes an upload, and serves it back from the Sandbox once sent and the Agent attaches it", async () => {
+	it("takes an upload, and serves it back from object storage without a Sandbox", async () => {
 		const id = await newConversation();
 		const up = await app("u1")(upload(id, "data"));
 		expect(up.status).toBe(200);
 		expect(await up.json()).toEqual({ name: "a.txt" });
-		expect(o.calls).toEqual([]);
 
-		await conversations.send("u1", {
-			conversationId: id,
-			text: "here",
-			attachments: ["a.txt"],
-		});
-		await attach(id, "/workspace/uploads/a.txt");
-		const down = await app("u1")(download(id, "/workspace/uploads/a.txt"));
+		const down = await app("u1")(download(id, "a.txt"));
 		expect(down.status).toBe(200);
 		expect(await down.text()).toBe("data");
+		expect(down.headers.get("content-length")).toBe("4");
+		expect(o.calls).toEqual([]);
 		expect(down.headers.get("content-disposition")).toBe(
 			"attachment; filename*=UTF-8''a.txt",
 		);
@@ -165,20 +144,21 @@ describe.skipIf(skip)("a Conversation's uploads and files", () => {
 
 	it("is 401 without a User, and 404 for another User's Conversation", async () => {
 		const id = await newConversation();
-		await attach(id, "/workspace/uploads/a.txt");
+		await app("u1")(upload(id, "x"));
 		expect((await app(null)(upload(id, "x"))).status).toBe(401);
-		expect((await app(null)(download(id, "uploads/a.txt"))).status).toBe(401);
+		expect((await app(null)(download(id, "a.txt"))).status).toBe(401);
 		const up = await app("u2")(upload(id, "x"));
 		expect(up.status).toBe(404);
 		expect(await up.json()).toEqual({
 			errors: { conversation: { code: "not_found" } },
 		});
-		const down = await app("u2")(download(id, "uploads/a.txt"));
+		const down = await app("u2")(download(id, "a.txt"));
 		expect(down.status).toBe(404);
 		expect(await down.json()).toEqual({
 			errors: { file: { code: "not_found" } },
 		});
 		expect((await app("u1")(upload("nope", "x"))).status).toBe(404);
+		expect((await app("u1")(download(id, "b.txt"))).status).toBe(404);
 		expect(o.calls).toEqual([]);
 	});
 });

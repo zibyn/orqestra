@@ -34,7 +34,7 @@ const unavailable = async (): Promise<never> => {
 /**
  * A RunHandle kept in memory, for testing a Run's handler without Postgres or BullMQ; same contract as the one `serveRuns` hands out.
  * `deliver` hands over the inputs `inbox` and `push` added, in order; `finish` returns those left, and the Run is over when there are none.
- * Records what the handler saved, streamed, compacted and titled.
+ * Records what the handler saved, streamed, compacted, titled and attached; attaching renames nothing.
  */
 export function memoryRun({
 	transcript,
@@ -83,6 +83,7 @@ export function memoryRun({
 		tokensBefore: number;
 	}[] = [];
 	const titles: string[] = [];
+	const attached = new Map<string, Uint8Array>();
 	const outcomes: (Ended | undefined)[] = [];
 	const questions: boolean[] = [];
 	let over = false;
@@ -100,6 +101,11 @@ export function memoryRun({
 		deliver: async () => pending.splice(0),
 		save: async (message) => {
 			saved.push(message);
+		},
+		attach: async (name, body) => {
+			const bytes = new Uint8Array(await new Response(body).arrayBuffer());
+			attached.set(name, bytes);
+			return { name, size: bytes.length };
 		},
 		stream: async (event) => {
 			streamed.push(event);
@@ -171,6 +177,8 @@ export function memoryRun({
 		streamed,
 		compactions,
 		titles,
+		/** The files the handler attached, by name. */
+		attached,
 		outcomes,
 		/** Whether each `finish` ended on a Question to the User. */
 		questions,

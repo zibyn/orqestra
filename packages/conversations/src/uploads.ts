@@ -99,7 +99,7 @@ export async function storeUpload(
 					key,
 				})
 				.onConflictDoNothing()
-				.returning({ name: attachment.name });
+				.returning({ name: attachment.name, size: attachment.size });
 			if (row) return row;
 		}
 	} catch (error) {

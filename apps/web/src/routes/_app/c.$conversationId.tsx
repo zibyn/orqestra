@@ -675,7 +675,7 @@ function FileDownload({
 	conversationId: string;
 }) {
 	const [error, setError] = useState<string>();
-	const href = `/api/conversations/${conversationId}/files?${new URLSearchParams({ path: attachment.path })}`;
+	const href = `/api/conversations/${conversationId}/files?${new URLSearchParams({ name: attachment.name })}`;
 	return (
 		<Attachment size="sm">
 			<AttachmentMedia>
@@ -710,13 +710,7 @@ function FileDownload({
 								() => undefined,
 							);
 							setError(
-								(code === "not_found"
-									? m.file_not_found
-									: code === "gone"
-										? m.file_sandbox_gone
-										: code === "unavailable"
-											? m.file_unavailable
-											: m.request_failed)(),
+								(code === "not_found" ? m.file_not_found : m.request_failed)(),
 							);
 						}}
 					/>
