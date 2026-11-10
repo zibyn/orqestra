@@ -85,8 +85,12 @@ A capability an Agent can call during a Run, such as Search, Scrape or those of 
 _Avoid_: Function, plugin, skill
 
 **MCP Server**:
-An external service, configured by an Admin, that serves Tools to Agents over the Model Context Protocol. An Agent Definition allows an MCP Server as a whole, and only by naming it; one the Admin has disabled or that cannot be reached is unavailable until it is back, while deleting one removes it from every Agent Definition.
+An external service, configured by an Admin, that serves Tools to Agents over the Model Context Protocol. An Agent Definition allows an MCP Server as a whole, and only by naming it; one the Admin has disabled or that cannot be reached is unavailable until it is back, while deleting one removes it from every Agent Definition. The Admin picks how it is signed in to: shared, with the Admin's credentials used for every User, or per User, where each User's calls go through their own Connection.
 _Avoid_: Connector, integration, plugin
+
+**Connection**:
+One User's own sign-in to one per-User MCP Server, made beforehand by that User on their Connections page and used for every call to it in their Conversations, Subagents' and Firings' included; a User has at most one per MCP Server. It is either connected or needs reconnecting, once the service no longer accepts it. An Agent gets a per-User MCP Server's Tools only in a Run whose User has a working Connection to it, and otherwise never learns of them; a Connection made during a Conversation counts from its next Run, and one that stops working during a Run fails that call while the Agent goes on. The User can disconnect at any time; the Admin deleting the MCP Server, switching it to shared, or changing its address or its sign-in setup ends every Connection to it, while disabling it keeps them. An Admin sees who is connected to each MCP Server, never their credentials, and cannot disconnect a User.
+_Avoid_: Connector, grant, link, account link, authorization
 
 **Skill**:
 A folder of know-how in the Agent Skills format, added by an Admin by upload or written in the console: a `SKILL.md` with a name, a description and instructions, plus any reference files, scripts and assets it brings along. Its name identifies it. Every upload or edit makes a new version, and Agents use the current one, which an Admin can roll back to an earlier version. An Agent sees only the name and description of each Skill its Agent Definition allows, and reads the rest or runs its scripts in its Sandbox when a task calls for it; a User can also invoke one explicitly from the composer, the only way to use a Skill marked as not invoked by the Agent. A Skill is not a Tool: it tells an Agent how to do something, and is never a service the Agent calls. Without a Sandbox Provider every Skill is unavailable. Disabling one makes it unavailable until it is enabled again, and deleting one removes it from every Agent Definition.
@@ -131,6 +135,10 @@ _Avoid_: Vendor, backend
 **Catalog**:
 Every Provider and Model Orqestra knows about, with their defaults such as context length. Admins configure Providers and enable Models from it; nothing outside it can be used.
 _Avoid_: Preset, registry, template
+
+**Usage**:
+The tokens one Model request consumed and their cost at the Catalog's price at the time, counted against the User, the Agent that made it and the Model. Every request counts, whether for a Turn's step, compaction or a title, in a Subagent, an Incognito Conversation or a Firing's Conversation, and even when it failed, was stopped or its reply was withdrawn by a retry; a Model without a price has its tokens counted and its cost unknown, never zero. Usage outlives the Conversation that caused it and is kept indefinitely. A User sees their own Usage, cost included; an Admin sees every User's.
+_Avoid_: Billing, cost record, token log
 
 **Conversation**:
 An ordered series of messages between one User and the Agent, owned by and visible only to that User. A Subagent's Conversation is nested under the one that started it and is seen only through it; one started by a Firing records which Scheduled Task started it, and otherwise is like any other.
