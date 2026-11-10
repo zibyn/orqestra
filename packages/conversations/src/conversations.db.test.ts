@@ -2657,10 +2657,10 @@ describe.skipIf(!url)(
 						error: "not_found",
 					});
 				expect(await files.openFile(userId, conv.id, `${sub.id}.pdf`)).toEqual({
-					error: "no_file",
+					error: "not_found",
 				});
 				expect(await files.openFile(userId, conv.id, "../etc/passwd")).toEqual({
-					error: "no_file",
+					error: "not_found",
 				});
 			});
 		});

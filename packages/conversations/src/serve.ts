@@ -17,7 +17,7 @@ import {
 } from "@orqestra/db/schema";
 import type { ObjectStore, Orrery, SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { alertRun } from "./alerts.ts";
 import { type Memories, memoriesOf, memoryOn } from "./memories.ts";
 import { type Recall, recallOf } from "./recall.ts";
@@ -42,7 +42,7 @@ import {
 import { ensureSandbox } from "./sandbox.ts";
 import { fire } from "./tasks.ts";
 import { cancelTimer, ring, setTimer, TIMERS_QUEUE } from "./timers.ts";
-import { storeUpload, sweepUploads } from "./uploads.ts";
+import { storeAttachment, sweepUnsentAttachments } from "./uploads.ts";
 
 /** Tasks one start of Subagents may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
@@ -151,7 +151,7 @@ export type RunHandle = {
 		client: Orrery,
 		provider: SandboxProvider,
 	): Promise<{ id: string; woke: boolean }>;
-	/** The Attachment `name` of the Conversation, else of the Conversation that started it, with its object storage key; undefined when there is none. */
+	/** The Attachment `name` of the Conversation, else of the nearest Conversation above it up to the top-level one, with its object storage key; undefined when there is none. */
 	attachment(name: string): Promise<{ key: string } | undefined>;
 	/** The Memories of the Conversation's User; writes record this Conversation. None while the User has memory off or the Conversation is Incognito, and no Recall then either. */
 	memories?: Memories;
@@ -438,7 +438,8 @@ async function open(
 					: { type: "saved" },
 			);
 		},
-		attach: (name, body) => storeUpload(store, conv, name, body, { signal }),
+		attach: (name, body) =>
+			storeAttachment(store, conv, name, body, { signal }),
 		async stream(event) {
 			await emit({ ...event, subagent: sub });
 		},
@@ -494,26 +495,18 @@ async function open(
 		sandbox: (client, provider) =>
 			ensureSandbox(conversationId, client, provider, { signal }),
 		async attachment(name) {
-			const rows = await db
-				.select({
-					conversationId: attachment.conversationId,
-					key: attachment.key,
-				})
-				.from(attachment)
-				.where(
-					and(
-						eq(attachment.name, name),
-						inArray(
-							attachment.conversationId,
-							conv.parentId
-								? [conversationId, conv.parentId]
-								: [conversationId],
-						),
-					),
-				);
-			const row =
-				rows.find((r) => r.conversationId === conversationId) ?? rows[0];
-			return row && { key: row.key };
+			// this Conversation's, else the nearest ancestor's, up to the top-level Conversation (same User throughout)
+			const { rows } = await db.execute<{ key: string }>(
+				sql`with recursive up as (
+					select id, parent_id, depth from conversation where id = ${conversationId}
+					union all
+					select c.id, c.parent_id, c.depth from conversation c join up on c.id = up.parent_id
+				)
+				select a.key from up join attachment a on a.conversation_id = up.id
+				where a.name = ${name}
+				order by up.depth desc limit 1`,
+			);
+			return rows[0] && { key: rows[0].key };
 		},
 		// an Incognito Conversation's Runs, its Subagents' too, have no memory
 		memories:
@@ -738,8 +731,8 @@ export async function serveRuns(
 	// every worker sweeps; a row is deleted, with its object, by whichever gets it first
 	const sweep = setInterval(
 		() =>
-			sweepUploads(store).catch((error) =>
-				console.error("could not sweep unsent uploads", error),
+			sweepUnsentAttachments(store).catch((error) =>
+				console.error("could not sweep unsent Attachments", error),
 			),
 		3600_000,
 	);

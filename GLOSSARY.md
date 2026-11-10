@@ -113,7 +113,7 @@ An external service that serves Search and Scrape, such as Tavily, Firecrawl or 
 _Avoid_: Tool Provider, Provider
 
 **Parse**:
-The Tool that turns an Attachment of the Agent's Conversation, or of the one that started it, such as a PDF, an image or an Office document, into Markdown, keeping its text, tables and formulas, served by the Document Parser. It parses a long document a range of pages at a time, each range at most once; the Agent reads the same result each time it asks.
+The Tool that turns an Attachment of the Agent's Conversation, or of one above it that started it, such as a PDF, an image or an Office document, into Markdown, keeping its text, tables and formulas, served by the Document Parser. It parses a long document a range of pages at a time, each range at most once; the Agent reads the same result each time it asks.
 _Avoid_: OCR, extract, convert
 
 **Document Parser**:

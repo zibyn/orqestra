@@ -28,6 +28,7 @@ const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
 const { createConversations, MAX_UPLOAD_BYTES } = await import("./index.ts");
 const { memoryOrrery, memoryStore } = await import("@orqestra/tools/testing");
+const { ensureRun } = await import("./runs.ts");
 
 const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });
 const agent = (id: string, skills: string[]): AgentDefinition => ({
@@ -48,13 +49,18 @@ const agent = (id: string, skills: string[]): AgentDefinition => ({
 });
 const skilled = agent("skilled", ["pdf"]);
 const config = {
-	agents: [skilled, agent("plain", [])],
+	agents: [
+		skilled,
+		agent("plain", []),
+		{ ...agent("parser", []), tools: ["parse"] },
+	],
 	models: faux.models,
 	defaultAgent: skilled,
 	skills: {
 		pdf: { versionId: 1, description: "", disableModelInvocation: false },
 	},
 	sandboxProvider: { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 },
+	tools: { parse: { baseUrl: "http://mineru", apiKey: "" } },
 	limits: { ...DEFAULT_LIMITS },
 } as unknown as OrqestraConfig;
 
@@ -239,6 +245,30 @@ describe.skipIf(!url)(
 				).rejects.toThrow("Not an attachment");
 		});
 
+		it("leaves the attachments of a message that could not be sent to the sweep", async () => {
+			const id = await newConversation();
+			await upload(id, "a.txt", stream("A"));
+			const { get } = s.store;
+			s.store.get = async () => {
+				throw new Error("storage down");
+			};
+			try {
+				await expect(
+					conversations.send(userId, {
+						conversationId: id,
+						text: "x",
+						attachments: ["a.txt"],
+					}),
+				).rejects.toThrow("storage down");
+			} finally {
+				s.store.get = get;
+			}
+			await conversations.sweepUnsentAttachments(
+				new Date(Date.now() + 25 * 3600_000),
+			);
+			expect(stored()).toEqual([]);
+		});
+
 		it("deletes a Conversation's Attachments with it, its Subagents' included", async () => {
 			const id = await newConversation();
 			const other = await newConversation();
@@ -303,14 +333,16 @@ describe.skipIf(!url)(
 			expect(await new Response(got.file.body).text()).toBe("mine");
 		});
 
-		it("sweeps uploads not sent with a message within a day, and nothing sent", async () => {
+		it("sweeps Attachments not sent with a message within a day, and nothing sent", async () => {
 			const id = await newConversation();
 			await upload(id, "sent.txt", stream("sent"));
 			await upload(id, "unsent.txt", stream("unsent"));
 			await sendWith(id, ["sent.txt"]);
-			await conversations.sweepUploads();
+			await conversations.sweepUnsentAttachments();
 			expect(stored()).toEqual(["sent", "unsent"]);
-			await conversations.sweepUploads(new Date(Date.now() + 25 * 3600_000));
+			await conversations.sweepUnsentAttachments(
+				new Date(Date.now() + 25 * 3600_000),
+			);
 			expect(stored()).toEqual(["sent"]);
 			await expect(
 				conversations.send(userId, {
@@ -339,15 +371,41 @@ describe.skipIf(!url)(
 			}
 		});
 
-		it("tells an Agent without a Sandbox that Parse reads the attachments", async () => {
+		it("tells an Agent without a Sandbox that Parse reads the attachments, only when it has Parse", async () => {
 			await withoutSandbox(async () => {
-				const id = await newConversation("plain");
+				const id = await newConversation("parser");
 				await upload(id, "a.pdf");
 				const sent = await sendWith(id, ["a.pdf"]);
 				expect(sent.content[1].text).toContain("Parse");
 				expect(sent.content[1].text).toContain("a.pdf");
 				expect(o.calls).toEqual([]);
+
+				const plain = await newConversation("plain");
+				await upload(plain, "b.pdf");
+				const note = (await sendWith(plain, ["b.pdf"])).content[1].text;
+				expect(note).toContain("b.pdf");
+				expect(note).not.toContain("Parse");
 			});
+		});
+
+		it("keeps the attachments of a message being sent from the sweep while they are copied", async () => {
+			const id = await newConversation();
+			await upload(id, "a.txt", stream("A"));
+			const { get } = s.store;
+			// the hourly sweep runs, a day late, while the file is on its way into the Sandbox
+			s.store.get = async (key) => {
+				await conversations.sweepUnsentAttachments(
+					new Date(Date.now() + 25 * 3600_000),
+				);
+				return get(key);
+			};
+			try {
+				await sendWith(id, ["a.txt"]);
+			} finally {
+				s.store.get = get;
+			}
+			expect(text(o.files("sb1").get("uploads/a.txt"))).toBe("A");
+			expect(stored()).toEqual(["A"]);
 		});
 
 		it("lets the Run find its Conversation's Attachments by name, for Parse", async () => {
@@ -365,6 +423,50 @@ describe.skipIf(!url)(
 			};
 			await sendWith(id, ["a.pdf"]);
 			expect(await found).toEqual(["pdf bytes", undefined]);
+		});
+
+		it("lets a nested Subagent's Run find its ancestors' Attachments, the nearest one's first", async () => {
+			const top = await newConversation("plain");
+			await upload(top, "a.pdf", stream("top a"));
+			await upload(top, "b.pdf", stream("top b"));
+			const sub = async (parentId: string) =>
+				(
+					await db
+						.insert(schema.conversation)
+						.values({ userId, agentId: "plain", parentId })
+						.returning()
+				)[0].id;
+			const child = await sub(top);
+			await db.insert(schema.attachment).values({
+				conversationId: child,
+				name: "b.pdf",
+				size: 7,
+				key: "child-b",
+				sent: true,
+			});
+			s.objects.set("child-b", new TextEncoder().encode("child b"));
+			const grandchild = await sub(child);
+			let found: Promise<unknown[]> | undefined;
+			handler = async (run) => {
+				found ??= Promise.all(
+					["a.pdf", "b.pdf"].map(async (name) => {
+						const a = await run.attachment(name);
+						const object = a && (await s.store.get(a.key));
+						return object && new Response(object.body).text();
+					}),
+				);
+			};
+			await db.insert(schema.inbox).values({
+				conversationId: grandchild,
+				message: { role: "user", content: "go", timestamp: Date.now() },
+				model: "faux/faux-1",
+				thinkingLevel: "off",
+				wake: true,
+			});
+			await ensureRun(grandchild);
+			for (let i = 0; !found && i < 100; i++)
+				await new Promise((r) => setTimeout(r, 50));
+			expect(await found).toEqual(["top a", "child b"]);
 		});
 	},
 );

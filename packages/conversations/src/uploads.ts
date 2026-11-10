@@ -52,9 +52,9 @@ function freeName(name: string, taken: Set<string>) {
 
 /**
  * Streams one file into object storage, refusing it once it passes MAX_UPLOAD_BYTES, and records it as an unsent
- * Attachment of the Conversation under a free name. A refused or broken upload leaves nothing.
+ * Attachment of the Conversation under a free name. A refused or broken file leaves nothing.
  */
-export async function storeUpload(
+export async function storeAttachment(
 	store: ObjectStore,
 	conv: { id: string; rootId: string },
 	name: string,
@@ -84,7 +84,7 @@ export async function storeUpload(
 	}
 	try {
 		const wanted = safeFileName(name);
-		// the unique (conversation, name) decides between uploads of one name at once: the loser picks again
+		// the unique (conversation, name) decides between Attachments of one name at once: the loser picks again
 		for (;;) {
 			const taken = await db
 				.select({ name: attachment.name })
@@ -121,8 +121,11 @@ export async function deleteObjects(store: ObjectStore, prefixes: string[]) {
 	);
 }
 
-/** Deletes the uploads not sent with a message for a day before `now`, rows first, then their objects. */
-export async function sweepUploads(store: ObjectStore, now = new Date()) {
+/** Deletes the Attachments not sent with a message for a day before `now`, rows first, then their objects. */
+export async function sweepUnsentAttachments(
+	store: ObjectStore,
+	now = new Date(),
+) {
 	const swept = await db
 		.delete(attachment)
 		.where(
@@ -139,7 +142,7 @@ export async function sweepUploads(store: ObjectStore, now = new Date()) {
 }
 
 /** Copies Attachments from object storage into the ready Sandbox at /workspace/uploads/<name>. */
-export async function copyUploads(
+export async function copyAttachments(
 	store: ObjectStore,
 	client: Orrery,
 	sandbox: string,

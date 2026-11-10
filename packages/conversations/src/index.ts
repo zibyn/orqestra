@@ -46,11 +46,10 @@ import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 import { tasksOf } from "./tasks.ts";
 import { cancelTimer } from "./timers.ts";
 import {
-	copyUploads,
+	copyAttachments,
 	deleteObjects,
-	safeFileName,
-	storeUpload,
-	sweepUploads,
+	storeAttachment,
+	sweepUnsentAttachments,
 	uploadPath,
 } from "./uploads.ts";
 
@@ -201,8 +200,8 @@ export function createConversations({
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
 			serveRuns(config, store, handler, options),
 
-		/** Deletes the uploads not sent with a message for a day before `now`; the worker does this every hour. */
-		sweepUploads: (now?: Date) => sweepUploads(store, now),
+		/** Deletes the Attachments not sent with a message for a day before `now`; the worker does this every hour. */
+		sweepUnsentAttachments: (now?: Date) => sweepUnsentAttachments(store, now),
 
 		/** The User's Scheduled Tasks; their Firings run in `serveRuns`. */
 		tasks: tasksOf(config),
@@ -392,7 +391,7 @@ export function createConversations({
 					"file",
 					"agent_offline",
 				);
-			const stored = await storeUpload(store, conv, name, body, { signal });
+			const stored = await storeAttachment(store, conv, name, body, { signal });
 			return { name: stored.name };
 		},
 
@@ -417,8 +416,6 @@ export function createConversations({
 				"attachments",
 				"not_attachment",
 			);
-			if (names.some((name) => safeFileName(name) !== name))
-				throw notAttachment;
 			const cfg = await config();
 			const existing = input.conversationId
 				? await owned(userId, input.conversationId)
@@ -447,17 +444,33 @@ export function createConversations({
 					"agent_not_pickable",
 				);
 			const content = await expandSkill(cfg, turn.agent, input.text);
+			// marked sent before they are copied, so the sweep cannot delete one on its way into the Sandbox
 			const rows =
 				existing && names.length
-					? await db
-							.select()
-							.from(attachment)
-							.where(
-								and(
-									eq(attachment.conversationId, existing.id),
-									inArray(attachment.name, names),
-								),
-							)
+					? await db.transaction(async (tx) => {
+							const found = await tx
+								.select()
+								.from(attachment)
+								.where(
+									and(
+										eq(attachment.conversationId, existing.id),
+										inArray(attachment.name, names),
+									),
+								)
+								.for("update");
+							// a name never stored, swept, or unsafe (stored names are safe) is refused
+							if (found.length !== names.length) throw notAttachment;
+							await tx
+								.update(attachment)
+								.set({ sent: true })
+								.where(
+									inArray(
+										attachment.id,
+										found.map((r) => r.id),
+									),
+								);
+							return found;
+						})
 					: [];
 			if (rows.length !== names.length) throw notAttachment;
 			const attachments = names.map((name) => ({
@@ -468,8 +481,22 @@ export function createConversations({
 			if (existing && rows.length && provider) {
 				// orrery's 65-second request timeout is too short to copy 50 MB
 				const client = orrery({ ...provider, timeoutMs: 10 * 60_000 });
-				const sandbox = await ensureSandbox(existing.id, client, provider);
-				await copyUploads(store, client, sandbox.id, rows);
+				try {
+					const sandbox = await ensureSandbox(existing.id, client, provider);
+					await copyAttachments(store, client, sandbox.id, rows);
+				} catch (error) {
+					// not sent after all: those that were unsent are the sweep's again
+					await db
+						.update(attachment)
+						.set({ sent: false })
+						.where(
+							inArray(
+								attachment.id,
+								rows.filter((r) => !r.sent).map((r) => r.id),
+							),
+						);
+					throw error;
+				}
 			}
 
 			const conversationId = await db.transaction(async (tx) => {
@@ -493,16 +520,6 @@ export function createConversations({
 						.values({ userId, agentId, incognito: input.incognito })
 						.returning({ id: conversation.id });
 				}
-				if (rows.length)
-					await tx
-						.update(attachment)
-						.set({ sent: true })
-						.where(
-							inArray(
-								attachment.id,
-								rows.map((r) => r.id),
-							),
-						);
 				await tx.insert(inbox).values({
 					conversationId: id,
 					message: attachments.length
@@ -514,7 +531,12 @@ export function createConversations({
 										type: "text",
 										text: provider
 											? `\n\nAttached files, in your Sandbox:\n${attachments.map((a) => `- ${a.path}`).join("\n")}`
-											: `\n\nAttached files, which the Parse tool reads by name:\n${names.map((name) => `- ${name}`).join("\n")}`,
+											: `\n\nAttached files${
+													// as the toolbox offers Parse: listed by the Agent and served by a Document Parser
+													turn.agent.tools.includes("parse") && cfg.tools.parse
+														? ", which the Parse tool reads by name"
+														: ""
+												}:\n${names.map((name) => `- ${name}`).join("\n")}`,
 									},
 								],
 								// the User sees their names in place of the second text
@@ -704,7 +726,7 @@ export function createConversations({
 						body: ReadableStream<Uint8Array>;
 					};
 			  }
-			| { error: "not_found" | "no_file" }
+			| { error: "not_found" }
 		> {
 			// a Subagent's Conversation carries its parent's userId
 			if (!(await owned(userId, id))) return { error: "not_found" };
@@ -715,7 +737,7 @@ export function createConversations({
 					and(eq(attachment.conversationId, id), eq(attachment.name, name)),
 				);
 			const object = row && (await store.get(row.key));
-			return object ? { file: { name, ...object } } : { error: "no_file" };
+			return object ? { file: { name, ...object } } : { error: "not_found" };
 		},
 
 		/**
