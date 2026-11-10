@@ -40,6 +40,7 @@ const {
 	userMemories,
 } = await import("./index.ts");
 const runs = await import("./runs.ts");
+const timers = await import("./timers.ts");
 const { memoryRun } = await import("./testing.ts");
 const { memoryOrrery } = await import("@orqestra/tools/testing");
 const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 };
@@ -1714,6 +1715,284 @@ describe.skipIf(!url)(
 				expect(messageText(attended?.messages[9].message as Message)).toBe(
 					"slow but whole",
 				);
+			});
+		});
+
+		describe("Timer", () => {
+			afterAll(() => {
+				config.limits = { ...DEFAULT_LIMITS };
+			});
+			const setTimer = (delay: number, note: string): Call => ({
+				name: "set_timer",
+				run: async ({ run }) =>
+					`Rings at ${(await run.timer?.set(delay, note))?.toISOString()}`,
+			});
+			const cancelTimer: Call = {
+				name: "cancel_timer",
+				run: async ({ run }) => `Cancelled: ${await run.timer?.cancel()}`,
+			};
+			const timerOf = async (id: string) => (await get(id))?.timer;
+			/** Rings the Timer as its job does once it is due. */
+			const ring = async (id: string) => {
+				const set = await timerOf(id);
+				await timers.ring(id, set ? set.ringsAt.getTime() : 0);
+			};
+
+			it("rings with its note, on the Model and thinking of the Turn that set it, and wakes the Conversation unattended", async () => {
+				const unattended: boolean[] = [];
+				let noted: Message[] = [];
+				script({
+					parent: [
+						call(setTimer(600, "check the build")),
+						say("I will check back"),
+						say("ok"),
+						({ run, seen }) => {
+							unattended.push(run.unattended);
+							noted = seen.slice(-1);
+							return "the build passed";
+						},
+					],
+				});
+				const before = Date.now();
+				const id = await conversations.send(userId, {
+					agentId: "faux",
+					text: "build it",
+					thinking: "high",
+				});
+				await waitFor(() => get(id), idle(4));
+				const set = await timerOf(id);
+				expect(set?.note).toBe("check the build");
+				expect(set?.ringsAt.getTime()).toBeGreaterThanOrEqual(before + 600_000);
+				expect(
+					await runs
+						.runQueue(timers.TIMERS_QUEUE)
+						.getJob(`timer:${id}:${set?.ringsAt.getTime()}`),
+				).toBeTruthy();
+				// a later message on other settings leaves the Timer's own
+				await conversations.send(userId, {
+					agentId: "faux",
+					text: "thanks",
+					thinking: "off",
+					conversationId: id,
+				});
+				await waitFor(() => get(id), idle(6));
+				await ring(id);
+				const view = await waitFor(() => get(id), idle(8));
+				expect(unattended).toEqual([true]);
+				expect(messageText(noted[0])).toContain("check the build");
+				const note = view?.messages[6];
+				expect(note).toMatchObject({ origin: "timer", thinkingLevel: "high" });
+				expect(view?.timer).toBeNull();
+			});
+
+			it("rings a minute to a day later, and a Subagent sets none", async () => {
+				const results: string[] = [];
+				const record = (delay: number): Call => ({
+					name: "set_timer",
+					run: async (ctx) => {
+						const r = await setTimer(delay, "n").run(ctx).catch(String);
+						results.push(r.startsWith("Rings") ? "set" : r.split(":")[0]);
+						return r;
+					},
+				});
+				let subTimer: unknown = "unset";
+				script({
+					parent: [
+						call(record(59), record(86_401), record(60), record(86_400)),
+						call(start("look")),
+						say("ok"),
+						say("done"),
+					],
+					sub: [
+						({ run }) => {
+							subTimer = run.timer;
+							return "found";
+						},
+					],
+				});
+				const id = await send("hi");
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle" && subTimer !== "unset",
+				);
+				expect(results).toEqual([
+					"TimerDelayOutOfRange",
+					"TimerDelayOutOfRange",
+					"set",
+					"set",
+				]);
+				expect(subTimer).toBeUndefined();
+			});
+
+			it("rings by its delayed job once due", async () => {
+				script({ parent: [say("hi"), say("checked")] });
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(2));
+				// as set_timer does, but due at once
+				await db.insert(schema.timer).values({
+					conversationId: id,
+					note: "look again",
+					ringsAt: new Date(1000),
+					messageId: sql`(select max(id) from message)`,
+					model: "faux/faux-1",
+					thinkingLevel: "off",
+				});
+				await runs
+					.runQueue(timers.TIMERS_QUEUE)
+					.add("ring", { conversationId: id, ringsAt: 1000 });
+				const view = await waitFor(() => get(id), idle(4));
+				expect(view?.messages[2].origin).toBe("timer");
+			});
+
+			it("does nothing when its job comes after it was cancelled or replaced", async () => {
+				script({
+					parent: [
+						call(setTimer(600, "first")),
+						call(setTimer(900, "second")),
+						say("set"),
+					],
+				});
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(6));
+				const second = await timerOf(id);
+				expect(second?.note).toBe("second");
+				// the first one's job
+				await timers.ring(id, (second?.ringsAt.getTime() ?? 0) - 300_000);
+				expect(await timerOf(id)).toEqual(second);
+				await conversations.cancelTimer(userId, id);
+				expect(await timerOf(id)).toBeNull();
+				await timers.ring(id, second?.ringsAt.getTime() ?? 0);
+				const view = await get(id);
+				expect(view).toMatchObject({ status: "idle" });
+				expect(view?.messages).toHaveLength(6);
+			});
+
+			it("delivers its note at the next step boundary of a Run under way", async () => {
+				const { gate: rung, release } = gate();
+				let delivered: Message[] = [];
+				script({
+					parent: [
+						call(setTimer(600, "check")),
+						call(
+							tool(async () => {
+								await rung;
+								return "found";
+							}),
+						),
+						({ seen }) => {
+							delivered = seen.slice(-1);
+							return "done";
+						},
+					],
+				});
+				const id = await send("hi");
+				await waitFor(timerOf.bind(null, id), (t) => !!t);
+				await ring(id);
+				release();
+				await waitFor(() => get(id), idle(7));
+				expect(messageText(delivered[0])).toContain("check");
+			});
+
+			it("is cancelled by the Agent, by a Stop, by a Question, by retrying the Turn that set it, and with its Conversation", async () => {
+				script({
+					parent: [
+						call(setTimer(600, "a")),
+						call(cancelTimer),
+						say("cancelled"),
+						// Stop
+						call(setTimer(600, "b")),
+						hang,
+						// Question
+						call(setTimer(600, "c")),
+						ask("Which?"),
+						// retry: the reply that set it fails
+						call(setTimer(600, "d")),
+						fail,
+						say("retried"),
+						// deletion
+						call(setTimer(600, "e")),
+						say("set"),
+					],
+				});
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(6));
+				expect(await timerOf(id)).toBeNull();
+
+				await send("again", id);
+				await waitFor(timerOf.bind(null, id), (t) => t?.note === "b");
+				await conversations.stop(userId, id);
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle",
+				);
+				expect(await timerOf(id)).toBeNull();
+
+				await send("ask me", id);
+				const asked = await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle" && !!v.awaitingReply,
+				);
+				expect(asked?.timer).toBeNull();
+
+				await send("fail", id);
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "failed",
+				);
+				expect((await timerOf(id))?.note).toBe("d");
+				await conversations.retry(userId, id);
+				const retried = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.status === "idle" &&
+						messageText(v.messages.at(-1)?.message as Message) === "retried",
+				);
+				expect(retried?.timer).toBeNull();
+
+				await send("last", id);
+				await waitFor(timerOf.bind(null, id), (t) => t?.note === "e");
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle",
+				);
+				await conversations.delete(userId, id);
+				expect(await db.select().from(schema.timer)).toEqual([]);
+			});
+
+			it("stays set when the User writes, which renews the rings it may make", async () => {
+				config.limits = { ...DEFAULT_LIMITS, timerRingsPerUserMessage: 1 };
+				script({
+					parent: [
+						call(setTimer(600, "once")),
+						say("set"),
+						call(setTimer(600, "twice")),
+						say("refused"),
+						call(setTimer(600, "again")),
+						say("set again"),
+						say("noted"),
+					],
+				});
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(4));
+				await ring(id);
+				const refused = await waitFor(() => get(id), idle(8));
+				expect(refused?.messages[6].message).toMatchObject({
+					role: "toolResult",
+					isError: true,
+				});
+				expect(messageText(refused?.messages[6].message as Message)).toContain(
+					"TimerLimitReached",
+				);
+				expect(refused?.timer).toBeNull();
+
+				// the User's message renews them
+				await send("go on", id);
+				await waitFor(() => get(id), idle(12));
+				expect((await timerOf(id))?.note).toBe("again");
+				// and leaves the Timer set
+				await send("more", id);
+				await waitFor(() => get(id), idle(14));
+				expect((await timerOf(id))?.note).toBe("again");
 			});
 		});
 

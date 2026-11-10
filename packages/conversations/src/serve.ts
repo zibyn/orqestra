@@ -37,6 +37,7 @@ import {
 	subagentOf,
 } from "./runs.ts";
 import { ensureSandbox } from "./sandbox.ts";
+import { cancelTimer, ring, setTimer, TIMERS_QUEUE } from "./timers.ts";
 
 /** Tasks one start of Subagents may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
@@ -141,6 +142,16 @@ export type RunHandle = {
 	memories?: Memories;
 	/** The User's past Conversations, for Recall. */
 	recall: Recall;
+	/** The Conversation's Timer; only a top-level Conversation's Agent has one. */
+	timer?: {
+		/**
+		 * Sets it, replacing the one set before, to ring `delay` seconds from now with `note`; returns when it rings.
+		 * Throws TimerDelayOutOfRange, or TimerLimitReached once Timers rang the Limits' times since the User's last message.
+		 */
+		set(delay: number, note: string): Promise<Date>;
+		/** True when there was one to cancel. */
+		cancel(): Promise<boolean>;
+	};
 	/** The Run's Subagents; only a top-level Conversation's Agent has them. */
 	subagents: {
 		/** Starts a Subagent per task, numbered in order; throws NoSuchTemplate, TemplateOffline or BudgetExceeded. */
@@ -428,6 +439,19 @@ async function open(
 				: undefined,
 		// a Subagent works within its parent's Conversation, so that is not a past one either
 		recall: recallOf(conv.userId, conv.parentId ?? conversationId),
+		timer: sub
+			? undefined
+			: {
+					set: (delay, note) =>
+						setTimer(conversationId, {
+							delay,
+							note,
+							model: modelRef(turn.model),
+							thinkingLevel: turn.thinking,
+							maxRings: cfg.limits.timerRingsPerUserMessage,
+						}),
+					cancel: () => cancelTimer(conversationId),
+				},
 		subagents: subagentsOf(cfg, conv, turn, saved),
 	};
 }
@@ -599,6 +623,17 @@ export async function serveRuns(
 		worker.on("error", (err) => console.error("worker error", err));
 		return worker;
 	});
+	const timers = new Worker(
+		TIMERS_QUEUE,
+		(job) => ring(job.data.conversationId, job.data.ringsAt),
+		{ connection: { connectionString: databaseUrl, migrate: true } },
+		createPostgresBackend,
+	);
+	timers.on("failed", (job, err) =>
+		console.error(`Timer job ${job?.id} failed`, err),
+	);
+	timers.on("error", (err) => console.error("worker error", err));
+	workers.push(timers);
 	// the pg backend doesn't emit 'error' on connect failure, so fail fast instead of idling silently
 	await Promise.all(workers.map((w) => w.waitUntilReady()));
 	await requeue();

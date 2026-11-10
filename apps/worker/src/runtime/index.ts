@@ -13,6 +13,7 @@ import {
 	relay,
 	STEP_LIMIT,
 	subagentTools,
+	timerTools,
 } from "./tools.ts";
 
 export type RuntimeDeps = {
@@ -99,6 +100,7 @@ export async function runAgent(
 					...(sub
 						? []
 						: [...subagentTools(config, run.subagents), question.tool]),
+					...(run.timer ? timerTools(run.timer) : []),
 				],
 				messages,
 			},

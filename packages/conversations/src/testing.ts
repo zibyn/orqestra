@@ -20,6 +20,12 @@ import {
 	type Transcript,
 	type Turn,
 } from "./serve.ts";
+import {
+	MAX_TIMER_DELAY,
+	MIN_TIMER_DELAY,
+	TimerDelayOutOfRange,
+	TimerLimitReached,
+} from "./timers.ts";
 
 const unavailable = async (): Promise<never> => {
 	throw new Error("memoryRun has no Subagents: pass `subagents`");
@@ -39,6 +45,7 @@ export function memoryRun({
 	incognito = false,
 	renamed = false,
 	subagents = { start: unavailable, message: unavailable, stop: unavailable },
+	timerRings = Number.POSITIVE_INFINITY,
 	memories = [],
 	memoryOff = false,
 	recall = { search: async () => [], open: async () => undefined },
@@ -53,6 +60,8 @@ export function memoryRun({
 	incognito?: boolean;
 	renamed?: boolean;
 	subagents?: RunHandle["subagents"];
+	/** Timers that may still be set before TimerLimitReached. */
+	timerRings?: number;
 	/** The User's Memories as the Run begins. */
 	memories?: Pick<Memory, "path" | "description" | "body">[];
 	/** The User turned memory off: the Run gets no Memories. */
@@ -75,6 +84,8 @@ export function memoryRun({
 	const questions: boolean[] = [];
 	let over = false;
 	let sandboxId: string | null = null;
+	let timer: { delay: number; note: string } | undefined;
+	let rings = timerRings;
 	const run: RunHandle = {
 		conversationId: "memory",
 		isSubagent,
@@ -115,6 +126,22 @@ export function memoryRun({
 			),
 		memories: memoryOff || incognito ? undefined : userMemories,
 		recall,
+		timer: isSubagent
+			? undefined
+			: {
+					set: async (delay, note) => {
+						if (delay < MIN_TIMER_DELAY || delay > MAX_TIMER_DELAY)
+							throw new TimerDelayOutOfRange(delay);
+						if (rings-- <= 0) throw new TimerLimitReached(timerRings);
+						timer = { delay, note };
+						return new Date(Date.now() + delay * 1000);
+					},
+					cancel: async () => {
+						const had = !!timer;
+						timer = undefined;
+						return had;
+					},
+				},
 		subagents,
 	};
 	return {
@@ -128,6 +155,10 @@ export function memoryRun({
 		/** The last `finish` returned no input. */
 		get over() {
 			return over;
+		},
+		/** The Timer set, if any. */
+		get timer() {
+			return timer;
 		},
 		/** The Conversation's Sandbox, once `sandbox` created one. */
 		get sandboxId() {

@@ -59,6 +59,8 @@ export const conversation = pgTable(
 		unread: boolean("unread").default(false).notNull(),
 		// its last Run ended with a Question (`ask_user`); the User's next message clears it
 		awaitingReply: boolean("awaiting_reply").default(false).notNull(),
+		// Timers that rang since the User's last message, which only so many may (the Limits' timer_rings_per_user_message)
+		timerRingsSinceUser: integer("timer_rings_since_user").default(0).notNull(),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()
@@ -121,6 +123,23 @@ export const inbox = pgTable(
 	},
 	(table) => [index("inbox_conversationId_idx").on(table.conversationId)],
 );
+
+// The Timer a top-level Conversation's Agent set, at most one: it rings at rings_at unless this row is gone or replaced by then
+export const timer = pgTable("timer", {
+	conversationId: uuid("conversation_id")
+		.primaryKey()
+		.references(() => conversation.id, { onDelete: "cascade" }),
+	// the Agent's note to itself, delivered as its input when it rings
+	note: text("note").notNull(),
+	ringsAt: timestamp("rings_at", { withTimezone: true }).notNull(),
+	// the Conversation's latest message when it was set, in the Turn that set it: Retry dropping that Turn drops the Timer
+	messageId: integer("message_id")
+		.notNull()
+		.references(() => message.id, { onDelete: "cascade" }),
+	// the Turn's that set it, for the input it delivers
+	model: text("model").notNull(),
+	thinkingLevel: text("thinking_level").notNull(),
+});
 
 // The model sees `summary` plus the messages from firstKeptMessageId on; users still see everything
 export const compaction = pgTable(

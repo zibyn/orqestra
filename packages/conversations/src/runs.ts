@@ -6,6 +6,7 @@ import {
 	inbox,
 	message,
 	subagent,
+	timer,
 } from "@orqestra/db/schema";
 import { createPostgresBackend, Queue } from "bullmq";
 import {
@@ -90,9 +91,9 @@ const newQueue = (name: string) =>
 		createPostgresBackend,
 	);
 const queues = new Map<string, ReturnType<typeof newQueue>>();
-/** The queue of top-level Runs or of Subagent Runs. */
+/** The queue of top-level Runs, of Subagent Runs, or of Timers. */
 export function runQueue(
-	name: typeof AGENT_RUNS_QUEUE | typeof SUBAGENT_RUNS_QUEUE,
+	name: typeof AGENT_RUNS_QUEUE | typeof SUBAGENT_RUNS_QUEUE | "timers",
 ) {
 	const queue = queues.get(name) ?? newQueue(name);
 	queues.set(name, queue);
@@ -342,7 +343,7 @@ export async function endSubagent(conversationId: string, ended: Ended) {
 /**
  * Delivers a Conversation's inbox into `message`, in arrival order, under its root's lock; returns what it delivered.
  * With `finish`, an inbox without a wake input ends the Run instead: the Conversation goes idle and Unread, and a Subagent's settles with how it `finish`ed.
- * A `"question"` finish waits for the User: only their message goes on, and it ends awaiting their reply.
+ * A `"question"` finish waits for the User: only their message goes on, and it ends awaiting their reply, its Timer cancelled.
  * That is checked under the same lock a sender starts a Run under, so no input is left behind.
  */
 export async function drain(
@@ -387,7 +388,10 @@ export async function drain(
 			);
 		else if (typeof finish === "function")
 			parentId = await settle(tx, conversationId, finish());
-		else if (finish)
+		else if (finish) {
+			// asking a Question cancels the Timer: the User's answer is what it waits for
+			if (finish === "question")
+				await tx.delete(timer).where(eq(timer.conversationId, conversationId));
 			// it ends with its reply, which the User has yet to see
 			await tx
 				.update(conversation)
@@ -397,6 +401,7 @@ export async function drain(
 					awaitingReply: finish === "question",
 				})
 				.where(eq(conversation.id, conversationId));
+		}
 		// pi UserMessages
 		return inputs.map((i) => i.message);
 	});

@@ -20,6 +20,7 @@ import {
 	inbox,
 	message,
 	subagent,
+	timer,
 } from "@orqestra/db/schema";
 import {
 	OrreryError,
@@ -44,6 +45,7 @@ import {
 } from "./runs.ts";
 import { ensureSandbox, SandboxGone, wakeSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
+import { cancelTimer } from "./timers.ts";
 import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
 
 export { MAX_UPLOAD_BYTES } from "@orqestra/config";
@@ -81,6 +83,12 @@ export {
 	type TranscriptMessage,
 	type Turn,
 } from "./serve.ts";
+export {
+	MAX_TIMER_DELAY,
+	MIN_TIMER_DELAY,
+	TimerDelayOutOfRange,
+	TimerLimitReached,
+} from "./timers.ts";
 export { UploadTooLarge } from "./uploads.ts";
 
 // The only module that reads and writes Conversations, their Inbox, messages, Subagents and compactions.
@@ -233,53 +241,58 @@ export function createConversations({
 		async get(userId: string, id: string) {
 			const conv = await owned(userId, id);
 			if (!conv) return undefined;
-			const [messages, pending, compactions, subagents] = await Promise.all([
-				db
-					.select({
-						id: message.id,
-						message: message.message,
-						model: message.model,
-						thinkingLevel: message.thinkingLevel,
-						subagentId: message.subagentId,
-						origin: message.origin,
-						queued: sql<boolean>`false`,
-					})
-					.from(message)
-					.where(eq(message.conversationId, id))
-					.orderBy(asc(message.id)),
-				// inputs the Run has yet to deliver show after what it has
-				db
-					.select({
-						id: inbox.id,
-						message: inbox.message,
-						model: inbox.model,
-						thinkingLevel: inbox.thinkingLevel,
-						subagentId: inbox.subagentId,
-						origin: inbox.origin,
-						// its id is the inbox's, not a message's
-						queued: sql<boolean>`true`,
-					})
-					.from(inbox)
-					.where(eq(inbox.conversationId, id))
-					.orderBy(asc(inbox.id)),
-				db
-					.select({ firstKeptMessageId: compaction.firstKeptMessageId })
-					.from(compaction)
-					.where(eq(compaction.conversationId, id)),
-				db
-					.select({
-						id: subagent.conversationId,
-						toolCallId: subagent.toolCallId,
-						number: subagent.number,
-						template: conversation.agentId,
-						brief: subagent.brief,
-						outcome: subagent.outcome,
-					})
-					.from(subagent)
-					.innerJoin(conversation, eq(conversation.id, subagent.conversationId))
-					.where(eq(conversation.parentId, id))
-					.orderBy(asc(subagent.number)),
-			]);
+			const [messages, pending, compactions, subagents, set] =
+				await Promise.all([
+					db
+						.select({
+							id: message.id,
+							message: message.message,
+							model: message.model,
+							thinkingLevel: message.thinkingLevel,
+							subagentId: message.subagentId,
+							origin: message.origin,
+							queued: sql<boolean>`false`,
+						})
+						.from(message)
+						.where(eq(message.conversationId, id))
+						.orderBy(asc(message.id)),
+					// inputs the Run has yet to deliver show after what it has
+					db
+						.select({
+							id: inbox.id,
+							message: inbox.message,
+							model: inbox.model,
+							thinkingLevel: inbox.thinkingLevel,
+							subagentId: inbox.subagentId,
+							origin: inbox.origin,
+							// its id is the inbox's, not a message's
+							queued: sql<boolean>`true`,
+						})
+						.from(inbox)
+						.where(eq(inbox.conversationId, id))
+						.orderBy(asc(inbox.id)),
+					db
+						.select({ firstKeptMessageId: compaction.firstKeptMessageId })
+						.from(compaction)
+						.where(eq(compaction.conversationId, id)),
+					db
+						.select({
+							id: subagent.conversationId,
+							toolCallId: subagent.toolCallId,
+							number: subagent.number,
+							template: conversation.agentId,
+							brief: subagent.brief,
+							outcome: subagent.outcome,
+						})
+						.from(subagent)
+						.innerJoin(
+							conversation,
+							eq(conversation.id, subagent.conversationId),
+						)
+						.where(eq(conversation.parentId, id))
+						.orderBy(asc(subagent.number)),
+					db.query.timer.findFirst({ where: eq(timer.conversationId, id) }),
+				]);
 			return {
 				id: conv.id,
 				agentId: conv.agentId,
@@ -296,6 +309,8 @@ export function createConversations({
 				})),
 				compactedBefore: compactions.map((c) => c.firstKeptMessageId),
 				subagents,
+				/** The Timer set to ring, if any: the Conversation stays idle until it does. */
+				timer: set ? { note: set.note, ringsAt: set.ringsAt } : null,
 			};
 		},
 
@@ -415,11 +430,12 @@ export function createConversations({
 				// while a Run goes, it delivers this at its next step boundary; the lock keeps it from going idle past it
 				if (id) {
 					await lockRoot(tx, id);
-					// a User message renews the Agent's Subagent budget, answers its Question, and the User is back: Runs are attended again
+					// a User message renews the Agent's Subagent budget and Timer rings (leaving its Timer set), answers its Question, and the User is back: Runs are attended again
 					await tx
 						.update(conversation)
 						.set({
 							subagentsSinceUser: 0,
+							timerRingsSinceUser: 0,
 							awaitingReply: false,
 							unattended: false,
 						})
@@ -509,12 +525,13 @@ export function createConversations({
 
 		/**
 		 * Drops this Conversation's Run while it is still queued, or else asks whichever worker runs it to abort it.
-		 * Then its Subagents stop too, without waking it: after the Run, so it starts none past this.
+		 * Then its Subagents stop too, without waking it: after the Run, so it starts none past this. Its Timer is cancelled.
 		 * False when the Conversation is not the user's.
 		 */
 		async stop(userId: string, id: string) {
 			const conv = await owned(userId, id);
 			if (!conv) return false;
+			await cancelTimer(id);
 			const job =
 				conv.status === "running" && conv.jobId
 					? await runQueue(AGENT_RUNS_QUEUE).getJob(conv.jobId)
@@ -534,6 +551,13 @@ export function createConversations({
 				await saved(id);
 			} else await requestStop([id]);
 			await stopSubagents(id);
+			return true;
+		},
+
+		/** Cancels the Conversation's Timer at the User's request. False when the Conversation is not the user's. */
+		async cancelTimer(userId: string, id: string) {
+			if (!(await owned(userId, id))) return false;
+			await cancelTimer(id);
 			return true;
 		},
 

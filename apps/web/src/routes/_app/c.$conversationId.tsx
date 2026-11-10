@@ -19,6 +19,7 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import {
+	AlarmClockIcon,
 	BotIcon,
 	BrainIcon,
 	ChevronRightIcon,
@@ -296,7 +297,9 @@ function ConversationView() {
 									<MarkerContent>{m.compacted_divider()}</MarkerContent>
 								</Marker>
 							)}
-							{row.message.role === "user" && row.subagentId ? (
+							{row.origin === "timer" ? (
+								<TimerRang />
+							) : row.message.role === "user" && row.subagentId ? (
 								<NotificationLine
 									subagentId={row.subagentId}
 									text={messageText(row.message)}
@@ -347,7 +350,9 @@ function ConversationView() {
 							key={`queued-${row.id}`}
 							messageId={`queued-${row.id}`}
 						>
-							{row.subagentId ? (
+							{row.origin === "timer" ? (
+								<TimerRang />
+							) : row.subagentId ? (
 								<NotificationLine
 									subagentId={row.subagentId}
 									text={messageText(row.message)}
@@ -357,6 +362,15 @@ function ConversationView() {
 							)}
 						</MessageScrollerItem>
 					))}
+					{conversation.timer && (
+						<MessageScrollerItem messageId="timer">
+							<TimerBar
+								conversationId={conversation.id}
+								note={conversation.timer.note}
+								ringsAt={new Date(conversation.timer.ringsAt)}
+							/>
+						</MessageScrollerItem>
+					)}
 				</Thread>
 				{conversation.readOnly ? (
 					<p className="mx-auto w-full max-w-3xl px-4 pb-6 text-center text-sm text-muted-foreground">
@@ -839,6 +853,64 @@ function NotificationLine({
 				{m.subagent_number({ number: run.number })} · {outcomeLabel(outcome)}
 			</MarkerContent>
 		</Marker>
+	);
+}
+
+/** Where the Agent's Timer rang: its note, written to the Agent, came in as the next input. */
+const TimerRang = () => (
+	<Marker variant="separator" className="text-xs">
+		<MarkerContent>
+			<AlarmClockIcon className="size-3" />
+			{m.timer_rang()}
+		</MarkerContent>
+	</Marker>
+);
+
+/** The Timer the Agent set: when it rings and its note, with a button to cancel it. */
+function TimerBar({
+	conversationId,
+	note,
+	ringsAt,
+}: {
+	conversationId: string;
+	note: string;
+	ringsAt: Date;
+}) {
+	const router = useRouter();
+	const [cancelling, setCancelling] = useState(false);
+	// a time of day today, with the date beyond it
+	const time = ringsAt.toLocaleString(undefined, {
+		...(ringsAt.toDateString() === new Date().toDateString()
+			? {}
+			: { month: "short", day: "numeric" }),
+		hour: "2-digit",
+		minute: "2-digit",
+	});
+	return (
+		<div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm text-muted-foreground">
+			<AlarmClockIcon className="size-4 shrink-0" />
+			<span className="min-w-0 flex-1 break-words">
+				{m.timer_set({ time, note })}
+			</span>
+			<Button
+				variant="ghost"
+				size="sm"
+				disabled={cancelling}
+				onClick={async () => {
+					setCancelling(true);
+					try {
+						await ok(
+							api().api.conversations({ id: conversationId }).timer.delete(),
+						);
+						await router.invalidate();
+					} finally {
+						setCancelling(false);
+					}
+				}}
+			>
+				{m.timer_cancel()}
+			</Button>
+		</div>
 	);
 }
 

@@ -4,11 +4,14 @@ import type { OrqestraConfig } from "@orqestra/config";
 import {
 	BudgetExceeded,
 	MAX_SUBAGENT_TASKS,
+	MAX_TIMER_DELAY,
+	MIN_TIMER_DELAY,
 	NoSuchSubagent,
 	NoSuchTemplate,
 	type RunHandle,
 	type StreamEvent,
 	TemplateOffline,
+	TimerLimitReached,
 } from "@orqestra/conversations";
 
 /** Model requests a Subagent may make; the last one, without Tools, is for its final answer. */
@@ -75,6 +78,49 @@ export function questionTool() {
 			asked = false;
 		},
 	};
+}
+
+/** The top-level Agent's Tools for coming back to the Conversation later: set its one Timer, or cancel it. */
+export function timerTools(timer: NonNullable<RunHandle["timer"]>) {
+	const set = tool({
+		name: "set_timer",
+		label: "Set a timer",
+		description: `Come back to this conversation later, such as to check on a long command or an outside result: after \`delay\` seconds (${MIN_TIMER_DELAY} to ${MAX_TIMER_DELAY}, a minute to a day) \`note\` comes to you as an input, and you carry on from there without the user. Write the note to yourself, saying what to check and why. The conversation has one timer: setting one replaces the last. The user sees when it rings and may cancel it.`,
+		parameters: Type.Object({
+			delay: Type.Integer({
+				minimum: MIN_TIMER_DELAY,
+				maximum: MAX_TIMER_DELAY,
+				description: "Seconds from now",
+			}),
+			note: Type.String({ minLength: 1 }),
+		}),
+		execute: async (_, { delay, note }) => {
+			const ringsAt = await timer.set(delay, note).catch((error) => {
+				throw error instanceof TimerLimitReached
+					? new Error(
+							`Since the user's last message the timer has rung ${error.max} times, the most it may: set no more, end your reply and tell the user what is left.`,
+						)
+					: error;
+			});
+			return {
+				content: text(`The timer rings at ${ringsAt.toISOString()}.`),
+				details: undefined,
+			};
+		},
+	});
+	const cancel = tool({
+		name: "cancel_timer",
+		label: "Cancel the timer",
+		description: "Cancel the timer you set, if it has yet to ring.",
+		parameters: Type.Object({}),
+		execute: async () => ({
+			content: text(
+				(await timer.cancel()) ? "Cancelled." : "No timer was set.",
+			),
+			details: undefined,
+		}),
+	});
+	return [set, cancel];
 }
 
 /** Told to a Subagent whose next request is its last, made without Tools. */

@@ -96,6 +96,15 @@ export const conversationRoutes = (
 			},
 			{ params: idParams },
 		)
+		/** Cancels the Timer the Agent set. */
+		.delete(
+			"/conversations/:id/timer",
+			async ({ user, params, status }) => {
+				if (!(await conversations.cancelTimer(user.id, params.id)))
+					return status(404, notFound);
+			},
+			{ params: idParams },
+		)
 		/** The User opened the Conversation: it is no longer Unread. */
 		.post(
 			"/conversations/:id/seen",
