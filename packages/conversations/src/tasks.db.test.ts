@@ -278,9 +278,12 @@ describe.skipIf(!url)(
 			);
 			const conversationId = fired?.firings[0].conversationId;
 			expect(await conversations.list(ada)).toEqual([]);
-			expect((await tasks.list(ada))[0].conversations).toMatchObject([
-				{ id: conversationId, unread: true },
-			]);
+			expect((await tasks.list(ada))[0]).toMatchObject({
+				unread: true,
+				conversations: [{ id: conversationId, unread: true }],
+			});
+			await conversations.seen(ada, conversationId as string);
+			expect((await tasks.list(ada))[0].unread).toBe(false);
 			expect(await tasks.delete(ada, id)).toBe(true);
 			expect(await task(id)).toBeUndefined();
 			expect((await conversations.list(ada)).map((c) => c.id)).toEqual([

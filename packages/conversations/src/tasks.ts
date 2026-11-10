@@ -56,6 +56,8 @@ export class TaskError extends Error {
 
 /** Intervals of a cron expression checked against the shortest allowed: enough to catch an irregular one such as `0 9,10 * * *`. */
 const CRON_INTERVALS_CHECKED = 10;
+/** How many of a task's latest Firing Conversations the sidebar lists under it. */
+const SIDEBAR_FIRINGS = 3;
 
 /** The next `n` Firing times of a recurring schedule after `after`, as BullMQ computes them. */
 export function nextFirings(
@@ -363,7 +365,7 @@ export function tasksOf(config: () => Promise<OrqestraConfig>) {
 	});
 
 	return {
-		/** The User's tasks, newest first, each with its latest Firing and the Conversations of its latest Firings. */
+		/** The User's tasks, newest first, each with its latest Firing, whether any of its Firings' Conversations is Unread, and the Conversations of its latest Firings. */
 		async list(userId: string) {
 			const tasks = await db
 				.select()
@@ -399,10 +401,12 @@ export function tasksOf(config: () => Promise<OrqestraConfig>) {
 					last: own[0]
 						? { firedAt: own[0].firedAt, outcome: own[0].outcome }
 						: null,
+					// any of its Firings' Conversations, shown or not
+					unread: own.some((f) => f.unread),
 					// shortcut: every Firing is read to pick these; page them if tasks pile up thousands
 					conversations: own
 						.filter((f) => f.conversationId)
-						.slice(0, 5)
+						.slice(0, SIDEBAR_FIRINGS)
 						.map((f) => ({
 							id: f.conversationId as string,
 							title: f.title,

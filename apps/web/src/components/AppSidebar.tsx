@@ -7,7 +7,6 @@ import {
 } from "@tanstack/react-router";
 import {
 	CalendarClockIcon,
-	CircleHelpIcon,
 	EyeOffIcon,
 	Loader2Icon,
 	MoreHorizontalIcon,
@@ -18,6 +17,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { NavUser } from "#/components/NavUser";
+import { UnreadMark } from "#/components/UnreadMark";
 import { Button } from "#/components/ui/button";
 import {
 	Collapsible,
@@ -47,31 +47,16 @@ import {
 	SidebarMenuSubItem,
 } from "#/components/ui/sidebar";
 import { api, ok } from "#/lib/api";
+import type { Task } from "#/lib/tasks";
 import { cn } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
 
-type Listed = {
-	id: string;
-	title: string | null;
-	background: boolean;
-	incognito: boolean;
-	unread: boolean;
-	awaitingReply: boolean;
-};
-
-type ListedTask = {
-	id: string;
-	name: string;
-	state: string;
-	conversations: {
-		id: string;
-		title: string | null;
-		firedAt: string | Date;
-		unread: boolean;
-		awaitingReply: boolean;
-	}[];
-};
+type Listed = NonNullable<
+	Awaited<
+		ReturnType<ReturnType<typeof api>["api"]["conversations"]["get"]>
+	>["data"]
+>[number];
 
 export function AppSidebar({
 	user,
@@ -80,7 +65,7 @@ export function AppSidebar({
 }: {
 	user: User;
 	conversations: Listed[];
-	tasks: ListedTask[];
+	tasks: Task[];
 }) {
 	return (
 		<Sidebar variant="inset">
@@ -122,20 +107,14 @@ export function AppSidebar({
 	);
 }
 
-/** A Scheduled Task, folded open on its latest Firings' Conversations: bold while one is Unread, an error icon once it paused itself. */
-function TaskItem({ task }: { task: ListedTask }) {
+/** A Scheduled Task, folded open on its latest Firings' Conversations: bold while any of its Firings' is Unread, an error icon once it paused itself. */
+function TaskItem({ task }: { task: Task }) {
 	const params = useParams({ strict: false });
-	const shown = task.conversations.slice(0, 3);
 	return (
 		<Collapsible defaultOpen render={<SidebarMenuItem />}>
 			<CollapsibleTrigger render={<SidebarMenuButton />}>
 				<CalendarClockIcon className="text-muted-foreground" />
-				<span
-					className={cn(
-						"truncate",
-						shown.some((c) => c.unread) && "font-semibold",
-					)}
-				>
+				<span className={cn("truncate", task.unread && "font-medium")}>
 					{task.name}
 				</span>
 				{task.state === "auto_paused" && (
@@ -148,7 +127,7 @@ function TaskItem({ task }: { task: ListedTask }) {
 			</CollapsibleTrigger>
 			<CollapsibleContent>
 				<SidebarMenuSub>
-					{shown.map((c) => (
+					{task.conversations.map((c) => (
 						<SidebarMenuSubItem key={c.id}>
 							<SidebarMenuSubButton
 								isActive={params.conversationId === c.id}
@@ -159,28 +138,14 @@ function TaskItem({ task }: { task: ListedTask }) {
 									/>
 								}
 							>
-								<span className={cn("truncate", c.unread && "font-semibold")}>
+								<span className={cn("truncate", c.unread && "font-medium")}>
 									{c.title ??
 										new Date(c.firedAt).toLocaleString(getLocale(), {
 											dateStyle: "short",
 											timeStyle: "short",
 										})}
 								</span>
-								{c.awaitingReply ? (
-									<CircleHelpIcon
-										role="img"
-										aria-label={m.awaiting_reply()}
-										className="ml-auto text-signal"
-									/>
-								) : (
-									c.unread && (
-										<span
-											role="img"
-											aria-label={m.unread()}
-											className="ml-auto size-2 shrink-0 rounded-full bg-signal"
-										/>
-									)
-								)}
+								<UnreadMark unread={c.unread} awaitingReply={c.awaitingReply} />
 							</SidebarMenuSubButton>
 						</SidebarMenuSubItem>
 					))}
@@ -241,7 +206,7 @@ function ConversationItem({ conversation }: { conversation: Listed }) {
 						className="text-muted-foreground"
 					/>
 				)}
-				<span className={cn(conversation.unread && "font-semibold")}>
+				<span className={cn(conversation.unread && "font-medium")}>
 					{title}
 				</span>
 				{conversation.background ? (
@@ -249,20 +214,11 @@ function ConversationItem({ conversation }: { conversation: Listed }) {
 						aria-label={m.background_subagents()}
 						className="ml-auto animate-spin text-signal"
 					/>
-				) : conversation.awaitingReply ? (
-					<CircleHelpIcon
-						role="img"
-						aria-label={m.awaiting_reply()}
-						className="ml-auto text-signal"
-					/>
 				) : (
-					conversation.unread && (
-						<span
-							role="img"
-							aria-label={m.unread()}
-							className="ml-auto size-2 shrink-0 rounded-full bg-signal"
-						/>
-					)
+					<UnreadMark
+						unread={conversation.unread}
+						awaitingReply={conversation.awaitingReply}
+					/>
 				)}
 			</SidebarMenuButton>
 			<DropdownMenu>
