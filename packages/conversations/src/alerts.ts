@@ -4,7 +4,7 @@ import {
 	pushSubscription,
 	scheduledTask,
 } from "@orqestra/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, or, sql } from "drizzle-orm";
 import webpush from "web-push";
 
 /** How what an Alert tells of ended: a Run (a Question waits for the User), or a Scheduled Task that paused or finished on its own. */
@@ -94,10 +94,13 @@ export async function alertRun(conversationId: string, status: AlertStatus) {
 }
 
 /** The browsers that receive a User's Alerts. */
-export const push = {
+export const alerts = {
 	/** The VAPID public key a browser subscribes with; null when Alerts are not configured. */
 	publicKey: () => vapid()?.publicKey ?? null,
-	/** This browser receives the User's Alerts, taken from whoever was signed in on it before. */
+	/**
+	 * This browser receives the User's Alerts, taken from whoever was signed in on it before:
+	 * only the browser itself has its keys, so another User's endpoint sent with other keys stays theirs.
+	 */
 	async subscribe(
 		userId: string,
 		{
@@ -111,6 +114,10 @@ export const push = {
 			.onConflictDoUpdate({
 				target: pushSubscription.endpoint,
 				set: { userId, keys },
+				setWhere: or(
+					eq(pushSubscription.userId, userId),
+					sql`${pushSubscription.keys} = excluded.keys`,
+				),
 			});
 	},
 	/** This browser receives the User's Alerts no more. */

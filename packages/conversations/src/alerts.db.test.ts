@@ -130,10 +130,10 @@ const settled = async () => {
 	await new Promise((r) => setTimeout(r, 400));
 	return alerts();
 };
-const subscribe = (userId: string, endpoint: string) =>
-	conversations.push.subscribe(userId, {
+const subscribe = (userId: string, endpoint: string, auth = "a") =>
+	conversations.alerts.subscribe(userId, {
 		endpoint,
-		keys: { p256dh: "p", auth: "a" },
+		keys: { p256dh: "p", auth },
 	});
 const firingOf = async (taskId: string) =>
 	(
@@ -286,9 +286,9 @@ describe.skipIf(!url)("Alerts (Postgres)", { timeout: 20_000 }, () => {
 	});
 
 	it("sends nothing and offers no key without VAPID keys", async () => {
-		expect(conversations.push.publicKey()).toBe("public");
+		expect(conversations.alerts.publicKey()).toBe("public");
 		delete process.env.VAPID_PRIVATE_KEY;
-		expect(conversations.push.publicKey()).toBeNull();
+		expect(conversations.alerts.publicKey()).toBeNull();
 		const id = await conversations.send(ada, { text: "hi" });
 		await waitFor(
 			() => conversations.get(ada, id),
@@ -297,10 +297,20 @@ describe.skipIf(!url)("Alerts (Postgres)", { timeout: 20_000 }, () => {
 		expect(await settled()).toEqual([]);
 	});
 
+	it("keeps a browser another User subscribed when the keys are not that browser's", async () => {
+		await subscribe("bob", "https://push.example/ada-laptop", "stolen");
+		await conversations.send(ada, { text: "hi" });
+		await waitFor(alerts, (a) => a.length === 2);
+		expect(push.sent.map((s) => s.endpoint).sort()).toEqual([
+			"https://push.example/ada-laptop",
+			"https://push.example/ada-phone",
+		]);
+	});
+
 	it("moves a browser to the User signed in on it, and forgets it on unsubscribe", async () => {
 		await subscribe("bob", "https://push.example/ada-phone");
 		// not Bob's to forget
-		await conversations.push.unsubscribe(
+		await conversations.alerts.unsubscribe(
 			"bob",
 			"https://push.example/ada-laptop",
 		);
@@ -310,7 +320,7 @@ describe.skipIf(!url)("Alerts (Postgres)", { timeout: 20_000 }, () => {
 			"https://push.example/ada-laptop",
 		]);
 		push.sent.length = 0;
-		await conversations.push.unsubscribe(
+		await conversations.alerts.unsubscribe(
 			ada,
 			"https://push.example/ada-laptop",
 		);

@@ -4,8 +4,14 @@ import { z } from "zod";
 import { signedInOnly } from "./admin.ts";
 import type { SignedIn } from "./app.ts";
 
-// the worker posts to it: only a push service's https URL
-const endpoint = z.url({ protocol: /^https$/ }).max(2000);
+// the worker posts to it, so only the https URL of a browser's push service: Chrome's, Firefox's, Safari's or Edge's
+const endpoint = z
+	.url({
+		protocol: /^https$/,
+		hostname:
+			/^(fcm\.googleapis\.com|updates\.push\.services\.mozilla\.com|([a-z0-9-]+\.)*push\.apple\.com|[a-z0-9-]+\.notify\.windows\.com)$/,
+	})
+	.max(2000);
 
 /** /api/push: the browsers that receive the signed-in User's Alerts by Web Push. */
 export const pushRoutes = (signedIn: SignedIn, conversations: Conversations) =>
@@ -13,11 +19,11 @@ export const pushRoutes = (signedIn: SignedIn, conversations: Conversations) =>
 		.use(signedIn)
 		.derive(signedInOnly)
 		// null while the instance has no VAPID keys: the browser then offers no Alerts
-		.get("", () => ({ publicKey: conversations.push.publicKey() }))
+		.get("", () => ({ publicKey: conversations.alerts.publicKey() }))
 		.put(
 			"/subscriptions",
 			async ({ user, body, status }) => {
-				await conversations.push.subscribe(user.id, body);
+				await conversations.alerts.subscribe(user.id, body);
 				return status(204);
 			},
 			{
@@ -33,7 +39,7 @@ export const pushRoutes = (signedIn: SignedIn, conversations: Conversations) =>
 		.delete(
 			"/subscriptions",
 			async ({ user, body, status }) => {
-				await conversations.push.unsubscribe(user.id, body.endpoint);
+				await conversations.alerts.unsubscribe(user.id, body.endpoint);
 				return status(204);
 			},
 			{ body: z.object({ endpoint: z.string() }) },

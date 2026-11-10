@@ -29,7 +29,7 @@ const app = (user: User | null) => (method: string, body?: unknown) =>
 		),
 	);
 const browser = {
-	endpoint: "https://push.example/ada",
+	endpoint: "https://fcm.googleapis.com/fcm/send/ada",
 	keys: { p256dh: "p", auth: "a" },
 };
 
@@ -53,12 +53,26 @@ describe.skipIf(!url)("Alert subscriptions through the api", () => {
 		});
 	});
 
-	it("saves and forgets the User's browser; refuses the signed-out and endpoints that are no https URL", async () => {
+	it("saves and forgets the User's browser; refuses the signed-out and endpoints that are no push service's https URL", async () => {
 		expect((await app(null)("PUT", browser)).status).toBe(401);
-		expect(
-			(await app(ada)("PUT", { ...browser, endpoint: "http://10.0.0.1/x" }))
-				.status,
-		).toBe(422);
+		for (const endpoint of [
+			"http://fcm.googleapis.com/fcm/send/ada",
+			"https://10.0.0.1/x",
+			"https://localhost/x",
+			"https://fcm.googleapis.com.evil.example/x",
+		])
+			expect((await app(ada)("PUT", { ...browser, endpoint })).status).toBe(
+				422,
+			);
+		for (const endpoint of [
+			"https://updates.push.services.mozilla.com/wpush/v2/x",
+			"https://web.push.apple.com/x",
+			"https://wns2-par02p.notify.windows.com/w/?token=x",
+		])
+			expect((await app(ada)("PUT", { ...browser, endpoint })).status).toBe(
+				204,
+			);
+		await db.$client.query("truncate push_subscription");
 		expect((await app(ada)("PUT", browser)).status).toBe(204);
 		const saved = await db.$client.query(
 			"select user_id from push_subscription",
