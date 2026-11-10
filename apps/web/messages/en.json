@@ -248,5 +248,16 @@
   "memory_body_too_long": "At most {max} bytes; this has {bytes}.",
   "no_memories_title": "No memories yet",
   "no_memories": "Agents with memory write down what you tell them to remember here.",
-  "no_memories_match": "No memories match."
+  "no_memories_match": "No memories match.",
+  "limits": "Limits",
+  "limits_hint": "Caps on Scheduled Tasks, Timers, Unattended Runs and Subagents. Changes apply from the next Run.",
+  "limits_saved": "Saved. The next Run uses them.",
+  "limit_max_scheduled_tasks_per_user": "Scheduled Tasks per User",
+  "limit_min_firing_interval": "Shortest interval between Firings (minutes)",
+  "limit_timer_rings_per_user_message": "Timer rings per User message",
+  "limit_unattended_max_steps": "Steps of an Unattended Run",
+  "limit_unattended_max_duration": "Duration of an Unattended Run (minutes)",
+  "limit_max_subagent_depth": "Subagent nesting depth (1–3)",
+  "unread": "Unread",
+  "awaiting_reply": "Waiting for your reply"
 }

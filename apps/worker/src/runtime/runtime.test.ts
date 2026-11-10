@@ -16,6 +16,8 @@ import type { JsonRpcMessage } from "@earendil-works/pi-mcp";
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import {
 	type AgentDefinition,
+	DEFAULT_LIMITS,
+	messageText,
 	type OrqestraConfig,
 	resolveTurn,
 } from "@orqestra/config";
@@ -79,6 +81,7 @@ const config = {
 	},
 	mcpServers: {},
 	skills: {},
+	limits: DEFAULT_LIMITS,
 };
 const turn = (agentId = "faux") => resolveTurn(config, agentId) as Turn;
 
@@ -288,6 +291,8 @@ describe("runAgent", () => {
 		);
 		expect(offered).toContain("search");
 		expect(offered).not.toContain("subagent");
+		// nor ask the User: only the top-level Agent talks to them
+		expect(offered).not.toContain("ask_user");
 		expect(JSON.stringify(last?.messages)).toContain("step limit");
 		expect(m.outcomes).toEqual([
 			{ outcome: "partial", result: "what I found" },
@@ -319,6 +324,121 @@ describe("runAgent", () => {
 				(first?.messages[0] as { toolsAdded?: unknown }).toolsAdded,
 			),
 		).toContain("subagent_message");
+	});
+
+	describe("an Unattended Run", () => {
+		const searching = (n: number) =>
+			Array.from({ length: n }, (_, i) =>
+				fauxAssistantMessage([
+					fauxText(`step ${i + 1}`),
+					fauxToolCall("search", { query: "more" }),
+				]),
+			);
+		const limited = {
+			...deps(),
+			config: {
+				...config,
+				limits: { ...DEFAULT_LIMITS, unattendedMaxSteps: 3 },
+			},
+		};
+
+		it("makes its last request at the Limits' step cap without Tools, and ends partial", async () => {
+			let last: Context | undefined;
+			script([
+				...searching(2),
+				(context) => {
+					last = context;
+					return fauxAssistantMessage("what I found");
+				},
+			]);
+			const m = memoryRun({
+				transcript: transcript(user("check the build")),
+				turn: turn(),
+				unattended: true,
+			});
+			await runAgent(m.run, limited);
+
+			expect(JSON.stringify(last?.messages)).toContain("step limit");
+			expect(last?.tools ?? []).toEqual([]);
+			expect(m.outcomes).toEqual([
+				{ outcome: "partial", result: "what I found" },
+			]);
+			expect(m.over).toBe(true);
+		});
+
+		it("ends partial when it runs out of time, keeping what was generated", async () => {
+			const long = "word ".repeat(2000);
+			script([fauxAssistantMessage(long)]);
+			const m = memoryRun({
+				transcript: transcript(user("write a lot")),
+				turn: turn(),
+				unattended: true,
+			});
+			const stream = m.run.stream;
+			m.run.stream = async (event) => {
+				if (event.type === "delta") m.timeOut();
+				await stream(event);
+			};
+			await runAgent(m.run, limited);
+
+			expect((m.saved[0] as AssistantMessage).stopReason).toBe("aborted");
+			expect(m.outcomes).toEqual([
+				{ outcome: "partial", result: expect.stringContaining("word") },
+			]);
+		});
+
+		it("is no limit on an attended Run", async () => {
+			script([...searching(4), fauxAssistantMessage("all done")]);
+			const m = memoryRun({
+				transcript: transcript(user("dig")),
+				turn: turn(),
+			});
+			await runAgent(m.run, limited);
+
+			expect(
+				m.saved.filter((s) => s.role === "assistant").map(messageText),
+			).toEqual(["step 1", "step 2", "step 3", "step 4", "all done"]);
+			expect(m.outcomes).toEqual([undefined]);
+		});
+	});
+
+	it("ends the Run with the Question the Agent asks the User, titled from it", async () => {
+		script(
+			[
+				fauxAssistantMessage(
+					fauxToolCall("ask_user", {
+						question: "Which pi?",
+						suggestions: ["The agent", "The number"],
+					}),
+				),
+			],
+			"Pi",
+		);
+		const m = memoryRun({ transcript: transcript(user("pi?")), turn: turn() });
+		await runAgent(m.run, deps());
+
+		expect(roles(m.saved)).toEqual(["assistant", "toolResult"]);
+		expect((m.saved[1] as ToolResultMessage).isError).toBe(false);
+		expect(m.questions).toEqual([true]);
+		expect(m.over).toBe(true);
+		expect(m.titles).toEqual(["Pi"]);
+	});
+
+	it("refuses a second Question in the same Turn", async () => {
+		script([
+			fauxAssistantMessage([
+				fauxToolCall("ask_user", { question: "Which pi?" }),
+				fauxToolCall("ask_user", { question: "And why?" }),
+			]),
+		]);
+		const m = memoryRun({ transcript: transcript(user("pi?")), turn: turn() });
+		await runAgent(m.run, deps());
+
+		const results = m.saved.filter(
+			(s): s is ToolResultMessage => s.role === "toolResult",
+		);
+		expect(results.map((r) => r.isError)).toEqual([false, true]);
+		expect(m.questions).toEqual([true]);
 	});
 
 	it("delivers a message sent while running at the next step boundary, into the model's context", async () => {
@@ -489,7 +609,7 @@ describe("runAgent with Skills", () => {
 	// pi carries the prompt in the transcript's first, system, message
 	const systemPrompt = (c?: Context) =>
 		(c?.messages[0] as unknown as { role: string; content: string }).content;
-	// besides the Subagent Tools every top-level Agent has
+	// besides the Subagent Tools and ask_user every top-level Agent has
 	const offeredTools = (c?: Context) =>
 		(
 			c?.messages.flatMap(
@@ -498,7 +618,7 @@ describe("runAgent with Skills", () => {
 						(t) => t.name,
 					) ?? [],
 			) ?? []
-		).filter((n) => !n.startsWith("subagent"));
+		).filter((n) => !n.startsWith("subagent") && n !== "ask_user");
 
 	it("lists the Skills the model may invoke in the prompt, and offers read, bash and attach", async () => {
 		let context: Context | undefined;

@@ -1,7 +1,7 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { messageText, type OrqestraConfig, turnSkills } from "@orqestra/config";
-import type { RunHandle } from "@orqestra/conversations";
+import { type RunHandle, RunTimedOut } from "@orqestra/conversations";
 import { type openToolbox, orrery as orreryClient } from "@orqestra/tools";
 import { prepareContext } from "./compaction.ts";
 import { memoryPrompt, memoryTools, recallTool } from "./memory.ts";
@@ -9,6 +9,7 @@ import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
 import { generateTitle } from "./title.ts";
 import {
 	MAX_SUBAGENT_STEPS,
+	questionTool,
 	relay,
 	STEP_LIMIT,
 	subagentTools,
@@ -18,7 +19,7 @@ export type RuntimeDeps = {
 	/** Subagent templates, the services for the Tools, and the Skills with the Sandbox Provider. */
 	config: Pick<
 		OrqestraConfig,
-		"agents" | "tools" | "mcpServers" | "skills" | "sandboxProvider"
+		"agents" | "tools" | "mcpServers" | "skills" | "sandboxProvider" | "limits"
 	>;
 	/** Every Model request of the Run goes through it. */
 	streamSimple: OrqestraConfig["streamSimple"];
@@ -73,9 +74,16 @@ export async function runAgent(
 				compaction.firstKeptId,
 				compaction.tokensBefore,
 			);
-		// a Subagent at the deepest level gets no Subagent Tools; every Subagent gets a step limit whose last request goes without Tools,
-		// so it answers with what it has rather than stopping mid-search
+		// a Subagent at the deepest level gets no Subagent Tools; every Subagent and an Unattended Run get a step limit
+		// whose last request goes without Tools, so they answer with what they have rather than stopping mid-search
+		const maxSteps = sub
+			? MAX_SUBAGENT_STEPS
+			: run.unattended
+				? config.limits.unattendedMaxSteps
+				: Number.POSITIVE_INFINITY;
 		let steps = 0;
+		// only the top-level Agent asks the User; the step that asked ends the Run
+		const question = questionTool();
 		const agent = new Agent({
 			initialState: {
 				systemPrompt:
@@ -89,17 +97,18 @@ export async function runAgent(
 						? [...memoryTools(memory, sub), recallTool(run.recall)]
 						: []),
 					...(run.subagents ? subagentTools(config, run.subagents) : []),
+					...(sub ? [] : [question.tool]),
 				],
 				messages,
 			},
 			streamFn: streamSimple,
 			sessionId: conversationId,
 			finishTurn: () =>
-				sub && ++steps >= MAX_SUBAGENT_STEPS ? { action: "end" } : undefined,
+				++steps >= maxSteps || question.asked ? { action: "end" } : undefined,
 			// inputs that arrived during a step go to the model right after it
 			prepareNextTurnWithContext: async ({ context }) => {
 				const messages = await run.deliver();
-				if (sub && steps === MAX_SUBAGENT_STEPS - 1)
+				if (steps === maxSteps - 1)
 					return {
 						context: { ...context, tools: [] },
 						messages: [
@@ -131,9 +140,16 @@ export async function runAgent(
 					.map(messageText)
 					.filter((t) => t.trim())
 					.at(-1) ?? "";
-			if (signal.aborted) return { outcome: "stopped" as const, result };
-			if (steps >= MAX_SUBAGENT_STEPS)
-				return { outcome: "partial" as const, result };
+			// out of time is no stop of the User's: what it has is a partial result
+			if (signal.aborted)
+				return {
+					outcome:
+						signal.reason instanceof RunTimedOut
+							? ("partial" as const)
+							: ("stopped" as const),
+					result,
+				};
+			if (steps >= maxSteps) return { outcome: "partial" as const, result };
 			return { outcome: "completed" as const, result };
 		};
 
@@ -146,11 +162,17 @@ export async function runAgent(
 			// fails the job so the reason (e.g. an unreadable API key) is logged; the Run is then marked failed
 			if (answer.stopReason === "error")
 				throw new Error(answer.errorMessage ?? "The reply failed");
-			next = await run.finish(sub ? ended() : undefined);
+			next = await run.finish(sub || run.unattended ? ended() : undefined, {
+				question: question.asked,
+			});
 			if (!next.length) break;
+			question.reset();
 		}
 		if (sub) return;
-		const answer = agent.state.messages.at(-1) as AssistantMessage;
+		// a Question leaves its Tool result last
+		const answer = (agent.state.messages as Message[])
+			.filter((m): m is AssistantMessage => m.role === "assistant")
+			.at(-1) as AssistantMessage;
 
 		// titled after the first turn that produced a reply, stopped ones included
 		const first = !rows.some((r) => r.message.role === "assistant");

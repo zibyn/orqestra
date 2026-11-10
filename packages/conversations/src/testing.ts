@@ -13,7 +13,13 @@ import {
 } from "./memories.ts";
 import type { Recall } from "./recall.ts";
 import type { Ended } from "./runs.ts";
-import type { RunHandle, StreamEvent, Transcript, Turn } from "./serve.ts";
+import {
+	type RunHandle,
+	RunTimedOut,
+	type StreamEvent,
+	type Transcript,
+	type Turn,
+} from "./serve.ts";
 
 const unavailable = async (): Promise<never> => {
 	throw new Error("memoryRun has no Subagents: pass `subagents`");
@@ -29,6 +35,7 @@ export function memoryRun({
 	turn,
 	inbox = [],
 	isSubagent = false,
+	unattended = false,
 	incognito = false,
 	renamed = false,
 	// a Subagent at the deepest level, as one is with the depth limit of 1, has none
@@ -44,6 +51,7 @@ export function memoryRun({
 	/** Inputs that arrive once the Run has begun. */
 	inbox?: Message[];
 	isSubagent?: boolean;
+	unattended?: boolean;
 	/** The Run's top-level Conversation is Incognito: the Run gets no Memories. */
 	incognito?: boolean;
 	renamed?: boolean;
@@ -67,11 +75,13 @@ export function memoryRun({
 	}[] = [];
 	const titles: string[] = [];
 	const outcomes: (Ended | undefined)[] = [];
+	const questions: boolean[] = [];
 	let over = false;
 	let sandboxId: string | null = null;
 	const run: RunHandle = {
 		conversationId: "memory",
 		isSubagent,
+		unattended,
 		turn,
 		transcript,
 		renamed,
@@ -86,8 +96,9 @@ export function memoryRun({
 		compacted: async (summary, firstKeptId, tokensBefore) => {
 			compactions.push({ summary, firstKeptId, tokensBefore });
 		},
-		finish: async (outcome) => {
+		finish: async (outcome, { question = false } = {}) => {
 			outcomes.push(outcome);
+			questions.push(question);
 			const next = stopper.signal.aborted ? [] : pending.splice(0);
 			over = !next.length;
 			return next;
@@ -115,6 +126,8 @@ export function memoryRun({
 		push: (...messages: Message[]) => pending.push(...messages),
 		/** Stops the Run, as the User would. */
 		stop: () => stopper.abort(),
+		/** Aborts an Unattended Run past its wall-clock time, as `serveRuns` does. */
+		timeOut: () => stopper.abort(new RunTimedOut(1)),
 		/** The last `finish` returned no input. */
 		get over() {
 			return over;
@@ -128,6 +141,8 @@ export function memoryRun({
 		compactions,
 		titles,
 		outcomes,
+		/** Whether each `finish` ended on a Question to the User. */
+		questions,
 		/** The User's Memories, by path. */
 		memories: store,
 	};

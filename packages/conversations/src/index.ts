@@ -26,7 +26,7 @@ import {
 	orrery as orreryClient,
 	workspacePath,
 } from "@orqestra/tools";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import { MEMORY_CHANGES, undoChange } from "./memories.ts";
 import {
@@ -64,7 +64,7 @@ export {
 	type Recalled,
 } from "./recall.ts";
 export type { ConversationEvent, Ended } from "./runs.ts";
-export { MAX_SUBAGENTS } from "./runs.ts";
+export { MAX_SUBAGENTS, queueInput } from "./runs.ts";
 export { ensureSandbox } from "./sandbox.ts";
 export {
 	BudgetExceeded,
@@ -74,6 +74,7 @@ export {
 	NoSuchTemplate,
 	type RunHandle,
 	type RunHandler,
+	RunTimedOut,
 	type StreamEvent,
 	TemplateOffline,
 	type Transcript,
@@ -216,6 +217,8 @@ export function createConversations({
 					title: conversation.title,
 					status: conversation.status,
 					incognito: conversation.incognito,
+					unread: conversation.unread,
+					awaitingReply: conversation.awaitingReply,
 					// Subagents queued or at work, which the sidebar marks while the parent itself is idle
 					// (spelled out: drizzle leaves the columns of a select's fields unqualified)
 					background: sql<boolean>`exists (select 1 from subagent s join conversation child on child.id = s.conversation_id where child.parent_id = conversation.id and s.outcome in ('queued', 'running'))`,
@@ -238,6 +241,7 @@ export function createConversations({
 						model: message.model,
 						thinkingLevel: message.thinkingLevel,
 						subagentId: message.subagentId,
+						origin: message.origin,
 						queued: sql<boolean>`false`,
 					})
 					.from(message)
@@ -251,6 +255,7 @@ export function createConversations({
 						model: inbox.model,
 						thinkingLevel: inbox.thinkingLevel,
 						subagentId: inbox.subagentId,
+						origin: inbox.origin,
 						// its id is the inbox's, not a message's
 						queued: sql<boolean>`true`,
 					})
@@ -284,6 +289,8 @@ export function createConversations({
 				title: conv.title,
 				status: conv.status,
 				incognito: conv.incognito,
+				unread: conv.unread,
+				awaitingReply: conv.awaitingReply,
 				// the Agent was removed from config or has no Model left
 				readOnly: !resolveTurn(await config(), conv.agentId),
 				messages: [...messages, ...pending].map((m) => ({
@@ -411,10 +418,14 @@ export function createConversations({
 				// while a Run goes, it delivers this at its next step boundary; the lock keeps it from going idle past it
 				if (id) {
 					await lockRoot(tx, id);
-					// a User message renews the Agent's Subagent budget
+					// a User message renews the Agent's Subagent budget, answers its Question, and the User is back: Runs are attended again
 					await tx
 						.update(conversation)
-						.set({ subagentsSinceUser: 0 })
+						.set({
+							subagentsSinceUser: 0,
+							awaitingReply: false,
+							unattended: false,
+						})
 						.where(eq(conversation.id, id));
 				} else {
 					[{ id }] = await tx
@@ -449,7 +460,7 @@ export function createConversations({
 			return conversationId;
 		},
 
-		/** Re-runs a failed reply to the last user message; false when the Conversation is not the user's. */
+		/** Re-runs a failed reply to the last user message, or one that asked a Question, which it withdraws; false when the Conversation is not the user's. */
 		async retry(userId: string, id: string) {
 			const conv = await owned(userId, id);
 			if (!conv) return false;
@@ -462,9 +473,18 @@ export function createConversations({
 			const dropped = await db.transaction(async (tx) => {
 				const claimed = await tx
 					.update(conversation)
-					.set({ status: "running", jobId: newJobId() })
+					.set({ status: "running", jobId: newJobId(), awaitingReply: false })
 					.where(
-						and(eq(conversation.id, id), eq(conversation.status, "failed")),
+						and(
+							eq(conversation.id, id),
+							or(
+								eq(conversation.status, "failed"),
+								and(
+									eq(conversation.status, "idle"),
+									eq(conversation.awaitingReply, true),
+								),
+							),
+						),
 					)
 					.returning({ id: conversation.id });
 				if (!claimed.length)
@@ -524,6 +544,16 @@ export function createConversations({
 			} else await requestStop([id]);
 			await stopSubagents(id);
 			return true;
+		},
+
+		/** The User opened the Conversation: it is no longer Unread. False when it is not the user's. */
+		async seen(userId: string, id: string) {
+			const seen = await db
+				.update(conversation)
+				.set({ unread: false })
+				.where(and(eq(conversation.id, id), eq(conversation.userId, userId)))
+				.returning({ id: conversation.id });
+			return seen.length > 0;
 		},
 
 		/** False when the Conversation is not the user's. */

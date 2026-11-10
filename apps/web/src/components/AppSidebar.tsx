@@ -6,6 +6,7 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import {
+	CircleHelpIcon,
 	EyeOffIcon,
 	Loader2Icon,
 	MoreHorizontalIcon,
@@ -36,19 +37,24 @@ import {
 	SidebarMenuItem,
 } from "#/components/ui/sidebar";
 import { api, ok } from "#/lib/api";
+import { cn } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
+
+type Listed = {
+	id: string;
+	title: string | null;
+	background: boolean;
+	incognito: boolean;
+	unread: boolean;
+	awaitingReply: boolean;
+};
 
 export function AppSidebar({
 	user,
 	conversations,
 }: {
 	user: User;
-	conversations: {
-		id: string;
-		title: string | null;
-		background: boolean;
-		incognito: boolean;
-	}[];
+	conversations: Listed[];
 }) {
 	return (
 		<Sidebar variant="inset">
@@ -80,16 +86,7 @@ export function AppSidebar({
 	);
 }
 
-function ConversationItem({
-	conversation,
-}: {
-	conversation: {
-		id: string;
-		title: string | null;
-		background: boolean;
-		incognito: boolean;
-	};
-}) {
+function ConversationItem({ conversation }: { conversation: Listed }) {
 	const router = useRouter();
 	const navigate = useNavigate();
 	const params = useParams({ strict: false });
@@ -140,12 +137,28 @@ function ConversationItem({
 						className="text-muted-foreground"
 					/>
 				)}
-				<span>{title}</span>
-				{conversation.background && (
+				<span className={cn(conversation.unread && "font-semibold")}>
+					{title}
+				</span>
+				{conversation.background ? (
 					<Loader2Icon
 						aria-label={m.background_subagents()}
 						className="ml-auto animate-spin text-signal"
 					/>
+				) : conversation.awaitingReply ? (
+					<CircleHelpIcon
+						role="img"
+						aria-label={m.awaiting_reply()}
+						className="ml-auto text-signal"
+					/>
+				) : (
+					conversation.unread && (
+						<span
+							role="img"
+							aria-label={m.unread()}
+							className="ml-auto size-2 shrink-0 rounded-full bg-signal"
+						/>
+					)
 				)}
 			</SidebarMenuButton>
 			<DropdownMenu>

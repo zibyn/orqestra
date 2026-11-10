@@ -223,7 +223,6 @@ function ConversationView() {
 	const replies = useLiveReplies(conversation.id);
 	// a crashed Run never sends `end`: its reply stops showing with the status
 	const live = conversation.status === "running" ? replies[""] : undefined;
-	const [retrying, setRetrying] = useState(false);
 	// kept on close so the panel keeps its content while it slides out
 	const [panel, setPanel] = useState<{
 		run: SubagentTranscript;
@@ -243,6 +242,38 @@ function ConversationView() {
 	);
 	// still in the inbox: shown after the reply that is generating, and after a failure that awaits Retry
 	const queued = conversation.messages.filter((row) => row.queued);
+	// the reply whose Question waits for the User
+	const asking = conversation.awaitingReply
+		? delivered.filter((row) => row.message.role === "assistant").at(-1)?.id
+		: undefined;
+	const send = async ({
+		files = [],
+		...input
+	}: {
+		text: string;
+		model?: string;
+		thinking?: Choice["thinking"];
+		files?: File[];
+	}) => {
+		const attachments = await uploadFiles(conversation.id, files);
+		await ok(
+			api().api.messages.post({
+				...input,
+				attachments,
+				conversationId: conversation.id,
+			}),
+		);
+		await router.invalidate();
+	};
+
+	// opening it, or a reply landing while it is open, is seeing it
+	useEffect(() => {
+		if (conversation.unread)
+			void api()
+				.api.conversations({ id: conversation.id })
+				.seen.post()
+				.then(() => router.invalidate());
+	}, [conversation.id, conversation.unread, router]);
 
 	return (
 		<PanelContext
@@ -288,6 +319,17 @@ function ConversationView() {
 									message={row.message}
 									results={results}
 									conversationId={conversation.id}
+									answer={
+										row.id === asking
+											? (text) =>
+													send({
+														text,
+														model: lastUser?.model,
+														thinking:
+															lastUser?.thinkingLevel as Choice["thinking"],
+													})
+											: undefined
+									}
 								/>
 							) : null}
 						</MessageScrollerItem>
@@ -308,34 +350,7 @@ function ConversationView() {
 							className="flex items-center gap-2 text-sm text-destructive"
 						>
 							{m.run_failed()}
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={retrying}
-								onClick={async () => {
-									setRetrying(true);
-									try {
-										await ok(
-											api()
-												.api.conversations({ id: conversation.id })
-												.retry.post(),
-										);
-										await router.invalidate();
-									} finally {
-										setRetrying(false);
-									}
-								}}
-							>
-								{retrying ? (
-									<Loader2Icon
-										className="animate-spin"
-										data-icon="inline-start"
-									/>
-								) : (
-									<RotateCcwIcon data-icon="inline-start" />
-								)}
-								{m.retry()}
-							</Button>
+							<RetryButton conversationId={conversation.id} />
 						</MessageScrollerItem>
 					)}
 					{queued.map((row) => (
@@ -377,17 +392,7 @@ function ConversationView() {
 						onStop={() =>
 							void api().api.conversations({ id: conversation.id }).stop.post()
 						}
-						onSend={async ({ files, ...input }) => {
-							const attachments = await uploadFiles(conversation.id, files);
-							await ok(
-								api().api.messages.post({
-									...input,
-									attachments,
-									conversationId: conversation.id,
-								}),
-							);
-							await router.invalidate();
-						}}
+						onSend={send}
 					/>
 				)}
 			</div>
@@ -406,6 +411,86 @@ function ConversationView() {
 }
 
 type Results = Map<string, ToolResultMessage>;
+
+/** Re-runs the last reply: a failed one, or one that asked a Question, which it withdraws. */
+function RetryButton({ conversationId }: { conversationId: string }) {
+	const router = useRouter();
+	const [retrying, setRetrying] = useState(false);
+	return (
+		<Button
+			variant="outline"
+			size="sm"
+			disabled={retrying}
+			onClick={async () => {
+				setRetrying(true);
+				try {
+					await ok(
+						api().api.conversations({ id: conversationId }).retry.post(),
+					);
+					await router.invalidate();
+				} finally {
+					setRetrying(false);
+				}
+			}}
+		>
+			{retrying ? (
+				<Loader2Icon className="animate-spin" data-icon="inline-start" />
+			) : (
+				<RotateCcwIcon data-icon="inline-start" />
+			)}
+			{m.retry()}
+		</Button>
+	);
+}
+
+/** An `ask_user` call the Agent made, unless it was refused. */
+const questionOf = (call: ToolCall, result?: ToolResultMessage) =>
+	call.name === "ask_user" && !result?.isError
+		? (call.arguments as { question: string; suggestions?: string[] })
+		: undefined;
+
+/** The Agent's Question; while it waits, its suggested answers are buttons that send their text, and Retry withdraws it. */
+function Question({
+	question,
+	suggestions = [],
+	answer,
+	conversationId,
+}: {
+	question: string;
+	suggestions?: string[];
+	answer?: (text: string) => Promise<void>;
+	conversationId?: string;
+}) {
+	const [sending, setSending] = useState(false);
+	return (
+		<div className="flex flex-col items-start gap-3">
+			<MessageResponse>{question}</MessageResponse>
+			{answer && conversationId && (
+				<div className="flex flex-wrap gap-2">
+					{suggestions.map((s) => (
+						<Button
+							key={s}
+							variant="outline"
+							size="sm"
+							disabled={sending}
+							onClick={async () => {
+								setSending(true);
+								try {
+									await answer(s);
+								} finally {
+									setSending(false);
+								}
+							}}
+						>
+							{s}
+						</Button>
+					))}
+					<RetryButton conversationId={conversationId} />
+				</div>
+			)}
+		</div>
+	);
+}
 
 /** A User's message; one that invoked a Skill shows its name, not the instructions put in for it. */
 function UserText({ text }: { text: string }) {
@@ -1032,22 +1117,29 @@ function AgentReply({
 	message,
 	results,
 	conversationId,
+	answer,
 }: {
 	message: AssistantMessage;
 	results: Results;
 	/** Whose Sandbox the files it attached are in; older Subagents kept in a Tool result have none. */
 	conversationId?: string;
+	/** Sends the User's answer to its Question, while it waits for one. */
+	answer?: (text: string) => Promise<void>;
 }) {
 	const download = (part: AssistantMessage["content"][number]) =>
 		part.type === "toolCall" && conversationId
 			? attachmentOf(part, results.get(part.id))
+			: undefined;
+	const asked = (part: AssistantMessage["content"][number]) =>
+		part.type === "toolCall"
+			? questionOf(part, results.get(part.id))
 			: undefined;
 	return (
 		<Message>
 			<MessageContent className="gap-3">
 				{groupSteps(
 					message.content,
-					(part) => part.type !== "text" && !download(part),
+					(part) => part.type !== "text" && !download(part) && !asked(part),
 				).map((run, i) => {
 					if (Array.isArray(run))
 						return (
@@ -1067,6 +1159,17 @@ function AgentReply({
 									) : null,
 								)}
 							</Trace>
+						);
+					const question = asked(run);
+					if (question)
+						return (
+							<Question
+								// biome-ignore lint/suspicious/noArrayIndexKey: saved content never reorders
+								key={i}
+								{...question}
+								answer={answer}
+								conversationId={conversationId}
+							/>
 						);
 					const attachment = download(run);
 					if (attachment && conversationId)

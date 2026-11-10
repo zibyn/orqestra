@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
 	type AgentDefinition,
+	DEFAULT_LIMITS,
 	GENERAL_WORKER,
 	messageText,
 	type OrqestraConfig,
@@ -34,6 +35,7 @@ const {
 	BudgetExceeded,
 	createConversations,
 	MAX_SUBAGENTS,
+	RunTimedOut,
 	MAX_SUBAGENTS_PER_USER_MESSAGE,
 	userMemories,
 } = await import("./index.ts");
@@ -85,6 +87,7 @@ const config = {
 		},
 	},
 	sandboxProvider: provider,
+	limits: { ...DEFAULT_LIMITS },
 } as unknown as OrqestraConfig;
 /** Each Skill version's SKILL.md, as the test has it now. */
 const skillMds = new Map<number, string>();
@@ -140,7 +143,11 @@ async function collect(
  */
 type Ctx = { run: RunHandle; seen: Message[]; toolCallId: string };
 type Call = { name: string; run: (ctx: Ctx) => Promise<string> };
-type Step = (ctx: Ctx) => string | Call[] | Promise<string | Call[]>;
+/** A reply that asks the User a Question, as `ask_user` does: the Run ends with it. */
+type Ask = { question: string };
+type Step = (
+	ctx: Ctx,
+) => string | Call[] | Ask | Promise<string | Call[] | Ask>;
 
 let queues: { parent: Step[]; sub: Step[]; deep: Step[] } = {
 	parent: [],
@@ -170,6 +177,26 @@ async function scripted(run: RunHandle) {
 		).shift();
 		if (!step) throw new Error("No scripted step left");
 		const reply = await step({ run, seen, toolCallId: "" });
+		if (typeof reply === "object" && "question" in reply) {
+			const asked = fauxAssistantMessage([
+				fauxToolCall("ask_user", { question: reply.question }),
+			]);
+			const result: ToolResultMessage = {
+				role: "toolResult",
+				toolCallId: (asked.content[0] as ToolCall).id,
+				toolName: "ask_user",
+				content: [{ type: "text", text: "Asked." }],
+				isError: false,
+				timestamp: Date.now(),
+			};
+			seen.push(asked, result);
+			await run.save(asked);
+			await run.save(result);
+			const next = await run.finish(undefined, { question: true });
+			if (!next.length) return;
+			seen.push(...next);
+			continue;
+		}
 		if (typeof reply === "string") {
 			const answer = fauxAssistantMessage(reply);
 			seen.push(answer);
@@ -216,6 +243,9 @@ const say =
 	(text: string): Step =>
 	() =>
 		text;
+const ask =
+	(question: string): Step =>
+	() => ({ question });
 const call =
 	(...calls: Call[]): Step =>
 	() =>
@@ -1139,8 +1169,7 @@ describe.skipIf(!url)(
 			});
 
 			it("gives Subagents no Subagent Tools when the depth limit is 1, as before nesting", async () => {
-				const before = runs.limits.maxSubagentDepth;
-				runs.limits.maxSubagentDepth = async () => 1;
+				config.limits = { ...DEFAULT_LIMITS, maxSubagentDepth: 1 };
 				try {
 					let had: RunHandle["subagents"] | null = null;
 					script({
@@ -1156,7 +1185,7 @@ describe.skipIf(!url)(
 					await waitFor(() => get(id), idle(6));
 					expect(had).toBeUndefined();
 				} finally {
-					runs.limits.maxSubagentDepth = before;
+					config.limits = { ...DEFAULT_LIMITS };
 				}
 			});
 
@@ -1604,6 +1633,148 @@ describe.skipIf(!url)(
 			]);
 		});
 
+		describe("Unread", () => {
+			const unread = async (id: string) =>
+				(await conversations.list(userId)).find((c) => c.id === id)?.unread;
+
+			it("marks a Conversation Unread when its Run ends with a reply, until its User has seen it", async () => {
+				script({ parent: [say("done")] });
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(2));
+				expect(await unread(id)).toBe(true);
+				expect((await get(id))?.unread).toBe(true);
+				// nobody else can mark it seen
+				expect(await conversations.seen("u2", id)).toBe(false);
+				expect(await unread(id)).toBe(true);
+				expect(await conversations.seen(userId, id)).toBe(true);
+				expect(await unread(id)).toBe(false);
+			});
+
+			it("leaves Unread alone when the User stops the Run", async () => {
+				script({ parent: [say("done"), hang, hang] });
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(2));
+				// still unread: the stopped Run leaves it so
+				await send("more", id);
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "running",
+				);
+				await conversations.stop(userId, id);
+				await waitFor(() => get(id), idle(3));
+				expect(await unread(id)).toBe(true);
+				// seen: the stopped Run does not mark it unread again
+				await conversations.seen(userId, id);
+				await send("again", id);
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "running",
+				);
+				await conversations.stop(userId, id);
+				await waitFor(() => get(id), idle(4));
+				expect(await unread(id)).toBe(false);
+			});
+
+			it("never marks a Subagent's Conversation Unread", async () => {
+				script({
+					parent: [call(start("find pi")), say("asked"), say("pi.dev")],
+					sub: [say("found")],
+				});
+				const id = await send("research");
+				await waitFor(() => get(id), idle(6));
+				const [sub] = await db
+					.select({ unread: schema.conversation.unread })
+					.from(schema.conversation)
+					.where(sql`${schema.conversation.parentId} = ${id}`);
+				expect(sub.unread).toBe(false);
+				expect(await unread(id)).toBe(true);
+			});
+		});
+
+		describe("Question", () => {
+			const listed = async (id: string) =>
+				(await conversations.list(userId)).find((c) => c.id === id);
+
+			it("ends the Run with a Question and waits for the User's reply, which clears it", async () => {
+				script({ parent: [ask("Which pi?"), say("pi.dev it is")] });
+				const id = await send("find pi");
+				const asked = await waitFor(() => get(id), idle(3));
+				expect(asked?.awaitingReply).toBe(true);
+				expect(await listed(id)).toMatchObject({
+					awaitingReply: true,
+					unread: true,
+				});
+				await send("the agent", id);
+				// any message from the User answers it
+				expect((await listed(id))?.awaitingReply).toBe(false);
+				const view = await waitFor(() => get(id), idle(5));
+				expect(view?.awaitingReply).toBe(false);
+				expect(view?.messages.map((m) => m.message.role)).toEqual([
+					"user",
+					"assistant",
+					"toolResult",
+					"user",
+					"assistant",
+				]);
+			});
+
+			it("holds a Notification that arrives while a Question waits, and delivers it with the User's reply", async () => {
+				const { gate: done, release } = gate();
+				let answered: Message[] = [];
+				script({
+					parent: [
+						call(start("find pi")),
+						ask("Which pi?"),
+						({ seen }) => {
+							answered = seen.slice(-2);
+							return "both in";
+						},
+					],
+					sub: [
+						async () => {
+							await done;
+							return "found: pi.dev";
+						},
+					],
+				});
+				const id = await send("research pi");
+				await waitFor(() => get(id), idle(5));
+				release();
+				await waitFor(
+					() => get(id),
+					(v) => v?.subagents[0]?.outcome === "completed",
+				);
+				// had the Notification started a Run, it would have taken the last step
+				await new Promise((r) => setTimeout(r, 300));
+				const waiting = await get(id);
+				expect(waiting).toMatchObject({ status: "idle", awaitingReply: true });
+				expect(waiting?.messages.filter((m) => m.queued)).toHaveLength(1);
+
+				await send("the language", id);
+				const view = await waitFor(() => get(id), idle(8));
+				expect(answered.map((m) => messageText(m))).toEqual([
+					expect.stringContaining("<task-notification"),
+					"the language",
+				]);
+				expect(view?.awaitingReply).toBe(false);
+			});
+
+			it("withdraws the Question when the User retries the Turn that asked it", async () => {
+				script({ parent: [ask("Which pi?"), say("retried")] });
+				const id = await send("find pi");
+				await waitFor(() => get(id), idle(3));
+				expect(await conversations.retry(userId, id)).toBe(true);
+				const view = await waitFor(() => get(id), idle(2));
+				expect(view?.awaitingReply).toBe(false);
+				expect(
+					view?.messages.map((m) => [m.message.role, messageText(m.message)]),
+				).toEqual([
+					["user", "find pi"],
+					["assistant", "retried"],
+				]);
+			});
+		});
+
 		it("titles a Conversation unless the User renamed it", async () => {
 			script({
 				parent: [
@@ -1754,6 +1925,115 @@ describe.skipIf(!url)(
 					(await conversations.list(userId)).map((c) => [c.id, c.incognito]),
 				),
 			).toEqual({ [id]: true, [started]: true, [plain]: false });
+		});
+
+		describe("Unattended Runs", () => {
+			afterAll(() => {
+				config.limits = { ...DEFAULT_LIMITS };
+			});
+			/** As a Scheduled Task or a Timer would: an input with an origin, under the root's lock. */
+			const queued = async (id: string, text: string) => {
+				await db.transaction(async (tx) => {
+					await runs.lockRoot(tx, id);
+					await runs.queueInput(tx, {
+						conversationId: id,
+						message: { role: "user", content: text, timestamp: Date.now() },
+						model: "faux/faux-1",
+						thinkingLevel: "off",
+						origin: "timer",
+					});
+				});
+				await runs.ensureRun(id);
+			};
+
+			it("are a Conversation's Runs, its Subagents' included, from an input with an origin until the User's next message", async () => {
+				const seen: boolean[] = [];
+				const note =
+					(then: string | Call[]): Step =>
+					({ run }) => {
+						seen.push(run.unattended);
+						return then;
+					};
+				script({
+					parent: [
+						note("hi"),
+						note([start("look")]),
+						say("started"),
+						note("done"),
+						note("again"),
+					],
+					sub: [note("found")],
+				});
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(2));
+				await queued(id, "check the build");
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle" && seen.length === 4,
+				);
+				await send("thanks", id);
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle" && seen.length === 5,
+				);
+				expect(seen).toEqual([false, true, true, true, false]);
+				const origins = (await get(id))?.messages
+					.filter((m) => m.message.role === "user")
+					.map((m) => m.origin);
+				expect(origins).toEqual([null, "timer", null, null]);
+			});
+
+			it("are aborted past the wall-clock limit, as a stop that is no User's, and end partial; attended Runs are not", async () => {
+				config.limits = { ...DEFAULT_LIMITS, unattendedMaxDuration: 1 };
+				let reason: unknown;
+				let outcome: string | undefined;
+				script({
+					parent: [
+						say("hi"),
+						call(start("dig")),
+						say("started"),
+						async ({ run }) => {
+							await untilAborted(run.signal);
+							reason = run.signal.reason;
+							return "half";
+						},
+						// an attended Run taking longer than the limit
+						async () => {
+							await new Promise((r) => setTimeout(r, 1500));
+							return "slow but whole";
+						},
+					],
+					sub: [
+						async ({ run }) => {
+							await untilAborted(run.signal);
+							outcome =
+								run.signal.reason instanceof RunTimedOut
+									? "timed out"
+									: "stopped";
+							return "part of it";
+						},
+					],
+				});
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(2));
+				await queued(id, "dig in the background");
+				// the Subagent's Notification wakes the parent as a partial result, and that Run is timed out too
+				const view = await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle" && v.messages.length === 8,
+				);
+				expect(outcome).toBe("timed out");
+				expect(view?.subagents.map((s) => s.outcome)).toEqual(["partial"]);
+				expect(messageText(view?.messages[6].message as Message)).toContain(
+					'status="partial"',
+				);
+				expect(reason).toBeInstanceOf(RunTimedOut);
+				await send("take your time", id);
+				const attended = await waitFor(() => get(id), idle(10));
+				expect(messageText(attended?.messages[9].message as Message)).toBe(
+					"slow but whole",
+				);
+			});
 		});
 
 		it("hides a Conversation from everyone but its owner", async () => {

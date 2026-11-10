@@ -3,6 +3,7 @@ import {
 	type AnyPgColumn,
 	bigint,
 	boolean,
+	check,
 	customType,
 	doublePrecision,
 	index,
@@ -59,6 +60,12 @@ export const conversation = pgTable(
 		sandboxId: text("sandbox_id"),
 		// an Incognito Conversation, chosen when it starts: no memory, and Recall never finds it; false for Subagents, which go by their parent's
 		incognito: boolean("incognito").default(false).notNull(),
+		// its Runs are Unattended Runs, under the Limits' step and wall-clock caps: an input with an `origin` sets it, a User message clears it; Subagents go by their root's
+		unattended: boolean("unattended").default(false).notNull(),
+		// a top-level Run ended with a reply the User has yet to open; never set on a Subagent's
+		unread: boolean("unread").default(false).notNull(),
+		// its last Run ended with a Question (`ask_user`); the User's next message clears it
+		awaitingReply: boolean("awaiting_reply").default(false).notNull(),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()
@@ -70,6 +77,8 @@ export const conversation = pgTable(
 		index("conversation_rootId_idx").on(table.rootId),
 	],
 );
+
+export type InputOrigin = "task" | "timer";
 
 // Completed messages only; a reply is written once it finishes streaming
 export const message = pgTable(
@@ -86,6 +95,8 @@ export const message = pgTable(
 		thinkingLevel: text("thinking_level").notNull(),
 		// a delivered Notification: the Subagent's Conversation it came from
 		subagentId: uuid("subagent_id"),
+		// as in `inbox`
+		origin: text("origin").$type<InputOrigin>(),
 		// what Recall searches: a user or assistant message's text, without thinking or Tool calls; null for other messages
 		text: text("text").generatedAlwaysAs(sql`message_text(message)`),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -112,6 +123,8 @@ export const inbox = pgTable(
 		thinkingLevel: text("thinking_level").notNull(),
 		// set: a Notification from this Subagent's Conversation
 		subagentId: uuid("subagent_id"),
+		// set: sent on the User's behalf by a Scheduled Task, or delivered by a Timer
+		origin: text("origin").$type<InputOrigin>(),
 		// false: delivered by the next Run, but does not start one
 		wake: boolean("wake").notNull(),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -186,6 +199,27 @@ export const memorySetting = pgTable("memory_setting", {
 	// off: the User's Memories stay, but no Agent reads or writes them
 	enabled: boolean("enabled").notNull(),
 });
+
+// The Limits an Admin set in /console/limits; at most one row, id 1; no row: @orqestra/config's defaults. Durations in seconds
+export const limits = pgTable(
+	"limits",
+	{
+		id: integer("id").primaryKey().default(1),
+		maxScheduledTasksPerUser: integer("max_scheduled_tasks_per_user").notNull(),
+		minFiringInterval: integer("min_firing_interval").notNull(),
+		timerRingsPerUserMessage: integer("timer_rings_per_user_message").notNull(),
+		unattendedMaxSteps: integer("unattended_max_steps").notNull(),
+		unattendedMaxDuration: integer("unattended_max_duration").notNull(),
+		maxSubagentDepth: integer("max_subagent_depth").notNull(),
+	},
+	(table) => [
+		check("limits_single_row", sql`${table.id} = 1`),
+		check(
+			"limits_max_subagent_depth",
+			sql`${table.maxSubagentDepth} between 1 and 3`,
+		),
+	],
+);
 
 // Providers an Admin configured from the Catalog; at most one row per Catalog Provider
 export const provider = pgTable("provider", {
