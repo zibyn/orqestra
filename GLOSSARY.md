@@ -33,16 +33,16 @@ The reusable description of an Agent, maintained by Admins: its name, descriptio
 _Avoid_: Profile, persona, preset
 
 **Subagent**:
-An Agent that another Agent starts to carry out one task from a fresh context, in a Conversation of its own nested under the starting one, using an Agent Definition as its template or the built-in general worker. It works in the background and can outlive the Run that started it; when it finishes, its result goes back as a Notification. The starting Agent can send it further instructions, continue it once finished, or stop it; the User can only view and stop it. A Subagent can start Subagents of its own, down to a depth the Admin sets; stopping one stops every Subagent below it, and it has not finished, so sends no Notification, while any Subagent it started is still at work.
+An Agent that another Agent starts to carry out one task from a fresh context, in a Conversation of its own nested under the starting one, using an Agent Definition as its template or the built-in general worker. It works in the background and can outlive the Run that started it; when it finishes, its result goes back as a Notification. The starting Agent can send it further instructions, continue it once finished, or stop it; the User can only view and stop it. A Subagent can start Subagents of its own, down to a depth the Admin sets; stopping one stops every Subagent below it, and it has not finished, so sends no Notification, while any Subagent it started, or any Background Call it made, is still at work.
 _Avoid_: Child agent, worker, delegate
 
 **Notification**:
-The input that hands a finished Subagent's result to the Agent that started it. It reaches that Agent between two steps of its current Run, or starts a new Run when none is going. A Subagent the User stopped sends one too, but it waits for the next User message instead of starting a Run, as does one that arrives while the Agent waits on a Question.
+The input that hands a finished Subagent's result, or how a Background Call ended, to the Agent that started it. It reaches that Agent between two steps of its current Run, or starts a new Run when none is going. A Subagent the User stopped, or a Background Call the User cancelled, sends one too, but it waits for the next User message instead of starting a Run, as does one that arrives while the Agent waits on a Question.
 _Avoid_: Callback, event, result message
 
 **Alert**:
-What Orqestra sends to a User's browser, once they have turned Alerts on there, when background work has a result for them: a top-level Conversation's Run ended other than by the User stopping it, an Agent asked a Question, a Firing failed, or a Scheduled Task was paused or finished on its own. It names the Conversation or Scheduled Task and how it stands, never what the Agent wrote, and opening it shows that Conversation, or the Scheduled Task when no Conversation came of it. A browser already showing that Conversation shows no Alert. A Subagent finishing or a Timer ringing sends none of its own; the Run they lead to does. A Scheduled Task can be set not to alert when it completes, but its failures and Questions always alert.
-_Avoid_: Notification (that is a Subagent's result), push, notice, message
+What Orqestra sends to a User's browser, once they have turned Alerts on there, when background work has a result for them: a top-level Conversation's Run ended other than by the User stopping it, an Agent asked a Question, a Firing failed, or a Scheduled Task was paused or finished on its own. It names the Conversation or Scheduled Task and how it stands, never what the Agent wrote, and opening it shows that Conversation, or the Scheduled Task when no Conversation came of it. A browser already showing that Conversation shows no Alert. A Subagent finishing, a Background Call ending or a Timer ringing sends none of its own; the Run they lead to does. A Scheduled Task can be set not to alert when it completes, but its failures and Questions always alert.
+_Avoid_: Notification (that is a Subagent's or Background Call's result), push, notice, message
 
 **Unread**:
 How a top-level Conversation stands once a Run has ended with a reply the User has not seen, until they open it. A Run the User stopped leaves it as it was, and a Subagent's Conversation is never unread itself.
@@ -73,7 +73,7 @@ Where every input to a Conversation waits, a User message, a Notification, a Tim
 _Avoid_: Queue, mailbox, pending messages
 
 **Wake**:
-What an input does when it arrives in the Inbox of a Conversation that has no Run going: it starts one. Every input wakes its Conversation, except the Notification of a Subagent that was stopped, which waits for the next one.
+What an input does when it arrives in the Inbox of a Conversation that has no Run going: it starts one. Every input wakes its Conversation, except the Notification of a Subagent that was stopped or a Background Call the User cancelled, which waits for the next one.
 _Avoid_: Trigger, resume
 
 **Outcome**:
@@ -91,6 +91,10 @@ _Avoid_: Connector, integration, plugin
 **Connection**:
 One User's own sign-in to one per-User MCP Server, made beforehand by that User on their Connections page and used for every call to it in their Conversations, Subagents' and Firings' included; a User has at most one per MCP Server. It is either connected or needs reconnecting, once the service no longer accepts it. An Agent gets a per-User MCP Server's Tools only in a Run whose User has a working Connection to it, and otherwise never learns of them; a Connection made during a Conversation counts from its next Run, and one that stops working during a Run fails that call while the Agent goes on. The User can disconnect at any time; the Admin deleting the MCP Server, switching it to shared, or changing its address or its sign-in setup ends every Connection to it, while disabling it keeps them. An Admin sees who is connected to each MCP Server, never their credentials, and cannot disconnect a User.
 _Avoid_: Connector, grant, link, account link, authorization
+
+**Background Call**:
+A call to an MCP Server's Tool that the service chooses to carry on in the background instead of answering at once. The Agent learns only that it has started and goes on, while Orqestra checks on it, through the same sign-in the call was made with, until it ends; its result then arrives in the Inbox and wakes the Conversation. Starting one spends the same budget as starting a Subagent. The User can cancel it, and stopping the Conversation, retrying past the Turn that made it or deleting the Conversation cancels it too. One that needs more input from the User is cancelled and fails, since Orqestra cannot ask for it, as does one still going past a limit the Admin sets or one the service loses track of.
+_Avoid_: MCP Task, task, job
 
 **Skill**:
 A folder of know-how in the Agent Skills format, added by an Admin by upload or written in the console: a `SKILL.md` with a name, a description and instructions, plus any reference files, scripts and assets it brings along. Its name identifies it. Every upload or edit makes a new version, and Agents use the current one, which an Admin can roll back to an earlier version. An Agent sees only the name and description of each Skill its Agent Definition allows, and reads the rest or runs its scripts in its Sandbox when a task calls for it; a User can also invoke one explicitly from the composer, the only way to use a Skill marked as not invoked by the Agent. A Skill is not a Tool: it tells an Agent how to do something, and is never a service the Agent calls. Without a Sandbox Provider every Skill is unavailable. Disabling one makes it unavailable until it is enabled again, and deleting one removes it from every Agent Definition.
