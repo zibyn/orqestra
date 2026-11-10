@@ -93,7 +93,7 @@ Use the Tailwind names (`bg-background`, `text-muted-foreground`, `border-border
 - **New conversation** (`/`): the greeting (`text-4xl font-semibold`) and the Composer form one block centred a little above the middle of the panel; it is the first thing a person sees, so nothing else competes with it (no icon, no hint).
 - **Messages** are centered in a column of `max-w-3xl` (48rem) with `px-4` gutters.
   - User messages: right-aligned, `bg-muted` bubble, `rounded-2xl px-4 py-2.5`, max ~80% width.
-  - Agent replies: no bubble; plain prose (`prose prose-neutral dark:prose-invert`) aligned to the left of the column.
+  - Agent replies: no bubble; Markdown rendered by AI Elements' `MessageResponse` (Streamdown with its own shadcn styles, no `prose`) aligned to the left of the column.
   - Built from the shadcn chat components: the thread is a `MessageScroller` (each turn a `MessageScrollerItem`, the User's turn its scroll anchor), turns are `Message`, the User's bubble is `Bubble variant="muted"`. Thinking, Tool calls and Subagents are `TraceLine`s, one `Trace` per run of them; Tool output is a `CodeBlock`; dividers (compaction, Notifications) are `Marker variant="separator"`; files are `Attachment`; the Composer is an `InputGroup`.
 - **Standalone pages** (login, setup): a single `Card` centered on the screen, `max-w-sm`.
 - **Console**: its own `Sidebar` (also `collapsible="icon"`), page padding `px-4 py-6`, `md:px-10 md:py-10`.
@@ -138,4 +138,4 @@ Centered in the available area: a muted lucide icon (`size-8 text-muted-foregrou
 
 `font-mono text-sm`, inline code with `rounded bg-muted px-1 py-0.5`.
 
-Code blocks in Agent replies (Streamdown with `@streamdown/code`, styled by the `[data-streamdown="code-block*"]` rules in `src/styles.css`): one `rounded-lg` block with a single 1px `border` and `bg-muted/50`, no shadow or nested card; a slim header with the language in `text-xs text-muted-foreground` and a ghost copy button (no download); body in `font-mono text-sm`, keeping Shiki's `github-light` / `github-dark` token colors.
+Code blocks in Agent replies: Streamdown's own `@streamdown/code` block as AI Elements ships it, unstyled by us; copy button only (no download), Shiki's `github-light` / `github-dark` token colors.

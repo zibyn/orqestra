@@ -1,9 +1,14 @@
+import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
+import { math } from "@streamdown/math";
+import { mermaid } from "@streamdown/mermaid";
 import type { ComponentProps } from "react";
 import { Streamdown } from "streamdown";
 import { cn } from "#/lib/utils";
 
-/** Streaming-safe Markdown for Agent replies; the turn around it is `ui/message`. */
+const plugins = { cjk, code, math, mermaid };
+
+/** Streaming-safe Markdown for Agent replies, styled as AI Elements ships it; the turn around it is `ui/message`. */
 export function MessageResponse({
 	className,
 	...props
@@ -11,11 +16,10 @@ export function MessageResponse({
 	return (
 		<Streamdown
 			className={cn(
-				// prose quotes inline code with backticks; Streamdown already styles it as code
-				"prose prose-neutral dark:prose-invert max-w-none prose-code:before:content-none prose-code:after:content-none",
+				"size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
 				className,
 			)}
-			plugins={{ code }}
+			plugins={plugins}
 			// copy only: a download button is clutter on a chat snippet
 			controls={{ code: { download: false } }}
 			{...props}
