@@ -248,5 +248,7 @@
   "memory_body_too_long": "At most {max} bytes; this has {bytes}.",
   "no_memories_title": "No memories yet",
   "no_memories": "Agents with memory write down what you tell them to remember here.",
-  "no_memories_match": "No memories match."
+  "no_memories_match": "No memories match.",
+  "unread": "Unread",
+  "awaiting_reply": "Waiting for your reply"
 }

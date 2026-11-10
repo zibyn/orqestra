@@ -64,6 +64,7 @@ export function memoryRun({
 	}[] = [];
 	const titles: string[] = [];
 	const outcomes: (Ended | undefined)[] = [];
+	const questions: boolean[] = [];
 	let over = false;
 	let sandboxId: string | null = null;
 	const run: RunHandle = {
@@ -83,8 +84,9 @@ export function memoryRun({
 		compacted: async (summary, firstKeptId, tokensBefore) => {
 			compactions.push({ summary, firstKeptId, tokensBefore });
 		},
-		finish: async (outcome) => {
+		finish: async (outcome, { question = false } = {}) => {
 			outcomes.push(outcome);
+			questions.push(question);
 			const next = stopper.signal.aborted ? [] : pending.splice(0);
 			over = !next.length;
 			return next;
@@ -125,6 +127,8 @@ export function memoryRun({
 		compactions,
 		titles,
 		outcomes,
+		/** Whether each `finish` ended on a Question to the User. */
+		questions,
 		/** The User's Memories, by path. */
 		memories: store,
 	};

@@ -52,6 +52,10 @@ export const conversation = pgTable(
 		sandboxId: text("sandbox_id"),
 		// an Incognito Conversation, chosen when it starts: no memory, and Recall never finds it; false for Subagents, which go by their parent's
 		incognito: boolean("incognito").default(false).notNull(),
+		// a top-level Run ended with a reply the User has yet to open; never set on a Subagent's
+		unread: boolean("unread").default(false).notNull(),
+		// its last Run ended with a Question (`ask_user`); the User's next message clears it
+		awaitingReply: boolean("awaiting_reply").default(false).notNull(),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()

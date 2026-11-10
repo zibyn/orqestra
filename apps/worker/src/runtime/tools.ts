@@ -37,6 +37,46 @@ export async function relay(
 		});
 }
 
+/**
+ * The top-level Agent's Tool for asking the User a Question: the Run ends after the step that asked, awaiting their reply.
+ * Once per Turn; `asked` says whether this Turn asked, and `reset` starts the next one.
+ */
+export function questionTool() {
+	let asked = false;
+	const ask = tool({
+		name: "ask_user",
+		label: "Ask the user",
+		description:
+			"Ask the user a question you cannot go on without, and end your reply: their answer comes as their next message. At most once per reply. Offer a few likely answers as suggestions when there are some; the user may always answer in their own words.",
+		parameters: Type.Object({
+			question: Type.String(),
+			suggestions: Type.Optional(
+				Type.Array(Type.String(), { minItems: 2, maxItems: 4 }),
+			),
+		}),
+		execute: async () => {
+			if (asked)
+				throw new Error(
+					"You already asked the user a question in this reply: wait for their answer.",
+				);
+			asked = true;
+			return {
+				content: text("Asked. The user's answer comes as their next message."),
+				details: undefined,
+			};
+		},
+	});
+	return {
+		tool: ask,
+		get asked() {
+			return asked;
+		},
+		reset() {
+			asked = false;
+		},
+	};
+}
+
 /** Told to a Subagent whose next request is its last, made without Tools. */
 export const STEP_LIMIT =
 	"You have reached your step limit and can no longer use tools. Reply now with your final answer from what you have so far, saying what is left undone.";
