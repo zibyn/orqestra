@@ -13,6 +13,7 @@ import {
 	relay,
 	STEP_LIMIT,
 	subagentTools,
+	timerTools,
 } from "./tools.ts";
 
 export type RuntimeDeps = {
@@ -74,8 +75,8 @@ export async function runAgent(
 				compaction.firstKeptId,
 				compaction.tokensBefore,
 			);
-		// a Subagent gets no Subagent Tools; it and an Unattended Run get a step limit whose last request goes without Tools,
-		// so they answer with what they have rather than stopping mid-search
+		// a Subagent at the deepest level gets no Subagent Tools; every Subagent and an Unattended Run get a step limit
+		// whose last request goes without Tools, so they answer with what they have rather than stopping mid-search
 		const maxSteps = sub
 			? MAX_SUBAGENT_STEPS
 			: run.unattended
@@ -96,9 +97,9 @@ export async function runAgent(
 					...(memory
 						? [...memoryTools(memory, sub), recallTool(run.recall)]
 						: []),
-					...(sub
-						? []
-						: [...subagentTools(config, run.subagents), question.tool]),
+					...(run.subagents ? subagentTools(config, run.subagents) : []),
+					...(sub ? [] : [question.tool]),
+					...(run.timer ? timerTools(run.timer) : []),
 				],
 				messages,
 			},

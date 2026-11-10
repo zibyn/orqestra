@@ -40,6 +40,7 @@ const {
 	userMemories,
 } = await import("./index.ts");
 const runs = await import("./runs.ts");
+const timers = await import("./timers.ts");
 const { memoryRun } = await import("./testing.ts");
 const { memoryOrrery } = await import("@orqestra/tools/testing");
 const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 };
@@ -149,10 +150,21 @@ type Step = (
 	ctx: Ctx,
 ) => string | Call[] | Ask | Promise<string | Call[] | Ask>;
 
-let queues: { parent: Step[]; sub: Step[] } = { parent: [], sub: [] };
-/** Subagents run alongside their parent, so each Run takes the next step meant for whoever runs it. */
-function script(steps: { parent: Step[]; sub?: Step[] }) {
-	queues = { parent: [...steps.parent], sub: [...(steps.sub ?? [])] };
+let queues: { parent: Step[]; sub: Step[]; deep: Step[] } = {
+	parent: [],
+	sub: [],
+	deep: [],
+};
+/**
+ * Subagents run alongside their parent, so each Run takes the next step meant for whoever runs it:
+ * `sub` for Subagents that may start Subagents of their own, `deep` for those at the deepest level.
+ */
+function script(steps: { parent: Step[]; sub?: Step[]; deep?: Step[] }) {
+	queues = {
+		parent: [...steps.parent],
+		sub: [...(steps.sub ?? [])],
+		deep: [...(steps.deep ?? [])],
+	};
 }
 /** A handler that replaces the script for one test. */
 let override: ((run: RunHandle) => Promise<void>) | undefined;
@@ -161,7 +173,9 @@ async function scripted(run: RunHandle) {
 	if (override) return override(run);
 	const seen = run.transcript.messages.map((m) => m.message);
 	for (;;) {
-		const step = (run.isSubagent ? queues.sub : queues.parent).shift();
+		const step = (
+			!run.isSubagent ? queues.parent : run.subagents ? queues.sub : queues.deep
+		).shift();
 		if (!step) throw new Error("No scripted step left");
 		const reply = await step({ run, seen, toolCallId: "" });
 		if (typeof reply === "object" && "question" in reply) {
@@ -221,6 +235,11 @@ async function scripted(run: RunHandle) {
 	}
 }
 
+/** The Run's Subagent Tools, which a Run at the deepest level lacks. */
+const subagents = (run: RunHandle) => {
+	if (!run.subagents) throw new Error("This Run has no Subagent Tools");
+	return run.subagents;
+};
 const say =
 	(text: string): Step =>
 	() =>
@@ -240,7 +259,7 @@ const start = (...briefs: string[]): Call => ({
 	name: "subagent",
 	run: async ({ run, toolCallId }) =>
 		`Started subagent ${(
-			await run.subagents.start(
+			await subagents(run).start(
 				toolCallId,
 				briefs.map((brief) => ({ brief })),
 			)
@@ -249,13 +268,13 @@ const start = (...briefs: string[]): Call => ({
 const message = (number: number, text: string): Call => ({
 	name: "subagent_message",
 	run: async ({ run }) =>
-		(await run.subagents.message(number, text)).continued
+		(await subagents(run).message(number, text)).continued
 			? `Subagent ${number} continues.`
 			: "Sent.",
 });
 const stopSubagents = (numbers: number[]): Call => ({
 	name: "subagent_stop",
-	run: async ({ run }) => `Stopping ${await run.subagents.stop(numbers)}`,
+	run: async ({ run }) => `Stopping ${await subagents(run).stop(numbers)}`,
 });
 /** Resolves once `signal` aborts, at once if it already has: a Stop can land before the step listens. */
 const untilAborted = (signal: AbortSignal) =>
@@ -552,7 +571,7 @@ describe.skipIf(!url)(
 						name: "subagent",
 						run: async ({ run, toolCallId }) =>
 							String(
-								await run.subagents.start(toolCallId, [
+								await subagents(run).start(toolCallId, [
 									{ brief: "b", template: "small" },
 								]),
 							),
@@ -581,7 +600,7 @@ describe.skipIf(!url)(
 						name: "subagent",
 						run: async ({ run, toolCallId }) =>
 							String(
-								await run.subagents.start(toolCallId, [
+								await subagents(run).start(toolCallId, [
 									{ brief: "b", template: "nope" },
 								]),
 							),
@@ -865,7 +884,7 @@ describe.skipIf(!url)(
 						name: "subagent",
 						run: async ({ run, toolCallId }) => {
 							const tasks = Array.from({ length: 17 }, () => ({ brief: "b" }));
-							refused = await run.subagents
+							refused = await subagents(run)
 								.start(toolCallId, tasks)
 								.catch((e) => e);
 							return "";
@@ -1065,6 +1084,307 @@ describe.skipIf(!url)(
 						JSON.stringify(m).includes("task-notification"),
 				),
 			).toHaveLength(2);
+		});
+
+		describe("nested Subagents", () => {
+			it("nests a Subagent under a Subagent down to the deepest level, which starts none, and the middle one notifies only after a summary Run", async () => {
+				const { gate: dug, release } = gate();
+				let deepest: RunHandle["subagents"] | null = null;
+				let summarized = "";
+				script({
+					parent: [call(start("lead")), say("Asked the lead"), say("All done")],
+					sub: [
+						call(start("dig")),
+						say("Waiting on my helper"),
+						({ seen }) => {
+							summarized = JSON.stringify(seen.at(-1));
+							return "summary: dug";
+						},
+					],
+					deep: [
+						async ({ run }) => {
+							deepest = run.subagents;
+							await dug;
+							return "dug";
+						},
+					],
+				});
+				const id = await send("go");
+				// the lead's Run is over, but its helper still works: no Notification yet, and the lead waits idle
+				const waiting = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.status === "idle" &&
+						v.subagents.length === 2 &&
+						v.subagents[1].outcome === "running" &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				const [lead, helper] = waiting?.subagents ?? [];
+				expect(lead).toMatchObject({
+					parentId: id,
+					depth: 1,
+					outcome: "running",
+				});
+				expect(helper).toMatchObject({
+					parentId: lead.id,
+					depth: 2,
+					number: 1,
+				});
+				await waitFor(
+					() =>
+						db.query.conversation.findFirst({
+							where: (c, { eq }) => eq(c.id, lead.id),
+						}),
+					(c) => c?.status === "idle",
+				);
+				expect(waiting?.messages.some((m) => m.subagentId === lead.id)).toBe(
+					false,
+				);
+				expect(deepest).toBeUndefined();
+
+				release();
+				const view = await waitFor(() => get(id), idle(6));
+				expect(view?.subagents.map((s) => s.outcome)).toEqual([
+					"completed",
+					"completed",
+				]);
+				// one Notification from the lead, with its summary
+				const notified = view?.messages.filter((m) => m.subagentId);
+				expect(notified?.map((m) => m.subagentId)).toEqual([lead.id]);
+				expect(JSON.stringify(notified?.[0].message.content)).toContain(
+					"summary: dug",
+				);
+				expect(summarized).toContain("task-notification");
+				expect(
+					(await conversations.subagentTranscript(userId, lead.id))?.map(
+						(m) => m.role,
+					),
+				).toEqual([
+					"user",
+					"assistant",
+					"toolResult",
+					"assistant",
+					"user",
+					"assistant",
+				]);
+			});
+
+			it("gives Subagents no Subagent Tools when the depth limit is 1, as before nesting", async () => {
+				config.limits = { ...DEFAULT_LIMITS, maxSubagentDepth: 1 };
+				try {
+					let had: RunHandle["subagents"] | null = null;
+					script({
+						parent: [call(start("lead")), say("Asked"), say("Done")],
+						deep: [
+							({ run }) => {
+								had = run.subagents;
+								return "done";
+							},
+						],
+					});
+					const id = await send("go");
+					await waitFor(() => get(id), idle(6));
+					expect(had).toBeUndefined();
+				} finally {
+					config.limits = { ...DEFAULT_LIMITS };
+				}
+			});
+
+			it(`shares the budget of ${MAX_SUBAGENTS_PER_USER_MESSAGE} starts across the tree, renewed only by a User message to the root`, async () => {
+				const refusals: unknown[] = [];
+				const tryStart = (n: number): Call => ({
+					name: "subagent",
+					run: async ({ run, toolCallId }) => {
+						await run.subagents
+							?.start(
+								toolCallId,
+								Array.from({ length: n }, () => ({ brief: "b" })),
+							)
+							.catch((e) => refusals.push(e));
+						return "";
+					},
+				});
+				script({
+					parent: [
+						call(start("lead")),
+						say("Asked"),
+						say("Lead done"),
+						// after the User's next message
+						call(tryStart(1)),
+						say("Asked again"),
+						say("Done"),
+					],
+					sub: [
+						call(tryStart(8)),
+						call(tryStart(7)),
+						// the root's start and these 15 spent it all
+						call(tryStart(1)),
+						say("Waiting"),
+						say("Summed up"),
+						say("One more done"),
+					],
+					deep: Array.from({ length: 15 }, () => say("done")),
+				});
+				const id = await send("go");
+				const first = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.status === "idle" &&
+						v.subagents.length === 16 &&
+						v.subagents.every((s) => s.outcome === "completed") &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				expect(refusals).toHaveLength(1);
+				expect(refusals[0]).toBeInstanceOf(BudgetExceeded);
+				expect(refusals[0]).toMatchObject({ used: 16 });
+				// fifteen Notifications reached the lead, and one the root
+				expect(first?.messages.filter((m) => m.subagentId)).toHaveLength(1);
+
+				await send("and one more", id);
+				await waitFor(
+					() => get(id),
+					(v) =>
+						v?.status === "idle" &&
+						v.subagents.length === 17 &&
+						v.subagents.every((s) => s.outcome === "completed") &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				expect(refusals).toHaveLength(1);
+			});
+
+			it(`runs at most ${MAX_SUBAGENTS} Subagents of a tree at once, not counting one that waits for its own`, async () => {
+				const { gate: done, release } = gate();
+				const gated: Step = async () => {
+					await done;
+					return "done";
+				};
+				script({
+					parent: [call(start("lead")), say("Asked"), say("Done")],
+					sub: [
+						call(start("1", "2", "3", "4", "5")),
+						say("Waiting"),
+						say("Summed up"),
+					],
+					deep: Array.from({ length: 5 }, () => gated),
+				});
+				const id = await send("go");
+				const busy = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.subagents.length === 6 &&
+						v.subagents.filter((s) => s.outcome === "running").length === 5,
+				);
+				expect(busy?.subagents.map((s) => s.outcome)).toEqual([
+					"running",
+					...Array(MAX_SUBAGENTS).fill("running"),
+					"queued",
+				]);
+				release();
+				const view = await waitFor(() => get(id), idle(6));
+				expect(view?.subagents.every((s) => s.outcome === "completed")).toBe(
+					true,
+				);
+			});
+
+			it("stops the whole subtree when the User stops, with Notifications that wake nobody", async () => {
+				script({
+					parent: [call(start("lead")), say("Asked")],
+					sub: [call(start("dig")), hang],
+					deep: [hang],
+				});
+				const id = await send("go");
+				await waitFor(
+					() => get(id),
+					(v) =>
+						v?.subagents.length === 2 &&
+						v.subagents.every((s) => s.outcome === "running") &&
+						v.status === "idle",
+				);
+				await conversations.stop(userId, id);
+				const view = await waitFor(
+					() => get(id),
+					(v) => !!v?.subagents.every((s) => s.outcome === "stopped"),
+				);
+				await new Promise((r) => setTimeout(r, 300));
+				const notifications = await db
+					.select()
+					.from(schema.inbox)
+					.where(sql`${schema.inbox.subagentId} is not null`);
+				expect(notifications).toHaveLength(2);
+				expect(notifications.every((n) => !n.wake)).toBe(true);
+				// the root did not reply again
+				const replies = (v: typeof view) =>
+					v?.messages.filter((m) => m.message.role === "assistant").length;
+				expect(replies(await get(id))).toBe(replies(view));
+				expect((await get(id))?.status).toBe("idle");
+			});
+
+			it("has a Subagent that waits for its own sum up once the User stops the last of them from its panel", async () => {
+				script({
+					parent: [call(start("lead")), say("Asked"), say("Done")],
+					sub: [call(start("dig")), say("Waiting"), say("Dig was stopped")],
+					deep: [hang],
+				});
+				const id = await send("go");
+				const waiting = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.subagents.length === 2 &&
+						v.subagents.every((s) => s.outcome === "running") &&
+						v.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				// the lead's Run has ended, and it waits
+				await waitFor(
+					() =>
+						db.query.conversation.findFirst({
+							where: (c, { eq }) =>
+								eq(c.id, waiting?.subagents[0].id as string),
+						}),
+					(c) => c?.status === "idle",
+				);
+				await conversations.stopSubagent(
+					userId,
+					waiting?.subagents[1].id as string,
+				);
+				const view = await waitFor(() => get(id), idle(6));
+				expect(view?.subagents.map((s) => s.outcome)).toEqual([
+					"completed",
+					"stopped",
+				]);
+				expect(JSON.stringify(view?.messages[4].message.content)).toContain(
+					"Dig was stopped",
+				);
+			});
+
+			it("streams a nested Subagent's reply to the root's page under its id", async () => {
+				const { gate: listening, release } = gate();
+				script({
+					parent: [call(start("lead")), say("Asked"), say("Done")],
+					sub: [call(start("dig")), say("Waiting"), say("Summed up")],
+					deep: [
+						async ({ run }) => {
+							await listening;
+							await run.stream({ type: "start" });
+							return "dug";
+						},
+					],
+				});
+				const id = await send("go");
+				const stream = await conversations.subscribe(
+					userId,
+					id,
+					new AbortController().signal,
+				);
+				release();
+				const events = await collect(stream as ReadableStream, (es) =>
+					es.some((e) => e.type === "start" && e.subagent),
+				);
+				const view = await waitFor(() => get(id), idle(6));
+				expect(events.find((e) => e.type === "start")).toMatchObject({
+					subagent: view?.subagents[1].id,
+				});
+			});
 		});
 
 		it("tells the parent's page when a Subagent compacts", async () => {
@@ -1714,6 +2034,284 @@ describe.skipIf(!url)(
 				expect(messageText(attended?.messages[9].message as Message)).toBe(
 					"slow but whole",
 				);
+			});
+		});
+
+		describe("Timer", () => {
+			afterAll(() => {
+				config.limits = { ...DEFAULT_LIMITS };
+			});
+			const setTimer = (delay: number, note: string): Call => ({
+				name: "set_timer",
+				run: async ({ run }) =>
+					`Rings at ${(await run.timer?.set(delay, note))?.toISOString()}`,
+			});
+			const cancelTimer: Call = {
+				name: "cancel_timer",
+				run: async ({ run }) => `Cancelled: ${await run.timer?.cancel()}`,
+			};
+			const timerOf = async (id: string) => (await get(id))?.timer;
+			/** Rings the Timer as its job does once it is due. */
+			const ring = async (id: string) => {
+				const set = await timerOf(id);
+				await timers.ring(id, set ? set.ringsAt.getTime() : 0);
+			};
+
+			it("rings with its note, on the Model and thinking of the Turn that set it, and wakes the Conversation unattended", async () => {
+				const unattended: boolean[] = [];
+				let noted: Message[] = [];
+				script({
+					parent: [
+						call(setTimer(600, "check the build")),
+						say("I will check back"),
+						say("ok"),
+						({ run, seen }) => {
+							unattended.push(run.unattended);
+							noted = seen.slice(-1);
+							return "the build passed";
+						},
+					],
+				});
+				const before = Date.now();
+				const id = await conversations.send(userId, {
+					agentId: "faux",
+					text: "build it",
+					thinking: "high",
+				});
+				await waitFor(() => get(id), idle(4));
+				const set = await timerOf(id);
+				expect(set?.note).toBe("check the build");
+				expect(set?.ringsAt.getTime()).toBeGreaterThanOrEqual(before + 600_000);
+				expect(
+					await runs
+						.runQueue(timers.TIMERS_QUEUE)
+						.getJob(`timer:${id}:${set?.ringsAt.getTime()}`),
+				).toBeTruthy();
+				// a later message on other settings leaves the Timer's own
+				await conversations.send(userId, {
+					agentId: "faux",
+					text: "thanks",
+					thinking: "off",
+					conversationId: id,
+				});
+				await waitFor(() => get(id), idle(6));
+				await ring(id);
+				const view = await waitFor(() => get(id), idle(8));
+				expect(unattended).toEqual([true]);
+				expect(messageText(noted[0])).toContain("check the build");
+				const note = view?.messages[6];
+				expect(note).toMatchObject({ origin: "timer", thinkingLevel: "high" });
+				expect(view?.timer).toBeNull();
+			});
+
+			it("rings a minute to a day later, and a Subagent sets none", async () => {
+				const results: string[] = [];
+				const record = (delay: number): Call => ({
+					name: "set_timer",
+					run: async (ctx) => {
+						const r = await setTimer(delay, "n").run(ctx).catch(String);
+						results.push(r.startsWith("Rings") ? "set" : r.split(":")[0]);
+						return r;
+					},
+				});
+				let subTimer: unknown = "unset";
+				script({
+					parent: [
+						call(record(59), record(86_401), record(60), record(86_400)),
+						call(start("look")),
+						say("ok"),
+						say("done"),
+					],
+					sub: [
+						({ run }) => {
+							subTimer = run.timer;
+							return "found";
+						},
+					],
+				});
+				const id = await send("hi");
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle" && subTimer !== "unset",
+				);
+				expect(results).toEqual([
+					"TimerDelayOutOfRange",
+					"TimerDelayOutOfRange",
+					"set",
+					"set",
+				]);
+				expect(subTimer).toBeUndefined();
+			});
+
+			it("rings by its delayed job once due", async () => {
+				script({ parent: [say("hi"), say("checked")] });
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(2));
+				// as set_timer does, but due at once
+				await db.insert(schema.timer).values({
+					conversationId: id,
+					note: "look again",
+					ringsAt: new Date(1000),
+					messageId: sql`(select max(id) from message)`,
+					model: "faux/faux-1",
+					thinkingLevel: "off",
+				});
+				await runs
+					.runQueue(timers.TIMERS_QUEUE)
+					.add("ring", { conversationId: id, ringsAt: 1000 });
+				const view = await waitFor(() => get(id), idle(4));
+				expect(view?.messages[2].origin).toBe("timer");
+			});
+
+			it("does nothing when its job comes after it was cancelled or replaced", async () => {
+				script({
+					parent: [
+						call(setTimer(600, "first")),
+						call(setTimer(900, "second")),
+						say("set"),
+					],
+				});
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(6));
+				const second = await timerOf(id);
+				expect(second?.note).toBe("second");
+				// the first one's job
+				await timers.ring(id, (second?.ringsAt.getTime() ?? 0) - 300_000);
+				expect(await timerOf(id)).toEqual(second);
+				await conversations.cancelTimer(userId, id);
+				expect(await timerOf(id)).toBeNull();
+				await timers.ring(id, second?.ringsAt.getTime() ?? 0);
+				const view = await get(id);
+				expect(view).toMatchObject({ status: "idle" });
+				expect(view?.messages).toHaveLength(6);
+			});
+
+			it("delivers its note at the next step boundary of a Run under way", async () => {
+				const { gate: rung, release } = gate();
+				let delivered: Message[] = [];
+				script({
+					parent: [
+						call(setTimer(600, "check")),
+						call(
+							tool(async () => {
+								await rung;
+								return "found";
+							}),
+						),
+						({ seen }) => {
+							delivered = seen.slice(-1);
+							return "done";
+						},
+					],
+				});
+				const id = await send("hi");
+				await waitFor(timerOf.bind(null, id), (t) => !!t);
+				await ring(id);
+				release();
+				await waitFor(() => get(id), idle(7));
+				expect(messageText(delivered[0])).toContain("check");
+			});
+
+			it("is cancelled by the Agent, by a Stop, by a Question, by retrying the Turn that set it, and with its Conversation", async () => {
+				script({
+					parent: [
+						call(setTimer(600, "a")),
+						call(cancelTimer),
+						say("cancelled"),
+						// Stop
+						call(setTimer(600, "b")),
+						hang,
+						// Question
+						call(setTimer(600, "c")),
+						ask("Which?"),
+						// retry: the reply that set it fails
+						call(setTimer(600, "d")),
+						fail,
+						say("retried"),
+						// deletion
+						call(setTimer(600, "e")),
+						say("set"),
+					],
+				});
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(6));
+				expect(await timerOf(id)).toBeNull();
+
+				await send("again", id);
+				await waitFor(timerOf.bind(null, id), (t) => t?.note === "b");
+				await conversations.stop(userId, id);
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle",
+				);
+				expect(await timerOf(id)).toBeNull();
+
+				await send("ask me", id);
+				const asked = await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle" && !!v.awaitingReply,
+				);
+				expect(asked?.timer).toBeNull();
+
+				await send("fail", id);
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "failed",
+				);
+				expect((await timerOf(id))?.note).toBe("d");
+				await conversations.retry(userId, id);
+				const retried = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.status === "idle" &&
+						messageText(v.messages.at(-1)?.message as Message) === "retried",
+				);
+				expect(retried?.timer).toBeNull();
+
+				await send("last", id);
+				await waitFor(timerOf.bind(null, id), (t) => t?.note === "e");
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle",
+				);
+				await conversations.delete(userId, id);
+				expect(await db.select().from(schema.timer)).toEqual([]);
+			});
+
+			it("stays set when the User writes, which renews the rings it may make", async () => {
+				config.limits = { ...DEFAULT_LIMITS, timerRingsPerUserMessage: 1 };
+				script({
+					parent: [
+						call(setTimer(600, "once")),
+						say("set"),
+						call(setTimer(600, "twice")),
+						say("refused"),
+						call(setTimer(600, "again")),
+						say("set again"),
+						say("noted"),
+					],
+				});
+				const id = await send("hi");
+				await waitFor(() => get(id), idle(4));
+				await ring(id);
+				const refused = await waitFor(() => get(id), idle(8));
+				expect(refused?.messages[6].message).toMatchObject({
+					role: "toolResult",
+					isError: true,
+				});
+				expect(messageText(refused?.messages[6].message as Message)).toContain(
+					"TimerLimitReached",
+				);
+				expect(refused?.timer).toBeNull();
+
+				// the User's message renews them
+				await send("go on", id);
+				await waitFor(() => get(id), idle(12));
+				expect((await timerOf(id))?.note).toBe("again");
+				// and leaves the Timer set
+				await send("more", id);
+				await waitFor(() => get(id), idle(14));
+				expect((await timerOf(id))?.note).toBe("again");
 			});
 		});
 

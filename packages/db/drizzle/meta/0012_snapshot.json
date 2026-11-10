@@ -1,5 +1,5 @@
 {
-  "id": "84be71a0-d5e4-44ba-bddf-fd8ded2dc6ba",
+  "id": "7a4f129f-c476-42a7-aa15-746f1177b481",
   "prevId": "f7cbfd75-b40b-4dfe-9d19-e0dd4b7490a5",
   "version": "7",
   "dialect": "postgresql",
@@ -152,6 +152,19 @@
           "primaryKey": false,
           "notNull": false
         },
+        "root_id": {
+          "name": "root_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "depth": {
+          "name": "depth",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "agent_id": {
           "name": "agent_id",
           "type": "text",
@@ -225,12 +238,6 @@
           "notNull": true,
           "default": false
         },
-        "scheduled_task_id": {
-          "name": "scheduled_task_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -262,11 +269,11 @@
           "method": "btree",
           "with": {}
         },
-        "conversation_scheduledTaskId_idx": {
-          "name": "conversation_scheduledTaskId_idx",
+        "conversation_rootId_idx": {
+          "name": "conversation_rootId_idx",
           "columns": [
             {
-              "expression": "scheduled_task_id",
+              "expression": "root_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -292,17 +299,17 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "conversation_scheduled_task_id_scheduled_task_id_fk": {
-          "name": "conversation_scheduled_task_id_scheduled_task_id_fk",
+        "conversation_root_id_conversation_id_fk": {
+          "name": "conversation_root_id_conversation_id_fk",
           "tableFrom": "conversation",
-          "tableTo": "scheduled_task",
+          "tableTo": "conversation",
           "columnsFrom": [
-            "scheduled_task_id"
+            "root_id"
           ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "set null",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -354,114 +361,6 @@
           ]
         }
       },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.firing": {
-      "name": "firing",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "task_id": {
-          "name": "task_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "fired_at": {
-          "name": "fired_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "outcome": {
-          "name": "outcome",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "conversation_id": {
-          "name": "conversation_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "firing_taskId_idx": {
-          "name": "firing_taskId_idx",
-          "columns": [
-            {
-              "expression": "task_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "firing_conversationId_idx": {
-          "name": "firing_conversationId_idx",
-          "columns": [
-            {
-              "expression": "conversation_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "firing_task_id_scheduled_task_id_fk": {
-          "name": "firing_task_id_scheduled_task_id_fk",
-          "tableFrom": "firing",
-          "tableTo": "scheduled_task",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "firing_conversation_id_conversation_id_fk": {
-          "name": "firing_conversation_id_conversation_id_fk",
-          "tableFrom": "firing",
-          "tableTo": "conversation",
-          "columnsFrom": [
-            "conversation_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -998,136 +897,6 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.scheduled_task": {
-      "name": "scheduled_task",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "prompt": {
-          "name": "prompt",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "agent_id": {
-          "name": "agent_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "model": {
-          "name": "model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "thinking_level": {
-          "name": "thinking_level",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "schedule": {
-          "name": "schedule",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "ends_at": {
-          "name": "ends_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "time_zone": {
-          "name": "time_zone",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "incognito": {
-          "name": "incognito",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "alert_on_complete": {
-          "name": "alert_on_complete",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "consecutive_failures": {
-          "name": "consecutive_failures",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "scheduled_task_userId_idx": {
-          "name": "scheduled_task_userId_idx",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},

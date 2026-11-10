@@ -284,9 +284,9 @@ describe.skipIf(!url)(
 				() => conversations.get(userId, id),
 				(v) => v?.status === "idle" && v.messages.length === 6,
 			);
-			// a Subagent cannot start Subagents in turn
-			expect(JSON.stringify(first?.messages[0].toolsAdded)).not.toContain(
-				"subagent",
+			// under the default depth limit of 2, a Subagent may start Subagents in turn
+			expect(JSON.stringify(first?.messages[0].toolsAdded)).toContain(
+				"subagent_message",
 			);
 			expect(JSON.stringify(last)).toContain("step limit");
 			const notified = JSON.stringify(view?.messages[4].message.content);

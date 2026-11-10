@@ -285,7 +285,7 @@ describe("runAgent", () => {
 		});
 		await runAgent(m.run, deps());
 
-		// a Subagent cannot start Subagents in turn
+		// a Subagent at the deepest level cannot start Subagents in turn
 		const offered = JSON.stringify(
 			(first?.messages[0] as { toolsAdded?: unknown }).toolsAdded,
 		);
@@ -293,11 +293,39 @@ describe("runAgent", () => {
 		expect(offered).not.toContain("subagent");
 		// nor ask the User: only the top-level Agent talks to them
 		expect(offered).not.toContain("ask_user");
+		// nor set a Timer
+		expect(offered).not.toContain("_timer");
 		expect(JSON.stringify(last?.messages)).toContain("step limit");
 		expect(m.outcomes).toEqual([
 			{ outcome: "partial", result: "what I found" },
 		]);
 		expect(m.titles).toEqual([]);
+	});
+
+	it("gives a Subagent above the deepest level the Subagent Tools", async () => {
+		let first: Context | undefined;
+		script([
+			(context) => {
+				first = context;
+				return fauxAssistantMessage("done");
+			},
+		]);
+		const unused = async (): Promise<never> => {
+			throw new Error("unused");
+		};
+		const m = memoryRun({
+			transcript: transcript(user("lead")),
+			turn: turn(),
+			isSubagent: true,
+			subagents: { start: unused, message: unused, stop: unused },
+		});
+		await runAgent(m.run, deps());
+
+		expect(
+			JSON.stringify(
+				(first?.messages[0] as { toolsAdded?: unknown }).toolsAdded,
+			),
+		).toContain("subagent_message");
 	});
 
 	describe("an Unattended Run", () => {
@@ -396,6 +424,33 @@ describe("runAgent", () => {
 		expect(m.questions).toEqual([true]);
 		expect(m.over).toBe(true);
 		expect(m.titles).toEqual(["Pi"]);
+	});
+
+	it("sets a Timer for the Agent from a minute to a day ahead, and cancels it", async () => {
+		script([
+			fauxAssistantMessage([
+				fauxToolCall("set_timer", { delay: 30, note: "too soon" }),
+				fauxToolCall("set_timer", { delay: 600, note: "check the build" }),
+			]),
+			fauxAssistantMessage("I'll check back in 10 minutes"),
+		]);
+		const m = memoryRun({
+			transcript: transcript(user("build")),
+			turn: turn(),
+		});
+		await runAgent(m.run, deps());
+		const results = m.saved.filter(
+			(s): s is ToolResultMessage => s.role === "toolResult",
+		);
+		expect(results.map((r) => r.isError)).toEqual([true, false]);
+		expect(m.timer).toEqual({ delay: 600, note: "check the build" });
+
+		script([
+			fauxAssistantMessage(fauxToolCall("cancel_timer", {})),
+			fauxAssistantMessage("Cancelled"),
+		]);
+		await runAgent(m.run, deps());
+		expect(m.timer).toBeUndefined();
 	});
 
 	it("refuses a second Question in the same Turn", async () => {
@@ -583,7 +638,7 @@ describe("runAgent with Skills", () => {
 	// pi carries the prompt in the transcript's first, system, message
 	const systemPrompt = (c?: Context) =>
 		(c?.messages[0] as unknown as { role: string; content: string }).content;
-	// besides the Subagent Tools and ask_user every top-level Agent has
+	// besides the Subagent, Question and Timer Tools every top-level Agent has
 	const offeredTools = (c?: Context) =>
 		(
 			c?.messages.flatMap(
@@ -592,7 +647,10 @@ describe("runAgent with Skills", () => {
 						(t) => t.name,
 					) ?? [],
 			) ?? []
-		).filter((n) => !n.startsWith("subagent") && n !== "ask_user");
+		).filter(
+			(n) =>
+				!n.startsWith("subagent") && n !== "ask_user" && !n.endsWith("_timer"),
+		);
 
 	it("lists the Skills the model may invoke in the prompt, and offers read, bash and attach", async () => {
 		let context: Context | undefined;
