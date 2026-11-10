@@ -16,21 +16,22 @@ export const Route = createFileRoute("/_app")({
 		return { user: context.user };
 	},
 	loader: async () => {
-		const [conversations, agents] = await Promise.all([
+		const [conversations, tasks, agents] = await Promise.all([
 			ok(api().api.conversations.get()),
+			ok(api().api["scheduled-tasks"].get()),
 			ok(api().api["agent-options"].get()),
 		]);
-		return { conversations, agents };
+		return { conversations, tasks, agents };
 	},
 	component: AppLayout,
 });
 
 function AppLayout() {
 	const { user } = Route.useRouteContext();
-	const { conversations } = Route.useLoaderData();
+	const { conversations, tasks } = Route.useLoaderData();
 	return (
 		<SidebarProvider>
-			<AppSidebar user={user} conversations={conversations} />
+			<AppSidebar user={user} conversations={conversations} tasks={tasks} />
 			<SidebarInset className="h-svh overflow-hidden md:h-[calc(100svh-1rem)]">
 				<header className="flex h-12 shrink-0 items-center px-2">
 					<SidebarTrigger aria-label={m.toggle_sidebar()} />

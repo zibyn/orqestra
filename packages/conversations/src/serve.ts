@@ -28,6 +28,7 @@ import {
 	endSubagent,
 	enqueue,
 	ensureRun,
+	FIRINGS_QUEUE,
 	lastModel,
 	lockRoot,
 	notify,
@@ -37,6 +38,7 @@ import {
 	subagentOf,
 } from "./runs.ts";
 import { ensureSandbox } from "./sandbox.ts";
+import { fire } from "./tasks.ts";
 
 /** Tasks one start of Subagents may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
@@ -400,7 +402,10 @@ async function open(
 					? () => outcome ?? { outcome: "completed", result: "" }
 					: question
 						? "question"
-						: true,
+						: // an Unattended Run cut off at its step cap
+							outcome?.outcome === "partial"
+							? "partial"
+							: true,
 			)) as Message[];
 			await saved();
 			if (!next.length) end();
@@ -573,11 +578,16 @@ export async function serveRuns(
 		[
 			[AGENT_RUNS_QUEUE, concurrency],
 			[SUBAGENT_RUNS_QUEUE, subagentConcurrency],
+			// a Firing only starts a Conversation; its Run goes to agent-runs
+			[FIRINGS_QUEUE, 1],
 		] as const
 	).map(([queue, concurrency]) => {
 		const worker = new Worker(
 			queue,
-			(job) => execute(config, job.data.conversationId, handler),
+			(job) =>
+				queue === FIRINGS_QUEUE
+					? fire(config, job.data.taskId, job.id as string)
+					: execute(config, job.data.conversationId, handler),
 			{
 				concurrency,
 				// bullmq tables live in their own "bullmq" schema; migrate is advisory-locked across processes
@@ -591,7 +601,7 @@ export async function serveRuns(
 		);
 		worker.on("failed", (job, err) => {
 			console.error(`job ${job?.id} failed`, err);
-			if (job)
+			if (job && queue !== FIRINGS_QUEUE)
 				void failed(job.data.conversationId, err).catch((error) =>
 					console.error(`could not mark job ${job.id}'s Run failed`, error),
 				);

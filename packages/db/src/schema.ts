@@ -59,16 +59,97 @@ export const conversation = pgTable(
 		unread: boolean("unread").default(false).notNull(),
 		// its last Run ended with a Question (`ask_user`); the User's next message clears it
 		awaitingReply: boolean("awaiting_reply").default(false).notNull(),
+		// a Firing of this Scheduled Task started it: it shows under the task, not in the ordinary list; null again once the task is deleted
+		scheduledTaskId: uuid("scheduled_task_id").references(
+			(): AnyPgColumn => scheduledTask.id,
+			{ onDelete: "set null" },
+		),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 		updatedAt: timestamp("updated_at")
 			.defaultNow()
 			.$onUpdate(() => new Date())
 			.notNull(),
 	},
-	(table) => [index("conversation_userId_idx").on(table.userId)],
+	(table) => [
+		index("conversation_userId_idx").on(table.userId),
+		index("conversation_scheduledTaskId_idx").on(table.scheduledTaskId),
+	],
 );
 
 export type InputOrigin = "task" | "timer";
+
+/** When a Scheduled Task fires: once at an ISO time, every so many seconds, or by a cron expression in the task's time zone. */
+export type Schedule =
+	| { kind: "once"; at: string }
+	| { kind: "every"; seconds: number }
+	| { kind: "cron"; expr: string };
+
+// A User's Scheduled Tasks; like Conversations, visible only to their owner, Admins included
+export const scheduledTask = pgTable(
+	"scheduled_task",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		// the owner's Polaris `sub`
+		userId: text("user_id").notNull(),
+		name: text("name").notNull(),
+		prompt: text("prompt").notNull(),
+		agentId: text("agent_id").notNull(),
+		// `provider/id`
+		model: text("model").notNull(),
+		thinkingLevel: text("thinking_level").notNull(),
+		schedule: jsonb("schedule").$type<Schedule>().notNull(),
+		// recurring tasks only: no Firing after it
+		endsAt: timestamp("ends_at", { withTimezone: true }),
+		// IANA; a cron expression is read in it
+		timeZone: text("time_zone").notNull(),
+		incognito: boolean("incognito").notNull(),
+		alertOnComplete: boolean("alert_on_complete").default(true).notNull(),
+		// active: it fires; paused by the User; auto_paused by three failed Firings in a row; finished: fired once, or ran past ends_at
+		state: text("state")
+			.$type<"active" | "paused" | "auto_paused" | "finished">()
+			.notNull(),
+		// failed Firings since the last one that was not; skipped ones do not count
+		consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+		updatedAt: timestamp("updated_at")
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [index("scheduled_task_userId_idx").on(table.userId)],
+);
+
+export type FiringOutcome =
+	| "running"
+	| "completed"
+	| "partial"
+	| "question"
+	| "skipped"
+	| "failed";
+
+// One row per Firing of a Scheduled Task, gone with it
+export const firing = pgTable(
+	"firing",
+	{
+		id: serial("id").primaryKey(),
+		taskId: uuid("task_id")
+			.notNull()
+			.references(() => scheduledTask.id, { onDelete: "cascade" }),
+		firedAt: timestamp("fired_at").defaultNow().notNull(),
+		// running until the first Run of its Conversation ends, then how that Run ended
+		outcome: text("outcome").$type<FiringOutcome>().notNull(),
+		// why it was skipped or failed before starting a Conversation: previous_running, agent_unavailable or model_disabled
+		reason: text("reason"),
+		// null when it was skipped, or failed before starting one
+		conversationId: uuid("conversation_id").references(() => conversation.id, {
+			onDelete: "set null",
+		}),
+	},
+	(table) => [
+		index("firing_taskId_idx").on(table.taskId),
+		index("firing_conversationId_idx").on(table.conversationId),
+	],
+);
 
 // Completed messages only; a reply is written once it finishes streaming
 export const message = pgTable(

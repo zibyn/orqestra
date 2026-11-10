@@ -44,6 +44,7 @@ import {
 } from "./runs.ts";
 import { ensureSandbox, SandboxGone, wakeSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
+import { tasksOf } from "./tasks.ts";
 import { safeFileName, uploadPath, writeUpload } from "./uploads.ts";
 
 export { MAX_UPLOAD_BYTES } from "@orqestra/config";
@@ -81,6 +82,12 @@ export {
 	type TranscriptMessage,
 	type Turn,
 } from "./serve.ts";
+export {
+	checkSchedule,
+	nextFirings,
+	TaskError,
+	type TaskInput,
+} from "./tasks.ts";
 export { UploadTooLarge } from "./uploads.ts";
 
 // The only module that reads and writes Conversations, their Inbox, messages, Subagents and compactions.
@@ -178,6 +185,9 @@ export function createConversations({
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
 			serveRuns(config, handler, options),
 
+		/** The User's Scheduled Tasks; their Firings run in `serveRuns`. */
+		tasks: tasksOf(config),
+
 		/** The online Agents, with the Models and thinking levels each offers; new Conversations only use `pickable` ones. */
 		async agentOptions() {
 			const cfg = await config();
@@ -224,9 +234,13 @@ export function createConversations({
 					background: sql<boolean>`exists (select 1 from subagent s join conversation child on child.id = s.conversation_id where child.parent_id = conversation.id and s.outcome in ('queued', 'running'))`,
 				})
 				.from(conversation)
-				// a Subagent's Conversation shows only within its parent
+				// a Subagent's Conversation shows only within its parent, a Firing's under its Scheduled Task
 				.where(
-					and(eq(conversation.userId, userId), isNull(conversation.parentId)),
+					and(
+						eq(conversation.userId, userId),
+						isNull(conversation.parentId),
+						isNull(conversation.scheduledTaskId),
+					),
 				)
 				.orderBy(desc(conversation.updatedAt)),
 
@@ -530,7 +544,8 @@ export function createConversations({
 			if (removed) {
 				// the inputs stay in the Conversation, unanswered
 				await drain(id);
-				await drain(id, true);
+				// stopped: a Firing's Run that never began ends partial
+				await drain(id, "partial");
 				await saved(id);
 			} else await requestStop([id]);
 			await stopSubagents(id);

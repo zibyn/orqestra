@@ -6,6 +6,7 @@ import {
 	useRouter,
 } from "@tanstack/react-router";
 import {
+	CalendarClockIcon,
 	CircleHelpIcon,
 	EyeOffIcon,
 	Loader2Icon,
@@ -13,10 +14,16 @@ import {
 	PencilIcon,
 	SquarePenIcon,
 	Trash2Icon,
+	XCircleIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { NavUser } from "#/components/NavUser";
 import { Button } from "#/components/ui/button";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "#/components/ui/collapsible";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -35,10 +42,14 @@ import {
 	SidebarMenuAction,
 	SidebarMenuButton,
 	SidebarMenuItem,
+	SidebarMenuSub,
+	SidebarMenuSubButton,
+	SidebarMenuSubItem,
 } from "#/components/ui/sidebar";
 import { api, ok } from "#/lib/api";
 import { cn } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
+import { getLocale } from "#/paraglide/runtime";
 
 type Listed = {
 	id: string;
@@ -49,12 +60,27 @@ type Listed = {
 	awaitingReply: boolean;
 };
 
+type ListedTask = {
+	id: string;
+	name: string;
+	state: string;
+	conversations: {
+		id: string;
+		title: string | null;
+		firedAt: string | Date;
+		unread: boolean;
+		awaitingReply: boolean;
+	}[];
+};
+
 export function AppSidebar({
 	user,
 	conversations,
+	tasks,
 }: {
 	user: User;
 	conversations: Listed[];
+	tasks: ListedTask[];
 }) {
 	return (
 		<Sidebar variant="inset">
@@ -70,6 +96,16 @@ export function AppSidebar({
 				</Button>
 			</SidebarHeader>
 			<SidebarContent>
+				{!!tasks.length && (
+					<SidebarGroup>
+						<SidebarGroupLabel>{m.tasks_page()}</SidebarGroupLabel>
+						<SidebarMenu>
+							{tasks.map((t) => (
+								<TaskItem key={t.id} task={t} />
+							))}
+						</SidebarMenu>
+					</SidebarGroup>
+				)}
 				<SidebarGroup>
 					<SidebarGroupLabel>{m.conversations()}</SidebarGroupLabel>
 					<SidebarMenu>
@@ -83,6 +119,74 @@ export function AppSidebar({
 				<NavUser user={user} />
 			</SidebarFooter>
 		</Sidebar>
+	);
+}
+
+/** A Scheduled Task, folded open on its latest Firings' Conversations: bold while one is Unread, an error icon once it paused itself. */
+function TaskItem({ task }: { task: ListedTask }) {
+	const params = useParams({ strict: false });
+	const shown = task.conversations.slice(0, 3);
+	return (
+		<Collapsible defaultOpen render={<SidebarMenuItem />}>
+			<CollapsibleTrigger render={<SidebarMenuButton />}>
+				<CalendarClockIcon className="text-muted-foreground" />
+				<span
+					className={cn(
+						"truncate",
+						shown.some((c) => c.unread) && "font-semibold",
+					)}
+				>
+					{task.name}
+				</span>
+				{task.state === "auto_paused" && (
+					<XCircleIcon
+						role="img"
+						aria-label={m.task_state_auto_paused()}
+						className="ml-auto text-destructive"
+					/>
+				)}
+			</CollapsibleTrigger>
+			<CollapsibleContent>
+				<SidebarMenuSub>
+					{shown.map((c) => (
+						<SidebarMenuSubItem key={c.id}>
+							<SidebarMenuSubButton
+								isActive={params.conversationId === c.id}
+								render={
+									<Link
+										to="/c/$conversationId"
+										params={{ conversationId: c.id }}
+									/>
+								}
+							>
+								<span className={cn("truncate", c.unread && "font-semibold")}>
+									{c.title ??
+										new Date(c.firedAt).toLocaleString(getLocale(), {
+											dateStyle: "short",
+											timeStyle: "short",
+										})}
+								</span>
+								{c.awaitingReply ? (
+									<CircleHelpIcon
+										role="img"
+										aria-label={m.awaiting_reply()}
+										className="ml-auto text-signal"
+									/>
+								) : (
+									c.unread && (
+										<span
+											role="img"
+											aria-label={m.unread()}
+											className="ml-auto size-2 shrink-0 rounded-full bg-signal"
+										/>
+									)
+								)}
+							</SidebarMenuSubButton>
+						</SidebarMenuSubItem>
+					))}
+				</SidebarMenuSub>
+			</CollapsibleContent>
+		</Collapsible>
 	);
 }
 

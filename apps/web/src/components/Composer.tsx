@@ -28,7 +28,7 @@ export type AgentOption = NonNullable<
 type Level = AgentOption["models"][number]["thinking"]["default"];
 export type Choice = { model?: string; thinking?: Level };
 
-const levelLabels: Record<Level, () => string> = {
+export const levelLabels: Record<Level, () => string> = {
 	off: m.thinking_off,
 	minimal: m.thinking_minimal,
 	low: m.thinking_low,

@@ -11,6 +11,7 @@ import { mcpServers } from "./mcp-servers.ts";
 import { memoryRoutes } from "./memories.ts";
 import { providers } from "./providers.ts";
 import { sandboxProvider } from "./sandbox-provider.ts";
+import { scheduledTaskRoutes } from "./scheduled-tasks.ts";
 import { searchProviders } from "./search-providers.ts";
 import { skills } from "./skills.ts";
 
@@ -77,6 +78,7 @@ export function createApp({
 				.use(user)
 				.use(skills(user))
 				.use(conversationRoutes(user, conversations))
+				.use(scheduledTaskRoutes(user, conversations))
 				.use(providers(user))
 				.use(searchProviders(user))
 				.use(mcpServers(user))

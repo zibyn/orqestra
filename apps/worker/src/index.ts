@@ -34,4 +34,4 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 	});
 }
 
-console.log("worker listening on queues agent-runs and subagent-runs");
+console.log("worker listening on queues agent-runs, subagent-runs and firings");

@@ -2,6 +2,7 @@ import type { User } from "@orqestra/api";
 import { Link } from "@tanstack/react-router";
 import {
 	BrainIcon,
+	CalendarClockIcon,
 	ChevronsUpDownIcon,
 	LogOutIcon,
 	SettingsIcon,
@@ -63,6 +64,10 @@ export function NavUser({ user }: { user: User }) {
 						<DropdownMenuItem render={<Link to="/memory" />}>
 							<BrainIcon />
 							{m.memory_page()}
+						</DropdownMenuItem>
+						<DropdownMenuItem render={<Link to="/tasks" />}>
+							<CalendarClockIcon />
+							{m.tasks_page()}
 						</DropdownMenuItem>
 						{user.admin && (
 							<DropdownMenuItem render={<Link to="/console" />}>

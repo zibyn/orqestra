@@ -2,9 +2,12 @@ import { randomUUID } from "node:crypto";
 import { db, type Tx } from "@orqestra/db";
 import {
 	conversation,
+	type FiringOutcome,
+	firing,
 	type InputOrigin,
 	inbox,
 	message,
+	scheduledTask,
 	subagent,
 } from "@orqestra/db/schema";
 import { createPostgresBackend, Queue } from "bullmq";
@@ -42,6 +45,8 @@ export const MAX_SUBAGENTS = 4;
 /** BullMQ queues with one job `{ conversationId }` per Run: top-level Conversations', and Subagents' apart so these cannot starve them. */
 export const AGENT_RUNS_QUEUE = "agent-runs";
 export const SUBAGENT_RUNS_QUEUE = "subagent-runs";
+/** BullMQ queue with one job `{ taskId }` per Firing: a Job Scheduler per recurring Scheduled Task, a delayed job per one-time one. */
+export const FIRINGS_QUEUE = "firings";
 
 /** NOTIFY channel carrying a Conversation's ConversationEvents (worker -> web SSE). */
 export const conversationChannel = (conversationId: string) =>
@@ -86,13 +91,22 @@ export type ConversationEvent =
 const newQueue = (name: string) =>
 	new Queue(
 		name,
-		{ connection: { connectionString: process.env.DATABASE_URL as string } },
+		{
+			connection: {
+				connectionString: process.env.DATABASE_URL as string,
+				// the api may schedule a Firing before any worker has set up BullMQ's schema
+				migrate: true,
+			},
+		},
 		createPostgresBackend,
 	);
 const queues = new Map<string, ReturnType<typeof newQueue>>();
-/** The queue of top-level Runs or of Subagent Runs. */
+/** The queue of top-level Runs, of Subagent Runs or of Firings. */
 export function runQueue(
-	name: typeof AGENT_RUNS_QUEUE | typeof SUBAGENT_RUNS_QUEUE,
+	name:
+		| typeof AGENT_RUNS_QUEUE
+		| typeof SUBAGENT_RUNS_QUEUE
+		| typeof FIRINGS_QUEUE,
 ) {
 	const queue = queues.get(name) ?? newQueue(name);
 	queues.set(name, queue);
@@ -310,22 +324,95 @@ async function wakeAfter(parentId: string) {
 		);
 }
 
+/** Removes a Scheduled Task's Job Scheduler, so it fires no more; a one-time task's delayed job is dropped when it comes due. */
+export const unschedule = (taskId: string) =>
+	runQueue(FIRINGS_QUEUE).removeJobScheduler(taskId);
+
+/** Failed Firings in a row that pause their Scheduled Task. */
+export const MAX_FAILED_FIRINGS = 3;
+
+/**
+ * Under the task's lock, or the root's taken before it: counts one more failed Firing of the task, or clears the count,
+ * auto-pausing it at MAX_FAILED_FIRINGS. True when that paused it: removing its scheduler is the caller's.
+ */
+export async function countFiring(tx: Tx, taskId: string, failed: boolean) {
+	const [task] = await tx
+		.update(scheduledTask)
+		.set({
+			consecutiveFailures: failed
+				? sql`${scheduledTask.consecutiveFailures} + 1`
+				: 0,
+			state: failed
+				? sql`case when ${scheduledTask.consecutiveFailures} + 1 >= ${MAX_FAILED_FIRINGS} and ${scheduledTask.state} = 'active' then 'auto_paused' else ${scheduledTask.state} end`
+				: undefined,
+		})
+		.where(eq(scheduledTask.id, taskId))
+		.returning({
+			state: scheduledTask.state,
+			failures: scheduledTask.consecutiveFailures,
+		});
+	return (
+		failed &&
+		task?.state === "auto_paused" &&
+		task.failures === MAX_FAILED_FIRINGS
+	);
+}
+
+/**
+ * Under the root's lock: the first Run of a Firing's Conversation ended as `outcome`, which the Firing keeps; later Runs change nothing.
+ * Returns the task's id when that failure auto-paused it.
+ */
+async function endFiring(
+	tx: Tx,
+	conversationId: string,
+	outcome: Exclude<FiringOutcome, "running" | "skipped">,
+) {
+	const [ended] = await tx
+		.update(firing)
+		.set({ outcome })
+		.where(
+			and(
+				eq(firing.conversationId, conversationId),
+				eq(firing.outcome, "running"),
+			),
+		)
+		.returning({ taskId: firing.taskId });
+	if (ended && (await countFiring(tx, ended.taskId, outcome === "failed")))
+		return ended.taskId;
+}
+
+/** A Firing's Conversation whose Run could not even be queued: the Firing failed. */
+export async function firingFailed(conversationId: string) {
+	const paused = await db.transaction(async (tx) => {
+		await lockRoot(tx, conversationId);
+		return endFiring(tx, conversationId, "failed");
+	});
+	if (paused) await unschedule(paused);
+}
+
 /**
  * Ends a top-level Run that did not drain to the end (stopped, failed or crashed) with `status`, under the root's lock.
  * After a stop, a wake input that arrived meanwhile, such as a User message sent right after Stop, starts the next Run;
  * after a failure the inbox waits for Retry, which delivers it, so the failure still shows.
+ * A Firing's first Run ends it failed, or partial when stopped, by the User or out of time.
  */
 export async function endRun(
 	conversationId: string,
 	status: "idle" | "failed",
 ) {
-	await db.transaction(async (tx) => {
+	const paused = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
 		await tx
 			.update(conversation)
 			.set({ status })
 			.where(eq(conversation.id, conversationId));
+		return endFiring(
+			tx,
+			conversationId,
+			status === "failed" ? "failed" : "partial",
+		);
 	});
+	if (paused) await unschedule(paused);
 	await saved(conversationId);
 	if (status === "idle") await ensureRun(conversationId);
 }
@@ -343,11 +430,12 @@ export async function endSubagent(conversationId: string, ended: Ended) {
  * Delivers a Conversation's inbox into `message`, in arrival order, under its root's lock; returns what it delivered.
  * With `finish`, an inbox without a wake input ends the Run instead: the Conversation goes idle and Unread, and a Subagent's settles with how it `finish`ed.
  * A `"question"` finish waits for the User: only their message goes on, and it ends awaiting their reply.
+ * A top-level Run ends completed, or `"partial"` at an Unattended Run's step cap; a Firing's first Run records how.
  * That is checked under the same lock a sender starts a Run under, so no input is left behind.
  */
 export async function drain(
 	conversationId: string,
-	finish: boolean | "question" | (() => Ended) = false,
+	finish: boolean | "question" | "partial" | (() => Ended) = false,
 ) {
 	let parentId: string | undefined;
 	const delivered = await db.transaction(async (tx) => {
@@ -387,7 +475,7 @@ export async function drain(
 			);
 		else if (typeof finish === "function")
 			parentId = await settle(tx, conversationId, finish());
-		else if (finish)
+		else if (finish) {
 			// it ends with its reply, which the User has yet to see
 			await tx
 				.update(conversation)
@@ -397,6 +485,13 @@ export async function drain(
 					awaitingReply: finish === "question",
 				})
 				.where(eq(conversation.id, conversationId));
+			// none of these is a failure, so none pauses the task
+			await endFiring(
+				tx,
+				conversationId,
+				finish === true ? "completed" : finish,
+			);
+		}
 		// pi UserMessages
 		return inputs.map((i) => i.message);
 	});
