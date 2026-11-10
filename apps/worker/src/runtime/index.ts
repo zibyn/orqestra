@@ -8,6 +8,7 @@ import { memoryPrompt, memoryTools, recallTool } from "./memory.ts";
 import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
 import { generateTitle } from "./title.ts";
 import {
+	draftTool,
 	MAX_SUBAGENT_STEPS,
 	questionTool,
 	relay,
@@ -98,7 +99,7 @@ export async function runAgent(
 						? [...memoryTools(memory, sub), recallTool(run.recall)]
 						: []),
 					...(run.subagents ? subagentTools(config, run.subagents) : []),
-					...(sub ? [] : [question.tool]),
+					...(sub ? [] : [question.tool, draftTool(config.limits)]),
 					...(run.timer ? timerTools(run.timer) : []),
 				],
 				messages,

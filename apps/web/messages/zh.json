@@ -267,6 +267,8 @@
   "tasks_page_hint": "按计划把提示发给 Agent，每次 Firing 在新 Conversation 里运行。只有你能看到。",
   "task_new": "新建定时任务",
   "task_open": "打开",
+  "task_draft": "定时任务草稿",
+  "task_draft_open": "打开并创建",
   "task_none_title": "还没有定时任务",
   "task_none": "让 Agent 按计划做事，比如每天早上汇总新闻。",
   "task_name": "名称",

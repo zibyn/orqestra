@@ -22,6 +22,7 @@ import {
 	AlarmClockIcon,
 	BotIcon,
 	BrainIcon,
+	CalendarClockIcon,
 	ChevronRightIcon,
 	DownloadIcon,
 	EyeOffIcon,
@@ -44,6 +45,8 @@ import {
 import { MessageResponse } from "#/components/ai-elements/message";
 import { Reasoning } from "#/components/ai-elements/reasoning";
 import { type Choice, Composer } from "#/components/Composer";
+import { FormSheet, useSheet } from "#/components/ConsolePage";
+import { summary, type TaskDraft, TaskForm, when } from "#/components/TaskForm";
 import {
 	Attachment,
 	AttachmentContent,
@@ -101,6 +104,7 @@ import {
 	TraceTitle,
 } from "#/components/ui/trace";
 import { api, ok } from "#/lib/api";
+import { nextFiring } from "#/lib/next-firing";
 import { groupSteps } from "#/lib/steps";
 import { uploadFiles } from "#/lib/uploads";
 import { cn } from "#/lib/utils";
@@ -230,6 +234,7 @@ function ConversationView() {
 		open: boolean;
 	}>();
 	const running = conversation.status === "running";
+	const draftSheet = useSheet<TaskDraft>();
 	const lastUser = conversation.messages
 		.filter((row) => row.message.role === "user")
 		.at(-1);
@@ -322,6 +327,16 @@ function ConversationView() {
 									message={row.message}
 									results={results}
 									conversationId={conversation.id}
+									// the drafting Turn's Agent, Model and thinking; Incognito as this Conversation is
+									openDraft={(draft) =>
+										draftSheet.show({
+											...draft,
+											agentId: conversation.agentId ?? "",
+											model: row.model,
+											thinking: row.thinkingLevel as TaskDraft["thinking"],
+											incognito: conversation.incognito,
+										})
+									}
 									answer={
 										row.id === asking
 											? (text) =>
@@ -420,6 +435,19 @@ function ConversationView() {
 				open={!!panel?.open}
 				onClose={() => setPanel((p) => p && { ...p, open: false })}
 			/>
+			<FormSheet
+				open={draftSheet.open}
+				onClose={draftSheet.close}
+				title={m.task_new()}
+			>
+				{draftSheet.item && (
+					<TaskForm
+						draft={draftSheet.item}
+						agents={agents.filter((a) => a.pickable)}
+						onSaved={draftSheet.close}
+					/>
+				)}
+			</FormSheet>
 		</PanelContext>
 	);
 }
@@ -462,6 +490,59 @@ const questionOf = (call: ToolCall, result?: ToolResultMessage) =>
 	call.name === "ask_user" && !result?.isError
 		? (call.arguments as { question: string; suggestions?: string[] })
 		: undefined;
+
+type Drafted = Pick<TaskDraft, "name" | "prompt" | "schedule" | "endsAt">;
+
+/** A `draft_scheduled_task` call the Agent made, once it was accepted. */
+function draftOf(
+	call: ToolCall,
+	result?: ToolResultMessage,
+): Drafted | undefined {
+	if (call.name !== "draft_scheduled_task" || !result || result.isError)
+		return undefined;
+	const { ends_at, ...args } = call.arguments as Omit<Drafted, "endsAt"> & {
+		ends_at?: string;
+	};
+	return { ...args, endsAt: ends_at ? new Date(ends_at) : null };
+}
+
+/** A Task Draft: what it would do and when, opening the drawer to create it; each save creates another task. */
+function TaskDraftCard({
+	draft,
+	onOpen,
+}: {
+	draft: Drafted;
+	onOpen: () => void;
+}) {
+	const next = nextFiring(
+		draft.schedule,
+		Intl.DateTimeFormat().resolvedOptions().timeZone,
+	);
+	return (
+		<div className="flex flex-col gap-2 rounded-md border p-3 text-sm">
+			<p className="flex items-center gap-2 font-medium">
+				<CalendarClockIcon className="size-4 shrink-0 text-muted-foreground" />
+				<span className="sr-only">{m.task_draft()}: </span>
+				{draft.name}
+			</p>
+			<p className="whitespace-pre-wrap break-words text-muted-foreground">
+				{draft.prompt}
+			</p>
+			<p className="text-xs text-muted-foreground">
+				{summary(draft.schedule)}
+				{next && ` · ${m.task_next({ time: when(next) })}`}
+			</p>
+			<Button
+				size="sm"
+				variant="outline"
+				className="self-start"
+				onClick={onOpen}
+			>
+				{m.task_draft_open()}
+			</Button>
+		</div>
+	);
+}
 
 /** The Agent's Question; while it waits, its suggested answers are buttons that send their text, and Retry withdraws it. */
 function Question({
@@ -1190,9 +1271,12 @@ function AgentReply({
 	results,
 	conversationId,
 	answer,
+	openDraft,
 }: {
 	message: AssistantMessage;
 	results: Results;
+	/** Opens a Task Draft's drawer; only the top-level Agent drafts. */
+	openDraft?: (draft: Drafted) => void;
 	/** Whose Sandbox the files it attached are in; older Subagents kept in a Tool result have none. */
 	conversationId?: string;
 	/** Sends the User's answer to its Question, while it waits for one. */
@@ -1206,12 +1290,20 @@ function AgentReply({
 		part.type === "toolCall"
 			? questionOf(part, results.get(part.id))
 			: undefined;
+	const drafted = (part: AssistantMessage["content"][number]) =>
+		part.type === "toolCall" && openDraft
+			? draftOf(part, results.get(part.id))
+			: undefined;
 	return (
 		<Message>
 			<MessageContent className="gap-3">
 				{groupSteps(
 					message.content,
-					(part) => part.type !== "text" && !download(part) && !asked(part),
+					(part) =>
+						part.type !== "text" &&
+						!download(part) &&
+						!asked(part) &&
+						!drafted(part),
 				).map((run, i) => {
 					if (Array.isArray(run))
 						return (
@@ -1241,6 +1333,16 @@ function AgentReply({
 								{...question}
 								answer={answer}
 								conversationId={conversationId}
+							/>
+						);
+					const draft = drafted(run);
+					if (draft && openDraft)
+						return (
+							<TaskDraftCard
+								// biome-ignore lint/suspicious/noArrayIndexKey: saved content never reorders
+								key={i}
+								draft={draft}
+								onOpen={() => openDraft(draft)}
 							/>
 						);
 					const attachment = download(run);

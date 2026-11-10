@@ -1,8 +1,9 @@
 import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
-import type { OrqestraConfig } from "@orqestra/config";
+import type { Limits, OrqestraConfig } from "@orqestra/config";
 import {
 	BudgetExceeded,
+	checkSchedule,
 	MAX_SUBAGENT_TASKS,
 	MAX_TIMER_DELAY,
 	MIN_TIMER_DELAY,
@@ -10,6 +11,7 @@ import {
 	NoSuchTemplate,
 	type RunHandle,
 	type StreamEvent,
+	TaskError,
 	TemplateOffline,
 	TimerLimitReached,
 } from "@orqestra/conversations";
@@ -121,6 +123,51 @@ export function timerTools(timer: NonNullable<RunHandle["timer"]>) {
 		}),
 	});
 	return [set, cancel];
+}
+
+/**
+ * The top-level Agent's Tool for drafting a Scheduled Task: checked as a saved one would be, then shown to the User
+ * as a card they may open and create from; nothing is saved, and the Run goes on.
+ */
+export function draftTool(limits: Pick<Limits, "minFiringInterval">) {
+	return tool({
+		name: "draft_scheduled_task",
+		label: "Draft a scheduled task",
+		description: `Draft a scheduled task for the user: they see it as a card and decide whether to create it. On each run, \`prompt\` is sent to a new conversation as the user's message, with no one watching, so write it to stand on its own. A schedule runs once at an ISO time, every so many seconds, or by a 5-field cron expression read in the user's time zone; runs must be at least ${limits.minFiringInterval} seconds apart. \`ends_at\` (ISO) ends a recurring one.`,
+		parameters: Type.Object({
+			name: Type.String({ minLength: 1, maxLength: 100 }),
+			prompt: Type.String({ minLength: 1, maxLength: 20_000 }),
+			schedule: Type.Union([
+				Type.Object({ kind: Type.Literal("once"), at: Type.String() }),
+				Type.Object({
+					kind: Type.Literal("every"),
+					seconds: Type.Integer({ minimum: 1 }),
+				}),
+				Type.Object({ kind: Type.Literal("cron"), expr: Type.String() }),
+			]),
+			ends_at: Type.Optional(Type.String()),
+		}),
+		execute: async (_, { schedule, ends_at }) => {
+			try {
+				// shortcut: checked in UTC, though the User saves it in their browser's time zone; only DST shifts a cron's intervals
+				checkSchedule(limits, {
+					schedule,
+					endsAt: ends_at ?? null,
+					timeZone: "UTC",
+				});
+			} catch (error) {
+				throw error instanceof TaskError
+					? new Error(`${error.field}: ${error.message}`)
+					: error;
+			}
+			return {
+				content: text(
+					"The draft is shown to the user, who has not created it yet: they may open it and create it.",
+				),
+				details: undefined,
+			};
+		},
+	});
 }
 
 /** Told to a Subagent whose next request is its last, made without Tools. */

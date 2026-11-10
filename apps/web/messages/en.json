@@ -267,6 +267,8 @@
   "tasks_page_hint": "Prompts sent to an Agent on a schedule, each Firing in a new Conversation. Only you can see them.",
   "task_new": "New Scheduled Task",
   "task_open": "Open",
+  "task_draft": "Draft Scheduled Task",
+  "task_draft_open": "Open and create",
   "task_none_title": "No Scheduled Tasks",
   "task_none": "Have an Agent do something on a schedule, such as a morning news summary.",
   "task_name": "Name",

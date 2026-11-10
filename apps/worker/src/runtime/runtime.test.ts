@@ -295,6 +295,8 @@ describe("runAgent", () => {
 		expect(offered).not.toContain("ask_user");
 		// nor set a Timer
 		expect(offered).not.toContain("_timer");
+		// nor draft a Scheduled Task
+		expect(offered).not.toContain("draft_scheduled_task");
 		expect(JSON.stringify(last?.messages)).toContain("step limit");
 		expect(m.outcomes).toEqual([
 			{ outcome: "partial", result: "what I found" },
@@ -451,6 +453,52 @@ describe("runAgent", () => {
 		]);
 		await runAgent(m.run, deps());
 		expect(m.timer).toBeUndefined();
+	});
+
+	it("drafts a Scheduled Task for the User to create, refusing an invalid or too frequent schedule, and carries on, Unattended too", async () => {
+		const draft = (schedule: unknown, ends_at?: string) =>
+			fauxToolCall("draft_scheduled_task", {
+				name: "Build report",
+				prompt: "Report on the nightly build",
+				schedule,
+				...(ends_at ? { ends_at } : {}),
+			});
+		script([
+			fauxAssistantMessage([
+				draft({ kind: "cron", expr: "not cron" }),
+				// DEFAULT_LIMITS: an hour apart at least
+				draft({ kind: "every", seconds: 600 }),
+				draft({ kind: "once", at: "2020-01-01T09:00:00Z" }),
+				draft({ kind: "cron", expr: "0 9 * * *" }, "2020-01-01T00:00:00Z"),
+				draft({ kind: "cron", expr: "0 9 * * 1-5" }),
+			]),
+			fauxAssistantMessage("Here is the draft"),
+		]);
+		const m = memoryRun({
+			transcript: transcript(user("every weekday at 9")),
+			turn: turn(),
+			unattended: true,
+		});
+		await runAgent(m.run, deps());
+
+		const results = m.saved.filter(
+			(s): s is ToolResultMessage => s.role === "toolResult",
+		);
+		expect(results.map((r) => r.isError)).toEqual([
+			true,
+			true,
+			true,
+			true,
+			false,
+		]);
+		expect(messageText(results[1] as unknown as Message)).toContain(
+			"3600 seconds apart",
+		);
+		expect(messageText(results[4] as unknown as Message)).toContain(
+			"not created it yet",
+		);
+		// the Run goes on past the draft
+		expect(messageText(m.saved.at(-1) as Message)).toBe("Here is the draft");
 	});
 
 	it("refuses a second Question in the same Turn", async () => {
@@ -649,7 +697,10 @@ describe("runAgent with Skills", () => {
 			) ?? []
 		).filter(
 			(n) =>
-				!n.startsWith("subagent") && n !== "ask_user" && !n.endsWith("_timer"),
+				!n.startsWith("subagent") &&
+				n !== "ask_user" &&
+				!n.endsWith("_timer") &&
+				n !== "draft_scheduled_task",
 		);
 
 	it("lists the Skills the model may invoke in the prompt, and offers read, bash and attach", async () => {
