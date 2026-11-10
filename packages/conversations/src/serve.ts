@@ -15,9 +15,9 @@ import {
 	message,
 	subagent,
 } from "@orqestra/db/schema";
-import type { Orrery, SandboxProvider } from "@orqestra/tools";
+import type { ObjectStore, Orrery, SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { alertRun } from "./alerts.ts";
 import { type Memories, memoriesOf, memoryOn } from "./memories.ts";
 import { type Recall, recallOf } from "./recall.ts";
@@ -42,6 +42,7 @@ import {
 import { ensureSandbox } from "./sandbox.ts";
 import { fire } from "./tasks.ts";
 import { cancelTimer, ring, setTimer, TIMERS_QUEUE } from "./timers.ts";
+import { storeUpload, sweepUploads } from "./uploads.ts";
 
 /** Tasks one start of Subagents may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
@@ -122,6 +123,14 @@ export type RunHandle = {
 	deliver(): Promise<Message[]>;
 	/** Saves a finished or stopped reply (which ends its stream) or a Tool result; a failed reply is not saved but thrown. */
 	save(message: Message): Promise<void>;
+	/**
+	 * Keeps a file the Agent attaches as an Attachment of the Conversation, a snapshot in object storage under a free name, which it returns
+	 * with its size; throws UploadTooLarge past MAX_UPLOAD_BYTES. The `attach` Tool result naming it ties it to that message once saved.
+	 */
+	attach(
+		name: string,
+		body: ReadableStream<Uint8Array>,
+	): Promise<{ name: string; size: number }>;
 	stream(event: StreamEvent): Promise<void>;
 	/** Saves a compaction: the model now sees `summary` and the messages from `firstKeptId` on. */
 	compacted(
@@ -252,6 +261,7 @@ async function failed(conversationId: string, error: Error) {
  */
 async function execute(
 	config: () => Promise<OrqestraConfig>,
+	store: ObjectStore,
 	conversationId: string,
 	jobId: string | undefined,
 	handler: RunHandler,
@@ -296,6 +306,7 @@ async function execute(
 		}
 		const run = await open(
 			cfg,
+			store,
 			conv,
 			{ incognito: !!root?.incognito, unattended },
 			stop.signal,
@@ -323,6 +334,7 @@ async function execute(
 
 async function open(
 	cfg: OrqestraConfig,
+	store: ObjectStore,
 	conv: typeof conversation.$inferSelect,
 	root: { incognito: boolean; unattended: boolean },
 	signal: AbortSignal,
@@ -394,18 +406,39 @@ async function open(
 			return messages;
 		},
 		async save(m) {
-			await db.insert(message).values({
-				conversationId,
-				message: m,
-				model: modelRef(turn.model),
-				thinkingLevel: turn.thinking,
-			});
+			const [row] = await db
+				.insert(message)
+				.values({
+					conversationId,
+					message: m,
+					model: modelRef(turn.model),
+					thinkingLevel: turn.thinking,
+				})
+				.returning({ id: message.id });
+			const attached =
+				m.role === "toolResult" && m.toolName === "attach" && !m.isError
+					? (m.details as { attachment?: { name: string } } | undefined)
+							?.attachment
+					: undefined;
+			// a retry withdrawing this message deletes the Attachment with it; one never tied is unsent, and swept
+			if (attached)
+				await db
+					.update(attachment)
+					.set({ messageId: row.id, sent: true })
+					.where(
+						and(
+							eq(attachment.conversationId, conversationId),
+							eq(attachment.name, attached.name),
+							isNull(attachment.messageId),
+						),
+					);
 			await emit(
 				m.role === "assistant"
 					? { type: "end", subagent: sub }
 					: { type: "saved" },
 			);
 		},
+		attach: (name, body) => storeUpload(store, conv, name, body, { signal }),
 		async stream(event) {
 			await emit({ ...event, subagent: sub });
 		},
@@ -633,6 +666,7 @@ function subagentsOf(
  */
 export async function serveRuns(
 	config: () => Promise<OrqestraConfig>,
+	store: ObjectStore,
 	handler: RunHandler,
 	{
 		concurrency = 8,
@@ -654,7 +688,7 @@ export async function serveRuns(
 	).map(([queue, concurrency]) => {
 		const worker = new Worker(
 			queue,
-			(job) => execute(config, job.data.conversationId, job.id, handler),
+			(job) => execute(config, store, job.data.conversationId, job.id, handler),
 			{
 				concurrency,
 				// bullmq tables live in their own "bullmq" schema; migrate is advisory-locked across processes
@@ -701,8 +735,17 @@ export async function serveRuns(
 	// the pg backend doesn't emit 'error' on connect failure, so fail fast instead of idling silently
 	await Promise.all(workers.map((w) => w.waitUntilReady()));
 	await requeue();
+	// every worker sweeps; a row is deleted, with its object, by whichever gets it first
+	const sweep = setInterval(
+		() =>
+			sweepUploads(store).catch((error) =>
+				console.error("could not sweep unsent uploads", error),
+			),
+		3600_000,
+	);
 
 	return async () => {
+		clearInterval(sweep);
 		await Promise.all(workers.map((w) => w.close()));
 		listener.release(true); // destroy rather than return a LISTENing connection to the pool
 	};

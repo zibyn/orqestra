@@ -183,7 +183,7 @@ export function sandboxTools(
 			name: "attach",
 			label: "Attach",
 			description:
-				"Attach a file in your sandbox under /workspace to your reply, for the user to download. It is not copied: attach it once it is final, and keep it in place.",
+				"Attach a file in your sandbox under /workspace to your reply, for the user to download: a copy of it as it is now, so attach it once it is final.",
 			parameters: Type.Object({
 				path: Type.String({
 					description: "An existing file; absolute, or relative to /workspace",
@@ -206,11 +206,16 @@ export function sandboxTools(
 					throw explain(error);
 				});
 				if (r.exit !== 0) throw refused;
-				const [size, file] = r.stdout.split("\n");
+				const file = r.stdout.split("\n")[1];
+				// copied now: what the Sandbox does with it later is not what the user downloads
+				const { body } = await client
+					.openFile(id, file.slice("/workspace/".length), { signal })
+					.catch((error) => {
+						throw explain(error);
+					});
 				const attachment = {
 					path: file,
-					name: file.slice(file.lastIndexOf("/") + 1),
-					size: Number(size),
+					...(await run.attach(file.slice(file.lastIndexOf("/") + 1), body)),
 				};
 				return {
 					content: text(

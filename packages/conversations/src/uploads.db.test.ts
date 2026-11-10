@@ -1,11 +1,24 @@
-import { fauxProvider } from "@earendil-works/pi-ai";
+import {
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxToolCall,
+	type ToolCall,
+} from "@earendil-works/pi-ai";
 import {
 	type AgentDefinition,
 	DEFAULT_LIMITS,
 	type OrqestraConfig,
 } from "@orqestra/config";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { RunHandle } from "./index.ts";
+import {
+	afterAll,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
+import type { RunHandler } from "./index.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -42,7 +55,7 @@ const config = {
 		pdf: { versionId: 1, description: "", disableModelInvocation: false },
 	},
 	sandboxProvider: { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 },
-	limits: DEFAULT_LIMITS,
+	limits: { ...DEFAULT_LIMITS },
 } as unknown as OrqestraConfig;
 
 let o = memoryOrrery();
@@ -96,12 +109,13 @@ describe.skipIf(!url)(
 	() => {
 		// sending queues a Run: a worker that does nothing takes it (and sets up BullMQ's schema)
 		let stopWorker: () => Promise<void>;
-		let onRun = async (_run: RunHandle) => {};
+		let handler: RunHandler = async () => {};
 		beforeAll(async () => {
-			stopWorker = await conversations.serveRuns((run) => onRun(run));
+			stopWorker = await conversations.serveRuns((...args) => handler(...args));
 		});
 		afterAll(() => stopWorker?.());
 		beforeEach(async () => {
+			handler = async () => {};
 			o = memoryOrrery();
 			s.objects.clear();
 			await db.execute(sql`truncate conversation cascade`);
@@ -225,6 +239,106 @@ describe.skipIf(!url)(
 				).rejects.toThrow("Not an attachment");
 		});
 
+		it("deletes a Conversation's Attachments with it, its Subagents' included", async () => {
+			const id = await newConversation();
+			const other = await newConversation();
+			await upload(id, "a.txt", stream("mine"));
+			await upload(other, "b.txt", stream("other"));
+			// a Subagent's, as `attach` keeps one
+			const [sub] = await db
+				.insert(schema.conversation)
+				.values({ userId, agentId: null, parentId: id })
+				.returning();
+			s.objects.set(`${id}/${sub.id}/x`, new TextEncoder().encode("sub"));
+			await db.insert(schema.attachment).values({
+				conversationId: sub.id,
+				name: "c.txt",
+				size: 3,
+				key: `${id}/${sub.id}/x`,
+				sent: true,
+			});
+			expect(await conversations.delete(userId, id)).toBe(true);
+			expect(stored()).toEqual(["other"]);
+		});
+
+		it("deletes, on retry, the files the withdrawn reply attached, and keeps the User's for the retry", async () => {
+			const id = await newConversation();
+			await upload(id, "mine.txt", stream("mine"));
+			// the reply attaches a file, as the `attach` Tool does, then fails
+			handler = async (run) => {
+				const { name, size } = await run.attach("out.txt", stream("out"));
+				const asked = fauxAssistantMessage([
+					fauxToolCall("attach", { path: "out.txt" }),
+				]);
+				await run.save(asked);
+				await run.save({
+					role: "toolResult",
+					toolCallId: (asked.content[0] as ToolCall).id,
+					toolName: "attach",
+					content: [{ type: "text", text: "Attached." }],
+					details: { attachment: { path: "/workspace/out.txt", name, size } },
+					isError: false,
+					timestamp: Date.now(),
+				});
+				throw new Error("boom");
+			};
+			await sendWith(id, ["mine.txt"]);
+			expect(stored()).toEqual(["mine", "out"]);
+			let retried: unknown[] | undefined;
+			handler = async (run) => {
+				retried = run.transcript.messages.map((m) => m.message);
+			};
+			expect(await conversations.retry(userId, id)).toBe(true);
+			expect(stored()).toEqual(["mine"]);
+			for (let i = 0; !retried && i < 100; i++)
+				await new Promise((r) => setTimeout(r, 50));
+			expect(retried).toEqual([
+				expect.objectContaining({
+					role: "user",
+					attachments: [expect.objectContaining({ name: "mine.txt" })],
+				}),
+			]);
+			const got = await conversations.openFile(userId, id, "mine.txt");
+			if (!("file" in got)) throw new Error(got.error);
+			expect(await new Response(got.file.body).text()).toBe("mine");
+		});
+
+		it("sweeps uploads not sent with a message within a day, and nothing sent", async () => {
+			const id = await newConversation();
+			await upload(id, "sent.txt", stream("sent"));
+			await upload(id, "unsent.txt", stream("unsent"));
+			await sendWith(id, ["sent.txt"]);
+			await conversations.sweepUploads();
+			expect(stored()).toEqual(["sent", "unsent"]);
+			await conversations.sweepUploads(new Date(Date.now() + 25 * 3600_000));
+			expect(stored()).toEqual(["sent"]);
+			await expect(
+				conversations.send(userId, {
+					conversationId: id,
+					text: "x",
+					attachments: ["unsent.txt"],
+				}),
+			).rejects.toThrow("Not an attachment");
+		});
+
+		it("deletes the Conversation when its Attachments cannot be deleted, and logs them", async () => {
+			const id = await newConversation();
+			await upload(id, "a.txt");
+			const { deletePrefix } = s.store;
+			s.store.deletePrefix = async () => {
+				throw new Error("storage down");
+			};
+			const log = vi.spyOn(console, "error").mockImplementation(() => {});
+			try {
+				expect(await conversations.delete(userId, id)).toBe(true);
+				expect(await conversations.get(userId, id)).toBeUndefined();
+				expect(log).toHaveBeenCalled();
+			} finally {
+				s.store.deletePrefix = deletePrefix;
+				log.mockRestore();
+			}
+		});
+
 		it("tells an Agent without a Sandbox that Parse reads the attachments", async () => {
 			await withoutSandbox(async () => {
 				const id = await newConversation("plain");
@@ -240,7 +354,7 @@ describe.skipIf(!url)(
 			const id = await newConversation("plain");
 			await upload(id, "a.pdf", stream("pdf bytes"));
 			let found: Promise<unknown[]> | undefined;
-			onRun = async (run) => {
+			handler = async (run) => {
 				found ??= Promise.all([
 					run.attachment("a.pdf").then(async (a) => {
 						const object = a && (await s.store.get(a.key));

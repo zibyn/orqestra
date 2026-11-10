@@ -2606,10 +2606,16 @@ describe.skipIf(!url)(
 			expect(row.sandboxId).toBe("sb1");
 		});
 
-		describe("downloading a file from a Conversation's Sandbox", () => {
+		describe("downloading an Attachment", () => {
 			const setup = async () => {
 				const o = memoryOrrery();
-				const files = sandboxed(o);
+				const { store, objects } = memoryStore();
+				const files = createConversations({
+					store,
+					config: async () => ({ ...config, sandboxProvider: provider }),
+					skillFiles: async () => [],
+					orrery: () => o.client,
+				});
 				const [conv] = await db
 					.insert(schema.conversation)
 					.values({ userId, agentId: "faux" })
@@ -2618,105 +2624,44 @@ describe.skipIf(!url)(
 					.insert(schema.conversation)
 					.values({ userId, agentId: null, parentId: conv.id })
 					.returning();
-				// what the Agent's attach Tool saves
-				const attach = (conversationId: string, path: string) =>
-					db.insert(schema.message).values({
-						conversationId,
-						model: "faux/faux",
-						thinkingLevel: "off",
-						message: {
-							role: "toolResult",
-							toolCallId: "t1",
-							toolName: "attach",
-							content: [{ type: "text", text: "Attached" }],
-							details: {
-								attachment: { path, name: path.split("/").at(-1), size: 1 },
-							},
-							isError: false,
-							timestamp: 0,
-						},
-					});
-				// a Sandbox for each, holding a report the Agent attached and a file it did not, which Idle Stop has stopped
+				// an Attachment in each, named after its Conversation, as `attach` keeps one
 				for (const c of [conv, sub]) {
-					const { id } = await o.client.createSandbox(provider);
-					await o.client.getSandbox(id, { waitFor: "ready" });
-					o.files(id).set("out/report.pdf", new TextEncoder().encode(c.id));
-					o.stop(id);
-					await db
-						.update(schema.conversation)
-						.set({ sandboxId: id })
-						.where(sql`${schema.conversation.id} = ${c.id}`);
-					o.files(id).set("out/secret.txt", new TextEncoder().encode("s"));
-					await attach(c.id, "/workspace/out/report.pdf");
+					objects.set(c.id, new TextEncoder().encode(c.id));
+					await db.insert(schema.attachment).values({
+						conversationId: c.id,
+						name: `${c.id}.pdf`,
+						size: c.id.length,
+						key: c.id,
+						sent: true,
+					});
 				}
-				return { o, files, conv, sub, attach };
+				return { o, files, conv, sub };
 			};
-			const signal = new AbortController().signal;
 
-			it("streams it to the Conversation's owner, a Subagent's too, starting its stopped Sandbox", async () => {
+			it("streams it to the Conversation's owner, a Subagent's too, from object storage without a Sandbox", async () => {
 				const { o, files, conv, sub } = await setup();
 				for (const c of [conv, sub]) {
-					const got = await files.openFile(
-						userId,
-						c.id,
-						"/workspace/out/report.pdf",
-						signal,
-					);
+					const got = await files.openFile(userId, c.id, `${c.id}.pdf`);
 					if (!("file" in got)) throw new Error(got.error);
-					expect(got.file.name).toBe("report.pdf");
+					expect(got.file.name).toBe(`${c.id}.pdf`);
 					expect(got.file.size).toBe(c.id.length);
 					expect(await new Response(got.file.body).text()).toBe(c.id);
 				}
-				expect(
-					o.calls.filter((c) => c.startsWith("startSandbox")),
-				).toHaveLength(2);
-				expect(o.calls.filter((c) => c.startsWith("readFile"))).toEqual([]);
+				expect(o.calls).toEqual([]);
 			});
 
-			it("refuses anyone but the owner, and paths outside /workspace, without reaching the Sandbox", async () => {
-				const { o, files, conv, sub } = await setup();
-				const before = o.calls.length;
+			it("refuses anyone but the owner, and names not attached in that Conversation", async () => {
+				const { files, conv, sub } = await setup();
 				for (const c of [conv, sub])
-					expect(
-						await files.openFile("u2", c.id, "out/report.pdf", signal),
-					).toEqual({ error: "not_found" });
-				expect(
-					await files.openFile(userId, conv.id, "../etc/passwd", signal),
-				).toEqual({ error: "no_file" });
-				// only what the Agent attached in that Conversation, though the Sandbox holds more
-				expect(
-					await files.openFile(
-						userId,
-						conv.id,
-						"/workspace/out/secret.txt",
-						signal,
-					),
-				).toEqual({ error: "no_file" });
-				expect(o.calls.length).toBe(before);
-			});
-
-			it("says why when the file, the Sandbox or orrery is not there", async () => {
-				const { o, files, conv, sub, attach } = await setup();
-				await attach(conv.id, "/workspace/out/missing.pdf");
-				expect(
-					await files.openFile(userId, conv.id, "out/missing.pdf", signal),
-				).toEqual({ error: "no_file" });
-				const [row] = await db
-					.select({ sandboxId: schema.conversation.sandboxId })
-					.from(schema.conversation)
-					.where(sql`${schema.conversation.id} = ${sub.id}`);
-				await o.client.deleteSandbox(row.sandboxId as string);
-				expect(
-					await files.openFile(userId, sub.id, "out/report.pdf", signal),
-				).toEqual({ error: "gone" });
-				// a gone Sandbox is not replaced by a download
-				expect(
-					o.calls.filter((c) => c.startsWith("createSandbox")),
-				).toHaveLength(2);
-				o.down = true;
-				expect(
-					await files.openFile(userId, conv.id, "out/report.pdf", signal),
-				).toEqual({ error: "unavailable" });
+					expect(await files.openFile("u2", c.id, `${c.id}.pdf`)).toEqual({
+						error: "not_found",
+					});
+				expect(await files.openFile(userId, conv.id, `${sub.id}.pdf`)).toEqual({
+					error: "no_file",
+				});
+				expect(await files.openFile(userId, conv.id, "../etc/passwd")).toEqual({
+					error: "no_file",
+				});
 			});
 		});
 

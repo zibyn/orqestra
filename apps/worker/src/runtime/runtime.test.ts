@@ -879,12 +879,14 @@ describe("runAgent with Skills", () => {
 		]);
 		// bash as it answers in a Sandbox holding out/report.pdf (12 bytes) and the folder out
 		const o = memoryOrrery({
-			exec: (command) =>
-				command.includes("realpath")
+			exec: (command, files) => {
+				files.set("out/report.pdf", new TextEncoder().encode("twelve bytes"));
+				return command.includes("realpath")
 					? command.includes("'/workspace/out/report.pdf'")
 						? { stdout: "12\n/workspace/out/report.pdf" }
 						: { exit_code: 1 }
-					: {},
+					: {};
+			},
 		});
 		const { m, deps } = setup(o);
 		await runAgent(m.run, deps);
@@ -899,6 +901,9 @@ describe("runAgent with Skills", () => {
 			},
 		});
 		expect(resultText(file)).toContain("report.pdf");
+		expect(new TextDecoder().decode(m.attached.get("report.pdf"))).toBe(
+			"twelve bytes",
+		);
 		for (const refused of [folder, outside, escaping]) {
 			expect(refused.isError).toBe(true);
 			expect(resultText(refused)).toContain("/workspace");

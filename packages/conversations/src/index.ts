@@ -23,12 +23,7 @@ import {
 	subagent,
 	timer,
 } from "@orqestra/db/schema";
-import {
-	type ObjectStore,
-	OrreryError,
-	orrery as orreryClient,
-	workspacePath,
-} from "@orqestra/tools";
+import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import { alerts } from "./alerts.ts";
@@ -46,14 +41,16 @@ import {
 	saved,
 	stopSubagents,
 } from "./runs.ts";
-import { ensureSandbox, SandboxGone, wakeSandbox } from "./sandbox.ts";
+import { ensureSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 import { tasksOf } from "./tasks.ts";
 import { cancelTimer } from "./timers.ts";
 import {
 	copyUploads,
+	deleteObjects,
 	safeFileName,
 	storeUpload,
+	sweepUploads,
 	uploadPath,
 } from "./uploads.ts";
 
@@ -202,7 +199,10 @@ export function createConversations({
 	return {
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
-			serveRuns(config, handler, options),
+			serveRuns(config, store, handler, options),
+
+		/** Deletes the uploads not sent with a message for a day before `now`; the worker does this every hour. */
+		sweepUploads: (now?: Date) => sweepUploads(store, now),
 
 		/** The User's Scheduled Tasks; their Firings run in `serveRuns`. */
 		tasks: tasksOf(config),
@@ -392,7 +392,8 @@ export function createConversations({
 					"file",
 					"agent_offline",
 				);
-			return storeUpload(store, conv, name, body, { signal });
+			const stored = await storeUpload(store, conv, name, body, { signal });
+			return { name: stored.name };
 		},
 
 		/** Puts a user message in the inbox (starting a Conversation when there is no id) and has the Agent reply. */
@@ -564,25 +565,38 @@ export function createConversations({
 						"id",
 						"nothing_to_retry",
 					);
+				// the files it attached go with it; the User's message, with its uploads, stays
+				const attached = await tx.execute<{ key: string }>(
+					sql`delete from ${attachment} where ${attachment.conversationId} = ${id} and ${attachment.messageId} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user') returning ${attachment.key}`,
+				);
 				// drop the failed reply, if one was saved, with the Subagents it started
 				await tx.execute(
 					sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
 				);
 				// with the Subagents those started in turn
-				return (
-					await tx.execute<{ id: string; sandboxId: string | null }>(
-						sql`with recursive dropped as (
+				const subagents = await tx.execute<{
+					id: string;
+					sandboxId: string | null;
+				}>(
+					sql`with recursive dropped as (
 							select id from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id})
 							union all
 							select c.id from conversation c join dropped on c.parent_id = dropped.id
 						)
 						delete from ${conversation} where ${conversation.id} in (select id from dropped) returning id, sandbox_id as "sandboxId"`,
-					)
-				).rows;
+				);
+				return {
+					subagents: subagents.rows,
+					keys: attached.rows.map((a) => a.key),
+				};
 			});
 			// their Runs stop; with their Conversation gone they save nothing more
-			await requestStop(dropped.map((d) => d.id));
-			await deleteSandboxes(dropped.map((d) => d.sandboxId));
+			await requestStop(dropped.subagents.map((d) => d.id));
+			await deleteSandboxes(dropped.subagents.map((d) => d.sandboxId));
+			await deleteObjects(store, [
+				...dropped.keys,
+				...dropped.subagents.map((d) => `${conv.rootId}/${d.id}/`),
+			]);
 			await enqueue(id);
 			return true;
 		},
@@ -669,70 +683,39 @@ export function createConversations({
 				.where(eq(conversation.rootId, id))
 				.returning({ sandboxId: conversation.sandboxId });
 			await deleteSandboxes(deleted.map((d) => d.sandboxId));
+			// its Attachments, its Subagents' too, are kept under its id
+			if (deleted.length) await deleteObjects(store, [`${id}/`]);
 			return true;
 		},
 
 		/**
-		 * A file the Agent attached in the user's Conversation, a Subagent's included, streamed from its Sandbox by orrery as it arrives.
-		 * Starts the Sandbox if Idle Stop stopped it, but never creates one. `path` is absolute or relative to /workspace.
+		 * An Attachment of the user's Conversation, a Subagent's included, by name, streamed from object storage:
+		 * a User's upload, or a file the Agent attached as it was then, whatever its Sandbox holds now.
 		 */
 		async openFile(
 			userId: string,
 			id: string,
-			path: string,
-			signal: AbortSignal,
+			name: string,
 		): Promise<
 			| {
 					file: {
 						name: string;
-						size?: number;
+						size: number;
 						body: ReadableStream<Uint8Array>;
 					};
 			  }
-			| { error: "not_found" | "no_file" | "gone" | "unavailable" }
+			| { error: "not_found" | "no_file" }
 		> {
 			// a Subagent's Conversation carries its parent's userId
 			if (!(await owned(userId, id))) return { error: "not_found" };
-			const relative = workspacePath(path);
-			if (!relative) return { error: "no_file" };
-			// only what the Agent attached here: the rest of the Sandbox is its working space
-			const attached = await db
-				.select({ id: message.id })
-				.from(message)
+			const [row] = await db
+				.select({ key: attachment.key })
+				.from(attachment)
 				.where(
-					and(
-						eq(message.conversationId, id),
-						sql`${message.message} @> ${JSON.stringify({
-							role: "toolResult",
-							toolName: "attach",
-							details: { attachment: { path: `/workspace/${relative}` } },
-						})}::jsonb`,
-					),
-				)
-				.limit(1);
-			if (!attached.length) return { error: "no_file" };
-			const provider = (await config()).sandboxProvider;
-			if (!provider) return { error: "unavailable" };
-			const client = orrery(provider);
-			try {
-				const { id: sandbox } = await wakeSandbox(id, client, provider, {
-					signal,
-				});
-				const file = await client.openFile(sandbox, relative, { signal });
-				return {
-					file: {
-						name: relative.slice(relative.lastIndexOf("/") + 1),
-						...file,
-					},
-				};
-			} catch (error) {
-				if (error instanceof SandboxGone) return { error: "gone" };
-				if (error instanceof OrreryError && error.code === "not_found")
-					return { error: "no_file" };
-				if (!signal.aborted)
-					console.error("A file could not be read from its Sandbox:", error);
-				return { error: "unavailable" };
-			}
+					and(eq(attachment.conversationId, id), eq(attachment.name, name)),
+				);
+			const object = row && (await store.get(row.key));
+			return object ? { file: { name, ...object } } : { error: "no_file" };
 		},
 
 		/**
