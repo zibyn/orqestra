@@ -13,6 +13,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppMemoryRouteImport } from './routes/_app/memory'
+import { Route as AppTasksPrototypeRouteImport } from './routes/_app/tasks-prototype'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
 import { Route as ConsoleMcpRouteImport } from './routes/console/mcp'
@@ -39,6 +40,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppMemoryRoute = AppMemoryRouteImport.update({
   id: '/memory',
   path: '/memory',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTasksPrototypeRoute = AppTasksPrototypeRouteImport.update({
+  id: '/tasks-prototype',
+  path: '/tasks-prototype',
   getParentRoute: () => AppRoute,
 } as any)
 const ConsoleIndexRoute = ConsoleIndexRouteImport.update({
@@ -86,6 +92,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleRouteWithChildren
   '/memory': typeof AppMemoryRoute
+  '/tasks-prototype': typeof AppTasksPrototypeRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -97,6 +104,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/memory': typeof AppMemoryRoute
+  '/tasks-prototype': typeof AppTasksPrototypeRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -112,6 +120,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/console': typeof ConsoleRouteWithChildren
   '/_app/memory': typeof AppMemoryRoute
+  '/_app/tasks-prototype': typeof AppTasksPrototypeRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -128,6 +137,7 @@ export interface FileRouteTypes {
     | '/'
     | '/console'
     | '/memory'
+    | '/tasks-prototype'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/memory'
+    | '/tasks-prototype'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
@@ -153,6 +164,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/console'
     | '/_app/memory'
+    | '/_app/tasks-prototype'
     | '/console/agents'
     | '/console/mcp'
     | '/console/providers'
@@ -197,6 +209,13 @@ declare module '@tanstack/react-router' {
       path: '/memory'
       fullPath: '/memory'
       preLoaderRoute: typeof AppMemoryRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/tasks-prototype': {
+      id: '/_app/tasks-prototype'
+      path: '/tasks-prototype'
+      fullPath: '/tasks-prototype'
+      preLoaderRoute: typeof AppTasksPrototypeRouteImport
       parentRoute: typeof AppRoute
     }
     '/console/': {
@@ -260,12 +279,14 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppMemoryRoute: typeof AppMemoryRoute
+  AppTasksPrototypeRoute: typeof AppTasksPrototypeRoute
   AppIndexRoute: typeof AppIndexRoute
   AppCConversationIdRoute: typeof AppCConversationIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppMemoryRoute: AppMemoryRoute,
+  AppTasksPrototypeRoute: AppTasksPrototypeRoute,
   AppIndexRoute: AppIndexRoute,
   AppCConversationIdRoute: AppCConversationIdRoute,
 }
