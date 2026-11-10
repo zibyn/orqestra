@@ -46,7 +46,7 @@ import { MessageResponse } from "#/components/ai-elements/message";
 import { Reasoning } from "#/components/ai-elements/reasoning";
 import { type Choice, Composer } from "#/components/Composer";
 import { FormSheet, useSheet } from "#/components/ConsolePage";
-import { summary, type TaskDraft, TaskForm, when } from "#/components/TaskForm";
+import { TaskForm } from "#/components/TaskForm";
 import {
 	Attachment,
 	AttachmentContent,
@@ -104,8 +104,9 @@ import {
 	TraceTitle,
 } from "#/components/ui/trace";
 import { api, ok } from "#/lib/api";
-import { nextFiring } from "#/lib/next-firing";
+import { nextFirings } from "#/lib/next-firing";
 import { groupSteps } from "#/lib/steps";
+import { summary, type TaskDraft, when } from "#/lib/tasks";
 import { uploadFiles } from "#/lib/uploads";
 import { cn } from "#/lib/utils";
 import { m } from "#/paraglide/messages";
@@ -454,26 +455,37 @@ function ConversationView() {
 
 type Results = Map<string, ToolResultMessage>;
 
+/** `busy` while `run`'s action is under way, so its button can't be pressed twice. */
+function useBusy() {
+	const [busy, setBusy] = useState(false);
+	const run = async (action: () => Promise<unknown>) => {
+		setBusy(true);
+		try {
+			await action();
+		} finally {
+			setBusy(false);
+		}
+	};
+	return [busy, run] as const;
+}
+
 /** Re-runs the last reply: a failed one, or one that asked a Question, which it withdraws. */
 function RetryButton({ conversationId }: { conversationId: string }) {
 	const router = useRouter();
-	const [retrying, setRetrying] = useState(false);
+	const [retrying, retry] = useBusy();
 	return (
 		<Button
 			variant="outline"
 			size="sm"
 			disabled={retrying}
-			onClick={async () => {
-				setRetrying(true);
-				try {
+			onClick={() =>
+				retry(async () => {
 					await ok(
 						api().api.conversations({ id: conversationId }).retry.post(),
 					);
 					await router.invalidate();
-				} finally {
-					setRetrying(false);
-				}
-			}}
+				})
+			}
 		>
 			{retrying ? (
 				<Loader2Icon className="animate-spin" data-icon="inline-start" />
@@ -514,12 +526,12 @@ function TaskDraftCard({
 	draft: Drafted;
 	onOpen: () => void;
 }) {
-	const next = nextFiring(
+	const [next] = nextFirings(
 		draft.schedule,
 		Intl.DateTimeFormat().resolvedOptions().timeZone,
 	);
 	return (
-		<div className="flex flex-col gap-2 rounded-md border p-3 text-sm">
+		<div className="flex flex-col gap-2 border-y py-3 text-sm">
 			<p className="flex items-center gap-2 font-medium">
 				<CalendarClockIcon className="size-4 shrink-0 text-muted-foreground" />
 				<span className="sr-only">{m.task_draft()}: </span>
@@ -556,7 +568,7 @@ function Question({
 	answer?: (text: string) => Promise<void>;
 	conversationId?: string;
 }) {
-	const [sending, setSending] = useState(false);
+	const [sending, sendAnswer] = useBusy();
 	return (
 		<div className="flex flex-col items-start gap-3">
 			<MessageResponse>{question}</MessageResponse>
@@ -568,14 +580,7 @@ function Question({
 							variant="outline"
 							size="sm"
 							disabled={sending}
-							onClick={async () => {
-								setSending(true);
-								try {
-									await answer(s);
-								} finally {
-									setSending(false);
-								}
-							}}
+							onClick={() => sendAnswer(() => answer(s))}
 						>
 							{s}
 						</Button>
@@ -971,9 +976,9 @@ function TimerBar({
 	ringsAt: Date;
 }) {
 	const router = useRouter();
-	const [cancelling, setCancelling] = useState(false);
+	const [cancelling, cancel] = useBusy();
 	// a time of day today, with the date beyond it
-	const time = ringsAt.toLocaleString(undefined, {
+	const time = ringsAt.toLocaleString(getLocale(), {
 		...(ringsAt.toDateString() === new Date().toDateString()
 			? {}
 			: { month: "short", day: "numeric" }),
@@ -981,7 +986,7 @@ function TimerBar({
 		minute: "2-digit",
 	});
 	return (
-		<div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm text-muted-foreground">
+		<div className="flex items-center gap-2 border-t pt-3 text-sm text-muted-foreground">
 			<AlarmClockIcon className="size-4 shrink-0" />
 			<span className="min-w-0 flex-1 break-words">
 				{m.timer_set({ time, note })}
@@ -990,17 +995,14 @@ function TimerBar({
 				variant="ghost"
 				size="sm"
 				disabled={cancelling}
-				onClick={async () => {
-					setCancelling(true);
-					try {
+				onClick={() =>
+					cancel(async () => {
 						await ok(
 							api().api.conversations({ id: conversationId }).timer.delete(),
 						);
 						await router.invalidate();
-					} finally {
-						setCancelling(false);
-					}
-				}}
+					})
+				}
 			>
 				{m.timer_cancel()}
 			</Button>

@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
-import { CronExpressionParser } from "cron-parser";
 import {
 	CheckCircle2Icon,
 	CircleHelpIcon,
@@ -9,10 +8,12 @@ import {
 	SkipForwardIcon,
 	XCircleIcon,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
+import { useState } from "react";
 import { type AgentOption, levelLabels } from "#/components/Composer";
-import { SheetForm } from "#/components/ConsolePage";
+import { Item, ItemList, SheetForm } from "#/components/ConsolePage";
 import { Picker } from "#/components/Picker";
+import { UnreadMark } from "#/components/UnreadMark";
 import { Button } from "#/components/ui/button";
 import {
 	Field,
@@ -24,55 +25,27 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Switch } from "#/components/ui/switch";
 import { Textarea } from "#/components/ui/textarea";
-import { api, ok } from "#/lib/api";
+import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
+import { ok } from "#/lib/api";
+import {
+	describeCron,
+	fromWallClock,
+	nextFirings,
+	wallClock,
+} from "#/lib/next-firing";
+import {
+	inUnits,
+	type Outcome,
+	type Schedule,
+	type Task,
+	type TaskDraft,
+	taskError,
+	tasksApi,
+	UNITS,
+	when,
+} from "#/lib/tasks";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
-
-export const tasksApi = () => api().api["scheduled-tasks"];
-export const getTasks = () => ok(tasksApi().get());
-
-export type Task = Awaited<ReturnType<typeof getTasks>>[number];
-export type Schedule = Task["schedule"];
-type Outcome = NonNullable<Task["last"]>["outcome"];
-export type State = Task["state"];
-/** What a new task starts from: an Agent's Task Draft, with the Turn that drafted it. */
-export type TaskDraft = Pick<
-	Task,
-	| "name"
-	| "prompt"
-	| "agentId"
-	| "model"
-	| "thinking"
-	| "schedule"
-	| "endsAt"
-	| "incognito"
->;
-
-export const when = (time: string | Date) =>
-	new Date(time).toLocaleString(getLocale(), {
-		dateStyle: "medium",
-		timeStyle: "short",
-	});
-
-const UNITS = [
-	{ value: "86400", label: () => m.task_days() },
-	{ value: "3600", label: () => m.task_hours() },
-	{ value: "60", label: () => m.task_minutes() },
-];
-/** `seconds` in the largest unit that divides it. */
-const inUnits = (seconds: number) => {
-	const unit = UNITS.find((u) => seconds % Number(u.value) === 0) ?? UNITS[2];
-	return { n: seconds / Number(unit.value), unit };
-};
-
-export function summary(schedule: Schedule) {
-	if (schedule.kind === "once")
-		return m.task_summary_once({ time: when(schedule.at) });
-	if (schedule.kind === "cron")
-		return m.task_summary_cron({ expr: schedule.expr });
-	const { n, unit } = inUnits(schedule.seconds);
-	return m.task_summary_every({ n, unit: unit.label() });
-}
 
 export const OUTCOMES: Record<
 	Outcome,
@@ -83,15 +56,15 @@ export const OUTCOMES: Record<
 		label: m.firing_running,
 	},
 	completed: {
-		icon: <CheckCircle2Icon className="size-4 text-emerald-600" />,
+		icon: <CheckCircle2Icon className="size-4 text-foreground" />,
 		label: m.firing_completed,
 	},
 	partial: {
-		icon: <PauseCircleIcon className="size-4 text-amber-600" />,
+		icon: <PauseCircleIcon className="size-4 text-muted-foreground" />,
 		label: m.firing_partial,
 	},
 	question: {
-		icon: <CircleHelpIcon className="size-4 text-sky-600" />,
+		icon: <CircleHelpIcon className="size-4 text-muted-foreground" />,
 		label: m.firing_question,
 	},
 	skipped: {
@@ -109,30 +82,6 @@ const REASONS: Record<string, () => string> = {
 	agent_unavailable: m.firing_agent_unavailable,
 	model_disabled: m.firing_model_disabled,
 };
-
-const ERRORS: Record<string, () => string> = {
-	agent_not_pickable: m.task_error_agent_not_pickable,
-	model_unavailable: m.task_error_model_unavailable,
-	thinking_unavailable: m.task_error_thinking_unavailable,
-	invalid: m.task_error_invalid,
-	in_past: m.task_error_in_past,
-	too_frequent: m.task_error_too_frequent,
-	too_many: m.task_error_too_many,
-};
-/** A refused save's first field error, in the User's language. */
-export function taskError(e: unknown) {
-	const errors = (
-		e as { value?: { errors?: Record<string, { code: string }> } }
-	)?.value?.errors;
-	const code = errors && Object.values(errors)[0]?.code;
-	return (code && ERRORS[code]?.()) || m.request_failed();
-}
-
-/** `YYYY-MM-DDTHH:mm` of a time, in the browser's time zone, for a datetime-local input. */
-const localInput = (time: Date) =>
-	new Date(time.getTime() - time.getTimezoneOffset() * 60_000)
-		.toISOString()
-		.slice(0, 16);
 
 /** Creates (from a draft, if given) or edits a task, its Firings listed below; the server checks it again. */
 export function TaskForm({
@@ -163,11 +112,14 @@ export function TaskForm({
 		picked && model?.thinking.allowed.includes(picked)
 			? picked
 			: model?.thinking.default;
+	// times are entered on the clocks of the task's time zone
+	const [timeZone, setTimeZone] = useState(task?.timeZone ?? browserZone);
 	const s = d?.schedule;
 	const [kind, setKind] = useState<Schedule["kind"]>(s?.kind ?? "cron");
 	const [at, setAt] = useState(
-		localInput(
+		wallClock(
 			s?.kind === "once" ? new Date(s.at) : new Date(Date.now() + 3600_000),
+			timeZone,
 		),
 	);
 	const every = inUnits(s?.kind === "every" ? s.seconds : 86400);
@@ -175,22 +127,18 @@ export function TaskForm({
 	const [unit, setUnit] = useState(every.unit.value);
 	const [expr, setExpr] = useState(s?.kind === "cron" ? s.expr : "0 9 * * 1-5");
 	const [ends, setEnds] = useState(
-		d?.endsAt ? localInput(new Date(d.endsAt)).slice(0, 10) : "",
+		d?.endsAt ? wallClock(new Date(d.endsAt), timeZone).slice(0, 10) : "",
 	);
-	const [timeZone, setTimeZone] = useState(task?.timeZone ?? browserZone);
 	const [incognito, setIncognito] = useState(d?.incognito ?? false);
 	const [alert, setAlert] = useState(task?.alertOnComplete ?? true);
 	const [enabled, setEnabled] = useState(!task || task.state === "active");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 
-	let upcoming: string | undefined;
-	try {
-		upcoming = CronExpressionParser.parse(expr, { tz: timeZone })
-			.take(3)
-			.map((d) => when(d.toDate()))
-			.join(", ");
-	} catch {}
+	const described = describeCron(expr, getLocale());
+	const upcoming = nextFirings({ kind: "cron", expr }, timeZone, 3)
+		.map((t) => when(t))
+		.join(", ");
 	const zones = [
 		...new Set([
 			timeZone,
@@ -210,14 +158,16 @@ export function TaskForm({
 			thinking,
 			schedule:
 				kind === "once"
-					? { kind, at: new Date(at).toISOString() }
+					? { kind, at: fromWallClock(at, timeZone).toISOString() }
 					: kind === "every"
 						? { kind, seconds: Number(n) * Number(unit) }
 						: { kind, expr },
-			// the end of that day, in the browser's time zone
+			// the end of that day, in the task's time zone
 			endsAt:
 				kind !== "once" && ends
-					? new Date(`${ends}T23:59:59`).toISOString()
+					? new Date(
+							fromWallClock(`${ends}T23:59`, timeZone).getTime() + 59_000,
+						).toISOString()
 					: null,
 			timeZone,
 			incognito,
@@ -325,23 +275,22 @@ export function TaskForm({
 				</div>
 				<Field>
 					<FieldLabel>{m.task_schedule()}</FieldLabel>
-					<div className="flex gap-1 rounded-lg border p-1">
+					<ToggleGroup
+						variant="outline"
+						spacing={0}
+						className="w-full"
+						value={[kind]}
+						// a pressed kind stays pressed: a schedule always has one
+						onValueChange={([k]) => k && setKind(k as Schedule["kind"])}
+					>
 						{(["once", "every", "cron"] as const).map((k) => (
-							<Button
-								key={k}
-								type="button"
-								size="sm"
-								variant={kind === k ? "secondary" : "ghost"}
-								className="flex-1"
-								aria-pressed={kind === k}
-								onClick={() => setKind(k)}
-							>
+							<ToggleGroupItem key={k} value={k} className="flex-1">
 								{{ once: m.task_once, every: m.task_every, cron: m.task_cron }[
 									k
 								]()}
-							</Button>
+							</ToggleGroupItem>
 						))}
-					</div>
+					</ToggleGroup>
 					{kind === "once" && (
 						<Input
 							type="datetime-local"
@@ -380,8 +329,8 @@ export function TaskForm({
 								onChange={(e) => setExpr(e.target.value)}
 							/>
 							<p className="text-xs text-muted-foreground">
-								{upcoming
-									? m.task_cron_next({ times: upcoming })
+								{described && upcoming
+									? `${described} · ${m.task_cron_next({ times: upcoming })}`
 									: m.task_error_invalid()}
 							</p>
 						</>
@@ -463,40 +412,41 @@ function History({ id }: { id: string }) {
 			{data && !data.firings.length && (
 				<p className="text-sm text-muted-foreground">{m.task_no_firings()}</p>
 			)}
-			<ul className="flex flex-col gap-2">
-				{data?.firings.map((f) => (
-					<li key={f.id} className="flex items-start gap-2 text-sm">
-						<span
-							className="flex items-center gap-2"
-							title={OUTCOMES[f.outcome].label()}
-						>
-							{OUTCOMES[f.outcome].icon}
-							<span className="sr-only">{OUTCOMES[f.outcome].label()}</span>
-						</span>
-						<span className="w-36 shrink-0 text-muted-foreground">
-							{when(f.firedAt)}
-						</span>
-						{f.conversationId ? (
-							<Link
-								to="/c/$conversationId"
-								params={{ conversationId: f.conversationId }}
-								className={
-									f.unread
-										? "font-semibold text-link underline"
-										: "text-link underline"
-								}
-							>
-								{f.title ?? m.untitled_conversation()}
-							</Link>
-						) : (
-							<span className="text-muted-foreground">
-								{(f.reason && REASONS[f.reason]?.()) ||
-									OUTCOMES[f.outcome].label()}
-							</span>
-						)}
-					</li>
-				))}
-			</ul>
+			{!!data?.firings.length && (
+				<ItemList>
+					{data.firings.map((f) => (
+						<Item
+							key={f.id}
+							title={
+								<>
+									<span title={OUTCOMES[f.outcome].label()}>
+										{OUTCOMES[f.outcome].icon}
+										<span className="sr-only">
+											{OUTCOMES[f.outcome].label()}
+										</span>
+									</span>
+									{f.conversationId ? (
+										<Link
+											to="/c/$conversationId"
+											params={{ conversationId: f.conversationId }}
+											className="text-link underline"
+										>
+											{f.title ?? m.untitled_conversation()}
+										</Link>
+									) : (
+										<span className="text-muted-foreground">
+											{(f.reason && REASONS[f.reason]?.()) ||
+												OUTCOMES[f.outcome].label()}
+										</span>
+									)}
+									<UnreadMark unread={!!f.unread} awaitingReply={false} />
+								</>
+							}
+							description={when(f.firedAt)}
+						/>
+					))}
+				</ItemList>
+			)}
 		</section>
 	);
 }

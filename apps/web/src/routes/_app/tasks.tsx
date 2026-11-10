@@ -12,22 +12,21 @@ import {
 	ItemList,
 	useSheet,
 } from "#/components/ConsolePage";
-import {
-	getTasks,
-	OUTCOMES,
-	type State,
-	summary,
-	type Task,
-	TaskForm,
-	taskError,
-	tasksApi,
-	when,
-} from "#/components/TaskForm";
+import { OUTCOMES, TaskForm } from "#/components/TaskForm";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { FieldError } from "#/components/ui/field";
 import { Switch } from "#/components/ui/switch";
 import { ok } from "#/lib/api";
+import {
+	getTasks,
+	type State,
+	summary,
+	type Task,
+	taskError,
+	tasksApi,
+	when,
+} from "#/lib/tasks";
 import { m } from "#/paraglide/messages";
 
 export const Route = createFileRoute("/_app/tasks")({
