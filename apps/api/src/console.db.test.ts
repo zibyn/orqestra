@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { catalogProviders } from "@orqestra/config";
 import { config } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
@@ -61,10 +62,98 @@ describe.skipIf(!url)("the console through the api", () => {
 			enabled: true,
 		});
 		expect((await call("GET", "/providers")).body.configured).toEqual([
-			{ id, baseUrl: null, keyReadable: true, enabledModels: [models[0].id] },
+			{
+				id,
+				baseUrl: null,
+				keyReadable: true,
+				enabledModels: [
+					{
+						id: models[0].id,
+						cost: (await catalogProviders())[0].models[0].cost,
+						source: "catalog",
+					},
+				],
+			},
 		]);
 		await call("DELETE", `/providers/${id}`);
 		expect((await call("GET", "/providers")).body.configured).toEqual([]);
+	});
+
+	describe("a Model's price", () => {
+		const cost = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
+		let id: string;
+		let modelId: string;
+		let catalogCost: unknown;
+		beforeEach(async () => {
+			const [first] = await catalogProviders();
+			({ id } = first);
+			({ id: modelId, cost: catalogCost } = first.models[0]);
+			await call("POST", "/providers", {
+				id,
+				apiKey: "k",
+				baseUrl: first.baseUrl,
+			});
+		});
+		const enable = (enabled: boolean) =>
+			call("PUT", "/providers/models", { providerId: id, modelId, enabled });
+		const price = (cost: unknown) =>
+			call("PUT", "/providers/models/price", { providerId: id, modelId, cost });
+		const enabledModels = async () =>
+			(await call("GET", "/providers")).body.configured[0]?.enabledModels;
+
+		it("is refused for a Model that is not enabled", async () => {
+			expect(await price(cost)).toEqual({
+				status: 422,
+				body: { errors: { modelId: { code: "model_not_enabled" } } },
+			});
+			await enable(true);
+			expect(await enabledModels()).toEqual([
+				{ id: modelId, cost: catalogCost, source: "catalog" },
+			]);
+		});
+
+		it("replaces the Catalog's as a whole, and clearing it goes back to the Catalog's", async () => {
+			await enable(true);
+			expect((await price(cost)).status).toBe(200);
+			expect(await enabledModels()).toEqual([
+				{ id: modelId, cost, source: "custom" },
+			]);
+			expect((await price(null)).status).toBe(200);
+			expect(await enabledModels()).toEqual([
+				{ id: modelId, cost: catalogCost, source: "catalog" },
+			]);
+		});
+
+		it("is refused when negative", async () => {
+			await enable(true);
+			expect((await price({ ...cost, output: -1 })).status).toBe(422);
+		});
+
+		it("is kept while the Model is disabled, and in force again once it is re-enabled", async () => {
+			await enable(true);
+			await price(cost);
+			await enable(false);
+			expect(await enabledModels()).toEqual([]);
+			await enable(true);
+			expect(await enabledModels()).toEqual([
+				{ id: modelId, cost, source: "custom" },
+			]);
+		});
+
+		it("goes with its Provider", async () => {
+			await enable(true);
+			await price(cost);
+			await call("DELETE", `/providers/${id}`);
+			await call("POST", "/providers", {
+				id,
+				apiKey: "k",
+				baseUrl: "https://x.test",
+			});
+			await enable(true);
+			expect(await enabledModels()).toEqual([
+				{ id: modelId, cost: catalogCost, source: "catalog" },
+			]);
+		});
 	});
 
 	it("is 422 with a save's field errors", async () => {

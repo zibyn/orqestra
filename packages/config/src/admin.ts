@@ -5,6 +5,7 @@ import {
 	enabledModel,
 	limits,
 	mcpServer,
+	modelPrice,
 	provider,
 	sandboxProvider,
 	searchProvider,
@@ -76,6 +77,20 @@ export const modelEnabledInput = z.object({
 	providerId: z.string(),
 	modelId: z.string(),
 	enabled: z.boolean(),
+});
+const price = z.number().nonnegative();
+export const modelPriceInput = z.object({
+	providerId: z.string(),
+	modelId: z.string(),
+	// dollars per million tokens; null goes back to the Catalog's
+	cost: z
+		.object({
+			input: price,
+			output: price,
+			cacheRead: price,
+			cacheWrite: price,
+		})
+		.nullable(),
 });
 export const searchProviderInput = z.object({
 	id: searchProviderId,
@@ -217,10 +232,11 @@ export async function servedBy() {
 const providers = ({ write }: Deps) => ({
 	/** The Catalog, and the Providers configured from it with their enabled Models. */
 	async list() {
-		const [catalog, rows, enabled] = await Promise.all([
+		const [catalog, rows, enabled, prices] = await Promise.all([
 			catalogProviders(),
 			db.select().from(provider).orderBy(provider.createdAt),
 			db.select().from(enabledModel),
+			db.select().from(modelPrice),
 		]);
 		return {
 			catalog: catalog.map((p) => ({
@@ -233,9 +249,22 @@ const providers = ({ write }: Deps) => ({
 				id: r.id,
 				baseUrl: r.baseUrl,
 				keyReadable: secretReadable(r.apiKey),
+				// each with the price in force: the Admin's, else the Catalog's (none when the Catalog dropped the Model)
 				enabledModels: enabled
 					.filter((e) => e.providerId === r.id)
-					.map((e) => e.modelId),
+					.map((e) => {
+						const custom = prices.find(
+							(p) => p.providerId === r.id && p.modelId === e.modelId,
+						);
+						if (custom) {
+							const { providerId, modelId, ...cost } = custom;
+							return { id: e.modelId, cost, source: "custom" as const };
+						}
+						const cost = catalog
+							.find((p) => p.id === r.id)
+							?.models.find((m) => m.id === e.modelId)?.cost;
+						return { id: e.modelId, cost, source: "catalog" as const };
+					}),
 			})),
 		};
 	},
@@ -287,6 +316,39 @@ const providers = ({ write }: Deps) => ({
 							),
 						),
 		);
+	},
+
+	/** Sets an enabled Model's price, or clears it with a null `cost`; Runs that start afterwards are costed at it. */
+	async setModelPrice({
+		providerId,
+		modelId,
+		cost,
+	}: z.infer<typeof modelPriceInput>): Promise<{ errors: SaveErrors }> {
+		const key = and(
+			eq(enabledModel.providerId, providerId),
+			eq(enabledModel.modelId, modelId),
+		);
+		const [enabled] = await db.select().from(enabledModel).where(key);
+		if (!enabled) return { errors: { modelId: { code: "model_not_enabled" } } };
+		await write((tx) =>
+			cost
+				? tx
+						.insert(modelPrice)
+						.values({ providerId, modelId, ...cost })
+						.onConflictDoUpdate({
+							target: [modelPrice.providerId, modelPrice.modelId],
+							set: cost,
+						})
+				: tx
+						.delete(modelPrice)
+						.where(
+							and(
+								eq(modelPrice.providerId, providerId),
+								eq(modelPrice.modelId, modelId),
+							),
+						),
+		);
+		return { errors: {} };
 	},
 });
 

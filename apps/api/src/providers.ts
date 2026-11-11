@@ -1,6 +1,7 @@
 import {
 	config,
 	modelEnabledInput,
+	modelPriceInput,
 	providerInput,
 	providerTestInput,
 } from "@orqestra/config/live";
@@ -34,4 +35,10 @@ export const providers = (signedIn: SignedIn) =>
 				await config.providers.setModelEnabled(body);
 			},
 			{ body: modelEnabledInput },
+		)
+		// Only for an enabled Model; a null cost goes back to the Catalog's price
+		.put(
+			"/models/price",
+			async ({ body }) => saved(await config.providers.setModelPrice(body)),
+			{ body: modelPriceInput },
 		);

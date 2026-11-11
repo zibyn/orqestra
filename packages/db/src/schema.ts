@@ -398,6 +398,29 @@ export const enabledModel = pgTable(
 	(table) => [primaryKey({ columns: [table.providerId, table.modelId] })],
 );
 
+// An Admin's price for a Model, replacing the Catalog's as a whole; not tied to enabled_model, so disabling the Model keeps it
+export const modelPrice = pgTable(
+	"model_price",
+	{
+		providerId: text("provider_id")
+			.notNull()
+			.references(() => provider.id, { onDelete: "cascade" }),
+		modelId: text("model_id").notNull(),
+		// US dollars per million tokens, as the Catalog's
+		input: doublePrecision("input").notNull(),
+		output: doublePrecision("output").notNull(),
+		cacheRead: doublePrecision("cache_read").notNull(),
+		cacheWrite: doublePrecision("cache_write").notNull(),
+	},
+	(table) => [
+		primaryKey({ columns: [table.providerId, table.modelId] }),
+		check(
+			"model_price_non_negative",
+			sql`${table.input} >= 0 and ${table.output} >= 0 and ${table.cacheRead} >= 0 and ${table.cacheWrite} >= 0`,
+		),
+	],
+);
+
 // Search Providers an Admin configured; at most one row per supported Search Provider
 export const searchProvider = pgTable("search_provider", {
 	// one of the supported ids (tavily, firecrawl, deepseek)
