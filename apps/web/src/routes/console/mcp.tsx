@@ -59,7 +59,13 @@ const saveMcpServer = (
 ) => saved(api().api["mcp-servers"].post(server));
 
 export const Route = createFileRoute("/console/mcp")({
-	loader: getMcpServers,
+	loader: async () => {
+		const [servers, callback] = await Promise.all([
+			getMcpServers(),
+			ok(api().api["mcp-servers"]["callback-url"].get()),
+		]);
+		return { servers, callbackUrl: callback.url };
+	},
 	component: McpServers,
 });
 
@@ -68,12 +74,9 @@ type McpTestResult = NonNullable<
 	Awaited<ReturnType<typeof saveMcpServer>>["test"]
 >;
 
-// shortcut: assumes the console is opened at ORQESTRA_URL (Caddy serves /api there); upgrade by having the api send it if they can differ
-const callbackUrl = `${globalThis.location?.origin}/api/connections/callback`;
-
 /** MCP Servers with their write-only header values. */
 function McpServers() {
-	const servers = Route.useLoaderData();
+	const { servers } = Route.useLoaderData();
 	const router = useRouter();
 	const sheet = useSheet<McpServer | undefined>();
 	const [busy, setBusy] = useState<string>();
@@ -211,6 +214,7 @@ function McpServerForm({
 	existing?: McpServer;
 	onSaved: (id: string, test?: McpTestResult) => void;
 }) {
+	const { callbackUrl } = Route.useLoaderData();
 	const router = useRouter();
 	const [name, setName] = useState(existing?.name ?? "");
 	const [id, setId] = useState(existing?.id ?? "");

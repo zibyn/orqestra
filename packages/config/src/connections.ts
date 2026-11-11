@@ -11,8 +11,9 @@ import {
 import {
 	type ConnectionStore,
 	type ConnectionTokens,
-	type Fetch,
+	connectionStatus,
 	type McpServer,
+	type OrqestraReach,
 	PENDING_TTL_MS,
 	type PendingAuthorization,
 	revokeConnection,
@@ -187,11 +188,10 @@ export async function userConnections(userId: string, current: OrqestraConfig) {
 		agents: current.agents
 			.filter((a) => a.pickable && a.tools.includes(mcpToolRef(server.id)))
 			.map((a) => a.name),
-		// tokens that no longer decrypt (another key) cannot be used
 		status:
-			tokens && decryptSecret(tokens) === undefined
-				? ("needs_reconnect" as const)
-				: (status ?? ("none" as const)),
+			tokens && status
+				? connectionStatus({ status, tokens: decryptSecret(tokens) })
+				: ("none" as const),
 		connectedAt,
 	}));
 }
@@ -224,7 +224,7 @@ export async function connectedUsers() {
 			// shortcut: a User with no local record yet shows by their `sub`; every signed-in User gets one (ADR 0008)
 			name: name ?? userId,
 			connectedAt,
-			status: decryptSecret(tokens) === undefined ? "needs_reconnect" : status,
+			status: connectionStatus({ status, tokens: decryptSecret(tokens) }),
 		});
 	}
 	return byServer;
@@ -256,15 +256,7 @@ export async function deleteConnection(
 ) {
 	const [registered, rows] = await Promise.all([
 		connectionStore.registeredClient(serverId),
-		db
-			.delete(mcpConnection)
-			.where(
-				and(
-					eq(mcpConnection.userId, userId),
-					eq(mcpConnection.mcpServerId, serverId),
-				),
-			)
-			.returning(),
+		db.delete(mcpConnection).where(theirs(userId, serverId)).returning(),
 	]);
 	return rows.length ? deleted(rows, { oauthClient, registered }) : undefined;
 }
@@ -298,15 +290,11 @@ export async function clearConnections(
 /** Revokes deleted Connections as far as their authorization servers let it; failures are only logged. */
 export async function revokeConnections(
 	connections: DeletedConnection[],
-	{ orqestraUrl, fetch }: { orqestraUrl?: string; fetch?: Fetch } = {},
+	{ fetch }: Pick<OrqestraReach, "fetch"> = {},
 ) {
 	await Promise.all(
 		connections.map(({ tokens, issuer, ...client }) =>
-			revokeConnection(
-				{ tokens, issuer },
-				{ ...client, orqestraUrl },
-				fetch,
-			).catch((error) =>
+			revokeConnection({ tokens, issuer }, client, fetch).catch((error) =>
 				console.error(`Revoking a Connection at ${issuer} failed`, error),
 			),
 		),

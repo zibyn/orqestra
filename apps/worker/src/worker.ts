@@ -116,6 +116,7 @@ export function startAgentWorker(
 		config: getConfig,
 		skillFiles,
 		store,
+		connections,
 	}).serveRuns(
 		(run, config) =>
 			runAgent(run, {

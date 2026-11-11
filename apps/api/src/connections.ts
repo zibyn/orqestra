@@ -8,8 +8,9 @@ import {
 } from "@orqestra/config/live";
 import {
 	clientMetadataDocument,
-	type Fetch,
+	connectionStatus,
 	finishConnection,
+	type OrqestraReach,
 	startConnection,
 } from "@orqestra/tools";
 import { Elysia } from "elysia";
@@ -25,7 +26,7 @@ const refused = (code: string) => ({ errors: { serverId: { code } } });
  */
 export const connectionRoutes = (
 	signedIn: SignedIn,
-	{ orqestraUrl, fetch }: { orqestraUrl: string; fetch?: Fetch },
+	{ orqestraUrl, fetch }: OrqestraReach & { orqestraUrl: string },
 ) =>
 	new Elysia({ prefix: "/connections" })
 		.get("/client-metadata.json", () => clientMetadataDocument(orqestraUrl))
@@ -64,8 +65,7 @@ export const connectionRoutes = (
 					return status(409, refused("server_disabled"));
 				// one per User and server: switching accounts is disconnecting first
 				const connection = await connectionStore.connection(user.id, serverId);
-				// tokens that no longer decrypt need reconnecting
-				if (connection?.status === "connected" && connection.tokens)
+				if (connection && connectionStatus(connection) === "connected")
 					return status(409, refused("connection_exists"));
 				const started = await startConnection({
 					userId: user.id,
@@ -95,7 +95,7 @@ export const connectionRoutes = (
 					server?.oauthClient,
 				);
 				if (!deleted) return status(404, refused("not_found"));
-				await revokeConnections(deleted, { orqestraUrl, fetch });
+				await revokeConnections(deleted, { fetch });
 			},
 			{ params: z.object({ serverId: mcpServerId }) },
 		);

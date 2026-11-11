@@ -25,6 +25,7 @@ import {
 	timer,
 } from "@orqestra/db/schema";
 import {
+	type ConnectionStore,
 	type Fetch,
 	type ObjectStore,
 	orrery as orreryClient,
@@ -168,6 +169,7 @@ export function createConversations({
 	orrery = orreryClient,
 	store,
 	fetch,
+	connections,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
@@ -179,7 +181,10 @@ export function createConversations({
 	store: ObjectStore;
 	/** What MCP requests go through, such as cancelling a Background Call; tests pass a fake server's. */
 	fetch?: Fetch;
+	/** The Users' Connections, which Background Calls of per-User OAuth MCP Servers are cancelled with. */
+	connections?: ConnectionStore;
 }) {
+	const mcp = { fetch, connections };
 	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
 	async function expandSkill(
 		cfg: OrqestraConfig,
@@ -693,7 +698,7 @@ export function createConversations({
 			});
 			// their Runs stop; with their Conversation gone they save nothing more
 			await requestStop(dropped.subagents.map((d) => d.id));
-			await askToCancel(config, dropped.calls, fetch);
+			await askToCancel(config, dropped.calls, mcp);
 			await deleteSandboxes(dropped.subagents.map((d) => d.sandboxId));
 			await deleteObjects(store, [
 				...dropped.keys,
@@ -712,7 +717,7 @@ export function createConversations({
 			const conv = await owned(userId, id);
 			if (!conv) return false;
 			await cancelTimer(id);
-			await cancelStoppedCalls(config, id, fetch);
+			await cancelStoppedCalls(config, id, mcp);
 			const job =
 				conv.status === "running" && conv.jobId
 					? await runQueue(AGENT_RUNS_QUEUE).getJob(conv.jobId)
@@ -742,13 +747,13 @@ export function createConversations({
 			}
 			// before its Subagents' ends, so none decides it as though the User had stopped only them
 			await stopFiring(id);
-			await stopSubagents(id, cancelStopped(config, fetch));
+			await stopSubagents(id, cancelStopped(config, mcp));
 			return true;
 		},
 
 		/** Before an Admin deletes an MCP Server: its Background Calls are cancelled and end failed. */
 		deletingMcpServer: (mcpServerId: string) =>
-			endBackgroundCallsOf(config, mcpServerId, fetch),
+			endBackgroundCallsOf(config, mcpServerId, mcp),
 
 		/** Cancels the Conversation's Timer at the User's request. False when the Conversation is not the user's. */
 		async cancelTimer(userId: string, id: string) {
@@ -763,7 +768,7 @@ export function createConversations({
 		 */
 		async cancelBackgroundCall(userId: string, id: string, toolCallId: string) {
 			if (!(await owned(userId, id))) return false;
-			return cancelBackgroundCall(config, id, toolCallId, fetch);
+			return cancelBackgroundCall(config, id, toolCallId, mcp);
 		},
 
 		/** The User opened the Conversation: it is no longer Unread. False when it is not the user's. */
@@ -808,7 +813,7 @@ export function createConversations({
 				.delete(conversation)
 				.where(eq(conversation.rootId, id))
 				.returning({ sandboxId: conversation.sandboxId });
-			await askToCancel(config, calls, fetch);
+			await askToCancel(config, calls, mcp);
 			await deleteSandboxes(deleted.map((d) => d.sandboxId));
 			// its Attachments, its Subagents' too, are kept under its id
 			if (deleted.length) await deleteObjects(store, [`${id}/`]);
@@ -924,7 +929,7 @@ export function createConversations({
 		async stopSubagent(userId: string, id: string) {
 			const row = await ownedSubagent(userId, id);
 			if (!row) return false;
-			await stopSubagents(row.parentId, cancelStopped(config, fetch), [
+			await stopSubagents(row.parentId, cancelStopped(config, mcp), [
 				row.number,
 			]);
 			return true;

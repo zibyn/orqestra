@@ -1,5 +1,5 @@
 import type { Conversations } from "@orqestra/conversations";
-import type { Fetch } from "@orqestra/tools";
+import type { OrqestraReach } from "@orqestra/tools";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { signedInOnly } from "./admin.ts";
@@ -62,11 +62,8 @@ export function createApp({
 	session: Session;
 	auth: Auth;
 	conversations: Conversations;
-	/** ORQESTRA_URL, where authorization servers send Users back to; tests that connect none may leave it out. */
-	orqestraUrl?: string;
-	/** What MCP Servers and their authorization servers are reached with; tests pass fakes. */
-	fetch?: Fetch;
-}) {
+	// tests that connect no User may leave orqestraUrl out
+} & OrqestraReach) {
 	const user = signedIn(session);
 	return new Elysia()
 		.all("/auth/*", ({ request }) => auth(request))

@@ -14,7 +14,7 @@ import {
 } from "@orqestra/db/schema";
 import { availableTools } from "@orqestra/tools";
 import { eq, sql } from "drizzle-orm";
-import { admin, limitsInput, servedBy } from "./admin.ts";
+import { admin, limitsInput, servedBy, storedClient } from "./admin.ts";
 import {
 	loadConfig,
 	modelRef,
@@ -122,15 +122,7 @@ async function loadSettings(): Promise<Settings> {
 			url: s.url,
 			enabled: s.enabled,
 			auth: s.auth,
-			oauthClient: s.oauthClientId
-				? {
-						client_id: s.oauthClientId,
-						client_secret:
-							(s.oauthClientSecret &&
-								decryptSecret(s.oauthClientSecret, key)) ||
-							undefined,
-					}
-				: null,
+			oauthClient: storedClient(s, key) ?? null,
 			headers: s.headers.map((h) => ({
 				name: h.name,
 				value: decryptSecret(h.value, key),

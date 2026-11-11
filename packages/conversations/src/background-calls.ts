@@ -39,6 +39,9 @@ import type { TraceCarrier } from "./serve.ts";
 // A Background Call is its `background_call` row: polled by delayed jobs that carry only its id, one at a time,
 // until it ends; a job that finds it gone, ended or polled by a later job does nothing.
 
+/** How Background Calls reach their MCP Servers: through `fetch` (tests stand in for the servers), as the User with their Connection to a per-User OAuth one. */
+export type McpAccess = { fetch?: Fetch; connections?: ConnectionStore };
+
 /** BullMQ queue of delayed jobs `{ backgroundCallId }`, one per poll. */
 export const BACKGROUND_CALLS_QUEUE = "background-calls";
 /** How soon to poll again, in ms, when the server suggests nothing, and the bounds put on what it suggests. */
@@ -109,8 +112,7 @@ export async function pollBackgroundCall(
 	config: () => Promise<OrqestraConfig>,
 	id: string,
 	jobId: string,
-	fetch?: Fetch,
-	connections?: ConnectionStore,
+	mcp: McpAccess = {},
 ) {
 	const row = await db.query.backgroundCall.findFirst({
 		where: eq(backgroundCall.id, id),
@@ -124,24 +126,24 @@ export async function pollBackgroundCall(
 			{ status: "failed", message: "The MCP Server has been disabled." },
 			row.mcpServerId,
 		);
-	const signIn =
+	const authProvider =
 		server.auth === "oauth"
-			? await asUser(row, server, connections, fetch)
+			? await signInOrEnding(row, server, mcp)
 			: undefined;
-	if (signIn && "status" in signIn) return end(row, signIn, server.name);
-	const authProvider = signIn;
+	if (authProvider && "status" in authProvider)
+		return end(row, authProvider, server.name);
+	const request = { fetch: mcp.fetch, authProvider };
 	const maxSeconds = cfg.limits.backgroundCallMaxDuration;
 	if (Date.now() - row.startedAt.getTime() >= maxSeconds * 1000)
-		return cancelAndEnd(row, server, fetch, authProvider, {
+		return cancelAndEnd(row, server, request, {
 			status: "failed",
 			message: `The call ran longer than the ${maxSeconds} seconds Orqestra tracks a Background Call, so it was cancelled.`,
 		});
 	let state: McpTaskState | undefined;
 	try {
 		state = await pollMcpTask(server, referenceOf(row), {
-			fetch,
+			...request,
 			timeoutMs: POLL_TIMEOUT_MS,
-			authProvider,
 		});
 	} catch (error) {
 		// network errors, timeouts, 5xx: asked again at the interval, until it has been too long since an answer
@@ -158,7 +160,7 @@ export async function pollBackgroundCall(
 	}
 	if (state && state.status !== "working")
 		return state.status === "input_required"
-			? cancelAndEnd(row, server, fetch, authProvider, {
+			? cancelAndEnd(row, server, request, {
 					status: "failed",
 					message: INPUT_REQUIRED,
 				})
@@ -190,37 +192,43 @@ export async function requeueBackgroundCalls() {
 	for (const r of running) await schedule(r.id, r.jobId, 0);
 }
 
+/** How a request to a per-User OAuth server signs in: as the User, with their Connection; undefined when they have none usable. */
+const asUser = (
+	server: McpServer,
+	serverId: string,
+	userId: string,
+	{ fetch, connections }: McpAccess,
+) =>
+	connections
+		? connectionAuth(connections, userId, serverId, { server, fetch })
+		: undefined;
+
 /**
- * How a poll of a per-User OAuth server signs in: with the Connection of the User of the row's Conversation (a Subagent's is
- * its top-level Conversation's User); how the Background Call ends when that Connection is gone or needs reconnecting.
+ * How a poll of a per-User OAuth server signs in: as the User of the row's Conversation (a Subagent's is its top-level
+ * Conversation's User); else how the Background Call ends, its Connection gone or needing reconnecting.
  */
-async function asUser(
+async function signInOrEnding(
 	row: Row,
 	server: McpServer,
-	connections: ConnectionStore | undefined,
-	fetch: Fetch | undefined,
+	mcp: McpAccess,
 ): Promise<NonNullable<TaskRequestOptions["authProvider"]> | Ending> {
 	const conv = await db.query.conversation.findFirst({
 		columns: { userId: true },
 		where: eq(conversation.id, row.conversationId),
 	});
-	const provider =
-		connections &&
-		conv &&
-		(await connectionAuth(connections, conv.userId, row.mcpServerId, {
-			server,
-			fetch,
-		}));
-	if (provider) return provider;
-	const kept =
-		connections &&
-		conv &&
-		(await connections.connection(conv.userId, row.mcpServerId));
+	if (conv && mcp.connections) {
+		const provider = await asUser(server, row.mcpServerId, conv.userId, mcp);
+		if (provider) return provider;
+		if (await mcp.connections.connection(conv.userId, row.mcpServerId))
+			return {
+				status: "failed",
+				message: "The User's Connection to the service needs reconnecting.",
+			};
+	}
 	return {
 		status: "failed",
-		message: kept
-			? "The User's Connection to the service needs reconnecting."
-			: "The User's Connection to the service is gone: they disconnected, or an Admin reconfigured its MCP Server.",
+		message:
+			"The User's Connection to the service is gone: they disconnected, or an Admin reconfigured its MCP Server.",
 	};
 }
 
@@ -228,14 +236,12 @@ async function asUser(
 async function cancelAndEnd(
 	row: Row,
 	server: McpServer,
-	fetch: Fetch | undefined,
-	authProvider: TaskRequestOptions["authProvider"],
+	request: Omit<TaskRequestOptions, "timeoutMs">,
 	state: Ending,
 ) {
 	await cancelMcpTask(server, referenceOf(row), {
-		fetch,
+		...request,
 		timeoutMs: POLL_TIMEOUT_MS,
-		authProvider,
 	}).catch((error) =>
 		console.error(`could not cancel Background Call ${row.id}`, error),
 	);
@@ -246,7 +252,7 @@ async function cancelAndEnd(
 export async function endBackgroundCallsOf(
 	config: () => Promise<OrqestraConfig>,
 	mcpServerId: string,
-	fetch?: Fetch,
+	{ fetch }: McpAccess = {},
 ) {
 	const server = (await config()).allMcpServers[mcpServerId];
 	if (!server) return;
@@ -261,10 +267,15 @@ export async function endBackgroundCallsOf(
 		);
 	// its Connections go with it, so a per-User OAuth server is asked without one
 	for (const row of rows)
-		await cancelAndEnd(row, server, fetch, undefined, {
-			status: "failed",
-			message: "The MCP Server has been deleted.",
-		});
+		await cancelAndEnd(
+			row,
+			server,
+			{ fetch },
+			{
+				status: "failed",
+				message: "The MCP Server has been deleted.",
+			},
+		);
 }
 
 type NotificationContent = { text: string; images: ImageContent[] };
@@ -363,8 +374,10 @@ async function end(row: Row, state: Ending, server: string) {
 	await ensureRun(row.conversationId);
 }
 
-/** A Background Call to cancel with its MCP Server. */
-export type CancelledCall = Pick<Row, "mcpServerId" | "reference">;
+/** A Background Call to cancel with its MCP Server, as the User whose Conversation made it. */
+export type CancelledCall = Pick<Row, "mcpServerId" | "reference"> & {
+	userId: string;
+};
 
 /** The Background Calls still running that match `where`, to cancel once what made them is gone. */
 export const runningCalls = (
@@ -375,8 +388,10 @@ export const runningCalls = (
 		.select({
 			mcpServerId: backgroundCall.mcpServerId,
 			reference: backgroundCall.reference,
+			userId: conversation.userId,
 		})
 		.from(backgroundCall)
+		.innerJoin(conversation, eq(conversation.id, backgroundCall.conversationId))
 		.where(and(eq(backgroundCall.status, "running"), where));
 
 /**
@@ -386,19 +401,24 @@ export const runningCalls = (
 export async function askToCancel(
 	config: () => Promise<OrqestraConfig>,
 	calls: CancelledCall[],
-	fetch?: Fetch,
+	mcp: McpAccess = {},
 ) {
 	if (!calls.length) return;
 	const servers = (await config()).mcpServers;
 	for (const call of calls) {
 		const server = servers[call.mcpServerId];
-		if (server)
-			void cancelMcpTask(server, referenceOf(call), {
-				fetch,
+		if (!server) continue;
+		void (async () =>
+			cancelMcpTask(server, referenceOf(call), {
+				fetch: mcp.fetch,
 				timeoutMs: POLL_TIMEOUT_MS,
-			}).catch((error) =>
-				console.error("could not cancel a Background Call", error),
-			);
+				authProvider:
+					server.auth === "oauth"
+						? await asUser(server, call.mcpServerId, call.userId, mcp)
+						: undefined,
+			}))().catch((error) =>
+			console.error("could not cancel a Background Call", error),
+		);
 	}
 }
 
@@ -412,11 +432,16 @@ async function cancel(
 	where: SQL | undefined,
 	body: string,
 	wake: (tx: Tx, conversationId: string) => Promise<boolean>,
-	fetch?: Fetch,
+	mcp?: McpAccess,
 ) {
 	const cfg = await config();
-	const cancelled = await db.transaction(async (tx) => {
+	const { cancelled, userId } = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
+		// the whole tree is one User's
+		const [owner] = await tx
+			.select({ userId: conversation.userId })
+			.from(conversation)
+			.where(eq(conversation.id, conversationId));
 		const rows = await tx
 			.update(backgroundCall)
 			.set({ status: "cancelled" })
@@ -433,12 +458,16 @@ async function cancel(
 				{ text: body, images: [] },
 				await wake(tx, row.conversationId),
 			);
-		return rows;
+		return { cancelled: rows, userId: owner?.userId ?? "" };
 	});
 	if (!cancelled.length) return cancelled;
 	const rootId = await rootOf(conversationId);
 	if (rootId) await saved(rootId);
-	await askToCancel(async () => cfg, cancelled, fetch);
+	await askToCancel(
+		async () => cfg,
+		cancelled.map((row) => ({ ...row, userId })),
+		mcp,
+	);
 	return cancelled;
 }
 
@@ -451,7 +480,7 @@ export async function cancelBackgroundCall(
 	config: () => Promise<OrqestraConfig>,
 	rootId: string,
 	toolCallId: string,
-	fetch?: Fetch,
+	mcp?: McpAccess,
 ) {
 	const cancelled = await cancel(
 		config,
@@ -468,7 +497,7 @@ export async function cancelBackgroundCall(
 		),
 		"The User cancelled the call: no result will come.",
 		async (tx, id) => (await waiting(tx, id)) && !(await busy(tx, id)),
-		fetch,
+		mcp,
 	);
 	for (const row of cancelled) await ensureRun(row.conversationId);
 	return cancelled.length > 0;
@@ -481,7 +510,7 @@ export async function cancelBackgroundCall(
 export async function cancelStoppedCalls(
 	config: () => Promise<OrqestraConfig>,
 	conversationId: string,
-	fetch?: Fetch,
+	mcp?: McpAccess,
 ) {
 	const top = (await rootOf(conversationId)) === conversationId;
 	await cancel(
@@ -492,11 +521,11 @@ export async function cancelStoppedCalls(
 			? "The call was cancelled as the User stopped the Conversation: no result will come."
 			: "The call was cancelled as the Subagent was stopped: no result will come.",
 		async () => false,
-		fetch,
+		mcp,
 	);
 }
 
 /** What `stopSubagents` cancels each stopped Subagent's Background Calls with (`runs.ts` cannot import this module). */
 export const cancelStopped =
-	(config: () => Promise<OrqestraConfig>, fetch?: Fetch) => (id: string) =>
-		cancelStoppedCalls(config, id, fetch);
+	(config: () => Promise<OrqestraConfig>, mcp?: McpAccess) => (id: string) =>
+		cancelStoppedCalls(config, id, mcp);

@@ -10,6 +10,7 @@ const app = (user: User | null) => {
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(null, { status: 404 }),
 		conversations: {} as Conversations,
+		orqestraUrl: "https://orqestra.example.com",
 	});
 	// handle needs its app as this
 	return (request: Request) => api.handle(request);
@@ -46,6 +47,7 @@ const endpoints: [string, string, unknown?][] = [
 	["DELETE", "/api/search-providers/tavily"],
 	["PUT", "/api/search-providers/tools", { tool: "search", provider: null }],
 	["GET", "/api/mcp-servers"],
+	["GET", "/api/mcp-servers/callback-url"],
 	[
 		"POST",
 		"/api/mcp-servers",
@@ -128,6 +130,15 @@ describe("console endpoints", () => {
 				const response = await app(user)(request(method, path, body));
 				expect([path, response.status]).toEqual([path, status]);
 			}
+	});
+
+	it("tells an Admin the callback under ORQESTRA_URL, wherever the console is opened", async () => {
+		const response = await app(admin)(
+			request("GET", "/api/mcp-servers/callback-url"),
+		);
+		expect(await response.json()).toEqual({
+			url: "https://orqestra.example.com/api/connections/callback",
+		});
 	});
 
 	it("is 422 with the field's code for invalid input", async () => {

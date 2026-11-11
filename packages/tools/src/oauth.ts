@@ -58,6 +58,13 @@ export interface StoredConnection {
 	connectedAt: Date;
 }
 
+/** How a stored Connection stands: one whose tokens no longer decrypt (another key) cannot be used, so needs reconnecting too. */
+export const connectionStatus = ({
+	status,
+	tokens,
+}: Pick<StoredConnection, "status"> & { tokens: unknown }) =>
+	tokens === undefined ? ("needs_reconnect" as const) : status;
+
 /** An authorization a User started and whose callback has not come back yet; looked up by its `state`. */
 export interface PendingAuthorization {
 	state: string;
@@ -136,7 +143,7 @@ export async function connectionAuth(
 ): Promise<AuthProvider | undefined> {
 	const connection = await store.connection(userId, serverId);
 	let token =
-		connection?.status === "connected"
+		connection && connectionStatus(connection) === "connected"
 			? connection.tokens?.access_token
 			: undefined;
 	if (token === undefined) return undefined;
@@ -285,6 +292,12 @@ export interface ConnectionContext {
 	orqestraUrl: string;
 	fetch?: Fetch;
 }
+
+/**
+ * Where Orqestra is, `ORQESTRA_URL` (unknown: no Client ID Metadata Document), and what it reaches MCP Servers and their
+ * authorization servers with; tests pass fakes.
+ */
+export type OrqestraReach = { orqestraUrl?: string; fetch?: Fetch };
 
 export const callbackUrl = (orqestraUrl: string) =>
 	new URL("/api/connections/callback", orqestraUrl).href;
@@ -491,21 +504,19 @@ export async function finishConnection(
 export const REVOKE_TIMEOUT_MS = 5_000;
 
 /**
- * Revokes a deleted Connection at its authorization server (RFC 7009): its refresh token, else its access token, as the Client it was
- * most likely made as (pre-registered, the one registered with that issuer, else the Client ID Metadata Document). Nothing when the
- * authorization server has no `revocation_endpoint`; throws when revoking fails, for the caller to log.
+ * Revokes a deleted Connection at its authorization server (RFC 7009): its refresh token, else its access token, as the Client its
+ * tokens were issued to, as a refresh picks it (one that is neither the pre-registered nor the registered one is a public Client, the
+ * Client ID Metadata Document or one registered before). Nothing when the authorization server has no `revocation_endpoint`; throws
+ * when revoking fails, for the caller to log.
  */
 export async function revokeConnection(
 	{ tokens, issuer }: { tokens: ConnectionTokens; issuer: string },
 	{
 		oauthClient,
 		registered,
-		orqestraUrl,
 	}: {
 		oauthClient?: McpServer["oauthClient"];
 		registered?: StoredOAuthClientInformation;
-		/** Unknown: no Client ID Metadata Document. */
-		orqestraUrl?: string;
 	},
 	fetch: Fetch = globalThis.fetch,
 ): Promise<void> {
@@ -518,12 +529,12 @@ export async function revokeConnection(
 	const endpoint = (metadata as { revocation_endpoint?: string } | undefined)
 		?.revocation_endpoint;
 	if (!endpoint) return;
-	const client =
-		oauthClient ??
-		(registered?.issuer === issuer ? registered : undefined) ??
-		(orqestraUrl && new URL(orqestraUrl).protocol === "https:"
-			? { client_id: clientMetadataUrl(orqestraUrl) }
-			: undefined);
+	const { client_id } = tokens;
+	const client = client_id
+		? ([oauthClient, registered].find((c) => c?.client_id === client_id) ?? {
+				client_id,
+			})
+		: undefined;
 	const body = new URLSearchParams(
 		tokens.refresh_token
 			? { token: tokens.refresh_token, token_type_hint: "refresh_token" }

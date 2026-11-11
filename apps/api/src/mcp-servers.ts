@@ -5,7 +5,7 @@ import {
 	mcpServerInput,
 } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
-import type { Fetch } from "@orqestra/tools";
+import { callbackUrl, type OrqestraReach } from "@orqestra/tools";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { adminOnly } from "./admin.ts";
@@ -16,13 +16,15 @@ import { saved } from "./saved.ts";
 export const mcpServers = (
 	signedIn: SignedIn,
 	conversations: Pick<Conversations, "deletingMcpServer">,
-	/** Where revocations name Orqestra, and what the test and revocations reach servers with. */
-	reach: { orqestraUrl?: string; fetch?: Fetch } = {},
+	/** Where the callback names Orqestra, and what the test and revocations reach servers with. */
+	reach: OrqestraReach & { orqestraUrl: string },
 ) =>
 	new Elysia({ prefix: "/mcp-servers" })
 		.use(signedIn)
 		.derive(adminOnly)
 		.get("/", () => config.mcpServers.list())
+		// where authorization servers send Users back to, for an Admin registering Orqestra with one
+		.get("/callback-url", () => ({ url: callbackUrl(reach.orqestraUrl) }))
 		// once saved, with the connection test's result
 		.post(
 			"/",

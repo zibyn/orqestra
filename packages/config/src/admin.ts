@@ -17,8 +17,8 @@ import {
 import {
 	availableTools,
 	type DocumentParserTestResult,
-	type Fetch,
 	type McpTestResult,
+	type OrqestraReach,
 	type SandboxTestResult,
 	testDocumentParser,
 	testMcpServer,
@@ -423,13 +423,21 @@ const searchProviders = ({ current, write }: Deps) => ({
 });
 
 /** A stored MCP Server's pre-registered Client, its Secret decrypted. */
-const storedClient = (row: typeof mcpServer.$inferSelect) =>
+/** The MCP Server's pre-registered Client, its secret decrypted (undefined when it no longer decrypts). */
+export const storedClient = (
+	row: Pick<
+		typeof mcpServer.$inferSelect,
+		"oauthClientId" | "oauthClientSecret"
+	>,
+	key?: Buffer,
+) =>
 	row.oauthClientId
 		? {
 				client_id: row.oauthClientId,
-				client_secret: row.oauthClientSecret
-					? decryptSecret(row.oauthClientSecret)
-					: undefined,
+				client_secret:
+					(row.oauthClientSecret &&
+						decryptSecret(row.oauthClientSecret, key)) ||
+					undefined,
 			}
 		: undefined;
 
@@ -464,7 +472,7 @@ const mcpServers = ({ write }: Deps) => ({
 	 */
 	async save(
 		input: z.infer<typeof mcpServerInput>,
-		{ fetch, orqestraUrl }: { fetch?: Fetch; orqestraUrl?: string } = {},
+		{ fetch }: Pick<OrqestraReach, "fetch"> = {},
 	): Promise<{ errors: SaveErrors; test?: McpTestResult }> {
 		if (!mcpServerId.safeParse(input.id).success)
 			return { errors: { id: { code: "id_invalid" } } };
@@ -537,7 +545,7 @@ const mcpServers = ({ write }: Deps) => ({
 			return reset ? clearConnections(tx, input.id, oldClient) : [];
 		});
 		// shortcut: in the background so the save does not wait on authorization servers; lost if the process exits first
-		if (cleared.length) void revokeConnections(cleared, { fetch, orqestraUrl });
+		if (cleared.length) void revokeConnections(cleared, { fetch });
 		// saved either way, so the Admin can fix the URL or headers later
 		return {
 			errors: {},
@@ -564,10 +572,7 @@ const mcpServers = ({ write }: Deps) => ({
 	},
 
 	/** Also removes it from every Agent Definition, and ends every Connection to it, revoked in the background once committed. */
-	async delete(
-		id: string,
-		{ fetch, orqestraUrl }: { fetch?: Fetch; orqestraUrl?: string } = {},
-	) {
+	async delete(id: string, { fetch }: Pick<OrqestraReach, "fetch"> = {}) {
 		const cleared = await write(async (tx) => {
 			const ref = mcpToolRef(id);
 			const [stored] = await tx
@@ -585,7 +590,7 @@ const mcpServers = ({ write }: Deps) => ({
 			);
 			return cleared;
 		});
-		if (cleared.length) void revokeConnections(cleared, { fetch, orqestraUrl });
+		if (cleared.length) void revokeConnections(cleared, { fetch });
 	},
 });
 

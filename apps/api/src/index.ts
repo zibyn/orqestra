@@ -1,4 +1,4 @@
-import { config, skillFiles } from "@orqestra/config/live";
+import { config, connectionStore, skillFiles } from "@orqestra/config/live";
 import { createConversations } from "@orqestra/conversations";
 import { s3Store } from "@orqestra/tools/s3";
 import { z } from "zod";
@@ -69,6 +69,7 @@ createApp({
 		config: config.current,
 		skillFiles,
 		store,
+		connections: connectionStore,
 	}),
 }).listen(3001);
 console.log("api listening on 3001");

@@ -551,7 +551,7 @@ export const mcpServer = pgTable("mcp_server", {
 		.notNull(),
 });
 
-// A User's authorization of a per-User OAuth MCP Server: at most one per User and server
+// A User's Connection to a per-User OAuth MCP Server: at most one per User and server
 export const mcpConnection = pgTable(
 	"mcp_connection",
 	{

@@ -75,11 +75,14 @@ const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
 // one store, as the api and worker share one
 const { store } = memoryStore();
+/** The Users' Connections to per-User OAuth MCP Servers, as the worker reads them. */
+const connections = memoryConnections();
 const conversations = createConversations({
 	store,
 	config: config.current,
 	skillFiles,
 	fetch: (input, init) => fetchFake(input, init),
+	connections,
 });
 const faux = fauxProvider({
 	provider: "faux",
@@ -173,8 +176,6 @@ const fetchFake = (async (input: string | URL, init?: RequestInit) => {
 	return new Response(JSON.stringify({ results: [] }));
 }) as typeof fetch;
 const userId = "u1";
-/** The Users' Connections to per-User OAuth MCP Servers, as the worker reads them. */
-const connections = memoryConnections();
 // a command that runs until it is canceled, one that writes a report, and the check attach makes
 const orrery = memoryOrrery({
 	exec: (command, files) => {
@@ -2246,12 +2247,10 @@ describe.skipIf(!url)(
 						);
 						expect(as?.refreshed).toBe(1);
 						finishTask("after the refresh");
-						expect(await woken(id, "completed")).toContain(
-							"after the refresh",
+						expect(await woken(id, "completed")).toContain("after the refresh");
+						expect((await connections.connection(userId, "slow"))?.status).toBe(
+							"connected",
 						);
-						expect(
-							(await connections.connection(userId, "slow"))?.status,
-						).toBe("connected");
 					});
 
 					it("as failed, needing reconnecting, when its User's token expires and cannot be refreshed", async () => {
@@ -2259,6 +2258,33 @@ describe.skipIf(!url)(
 						as?.accessTokens.clear();
 						as?.refreshTokens.clear();
 						expect(await woken(id, "failed")).toContain("reconnect");
+					});
+
+					const cancelledAsUser = () =>
+						waitFor(
+							async () => slow.requests,
+							(r) =>
+								r.some(
+									(q) =>
+										q.method === "tasks/cancel" &&
+										q.headers.get("authorization") === "Bearer u1-token",
+								),
+						);
+
+					it("is cancelled with its User's token when the User cancels it", async () => {
+						const id = await polledAsUser();
+						const view = await conversations.get(userId, id);
+						const toolCallId = view?.backgroundCalls[0].toolCallId ?? "";
+						expect(
+							await conversations.cancelBackgroundCall(userId, id, toolCallId),
+						).toBe(true);
+						await cancelledAsUser();
+					});
+
+					it("is cancelled with its User's token when the User stops its Conversation", async () => {
+						const id = await polledAsUser();
+						await conversations.stop(userId, id);
+						await cancelledAsUser();
 					});
 				});
 

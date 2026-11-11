@@ -18,5 +18,5 @@ We split them so that SSE and uploads, which hold connections open, scale apart 
 ## Consequences
 
 - A refresh rotates Polaris' refresh token, and two requests that present the same one end the Polaris Session. So web's SSR calls `/api/session` first, alone, writes its `Set-Cookie` back to the browser, and only then calls other endpoints, concurrently, with the refreshed cookie.
-- Errors are HTTP status codes (401, 403, 404, 413, 422) with an `{ errors: { <field>: { code } } }` body, as `/api/skills` already returned.
+- Errors are HTTP status codes (401, 403, 404, 409 for a conflict with the current state, 413, 422, 502 when an upstream service failed) with an `{ errors: { <field>: { code } } }` body, as `/api/skills` already returned.
 - A fourth image, `orqestra-api`, ships next to `web`, `worker` and `migrate`.

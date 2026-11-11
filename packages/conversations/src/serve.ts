@@ -33,6 +33,7 @@ import {
 	BACKGROUND_CALLS_QUEUE,
 	cancelStopped,
 	cancelStoppedCalls,
+	type McpAccess,
 	pollBackgroundCall,
 	requeueBackgroundCalls,
 	startBackgroundCall,
@@ -261,13 +262,13 @@ async function stopped(
 	result: string,
 	signal: AbortSignal,
 	config: () => Promise<OrqestraConfig>,
-	fetch?: Fetch,
+	mcp?: McpAccess,
 ) {
-	await stopSubagents(conv.id, cancelStopped(config, fetch));
+	await stopSubagents(conv.id, cancelStopped(config, mcp));
 	// out of time is no stop of the User's: the parent gets what it has, the User an Alert
 	const timedOut = signal.reason instanceof RunTimedOut;
 	// one handed off while the stop was on its way: Stop cancels it too
-	if (!timedOut) await cancelStoppedCalls(config, conv.id, fetch);
+	if (!timedOut) await cancelStoppedCalls(config, conv.id, mcp);
 	if (conv.parentId)
 		return endSubagent(conv.id, {
 			outcome: timedOut ? "partial" : "stopped",
@@ -282,7 +283,7 @@ async function failed(
 	conversationId: string,
 	error: Error,
 	config: () => Promise<OrqestraConfig>,
-	fetch?: Fetch,
+	mcp?: McpAccess,
 ) {
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
@@ -298,7 +299,7 @@ async function failed(
 		return alertRun(conversationId, paused ? "auto_paused" : "failed");
 	}
 	// the Subagents under it would report to nobody
-	await stopSubagents(conversationId, cancelStopped(config, fetch));
+	await stopSubagents(conversationId, cancelStopped(config, mcp));
 	await endSubagent(conversationId, {
 		outcome: "failed",
 		result: `[The subagent failed, or the worker running it crashed: ${error.message}]`,
@@ -315,7 +316,7 @@ async function execute(
 	conversationId: string,
 	jobId: string | undefined,
 	handler: RunHandler,
-	fetch?: Fetch,
+	mcp?: McpAccess,
 ) {
 	// listening for a Stop before reading the row, which holds one sent before this listened
 	const stop = new AbortController();
@@ -376,16 +377,16 @@ async function execute(
 			() => {
 				over = true;
 			},
-			fetch,
+			mcp,
 		);
 		await handler(run, cfg);
 		if (!over && !stop.signal.aborted)
 			throw new Error("The Run ended without finishing");
-		if (!over) await stopped(conv, "", stop.signal, config, fetch);
+		if (!over) await stopped(conv, "", stop.signal, config, mcp);
 	} catch (error) {
 		// stopped before the reply was saved (while compacting, say): nothing to save
 		if (stop.signal.aborted && !over)
-			return stopped(conv, "", stop.signal, config, fetch);
+			return stopped(conv, "", stop.signal, config, mcp);
 		// the failed reply's live copy goes
 		await emit({ type: "end", subagent: sub });
 		throw error;
@@ -409,7 +410,7 @@ async function open(
 	signal: AbortSignal,
 	emit: (event: ConversationEvent) => Promise<unknown>,
 	end: () => void,
-	fetch?: Fetch,
+	mcp?: McpAccess,
 ): Promise<RunHandle> {
 	const conversationId = conv.id;
 	const sub = conv.parentId ? conversationId : undefined;
@@ -545,7 +546,7 @@ async function open(
 					outcome?.result ?? "",
 					signal,
 					async () => cfg,
-					fetch,
+					mcp,
 				);
 				return [];
 			}
@@ -650,7 +651,7 @@ async function open(
 		},
 		subagents:
 			conv.depth < cfg.limits.maxSubagentDepth
-				? subagentsOf(cfg, conv, turn, saved, fetch)
+				? subagentsOf(cfg, conv, turn, saved, mcp)
 				: undefined,
 	};
 }
@@ -664,7 +665,7 @@ function subagentsOf(
 	conv: typeof conversation.$inferSelect,
 	parent: Turn,
 	saved: () => Promise<unknown>,
-	fetch?: Fetch,
+	mcp?: McpAccess,
 ): RunHandle["subagents"] {
 	const parentId = conv.id;
 	const find = async (tx: Tx, number: number) => {
@@ -775,7 +776,7 @@ function subagentsOf(
 			});
 			return stopSubagents(
 				parentId,
-				cancelStopped(async () => cfg, fetch),
+				cancelStopped(async () => cfg, mcp),
 				numbers,
 			);
 		},
@@ -794,8 +795,7 @@ export async function serveRuns(
 		concurrency = 8,
 		subagentConcurrency = 8,
 		stalledInterval = 30_000,
-		fetch,
-		connections,
+		...mcp
 	}: ServeOptions = {},
 ) {
 	const databaseUrl = process.env.DATABASE_URL as string;
@@ -813,7 +813,7 @@ export async function serveRuns(
 		const worker = new Worker(
 			queue,
 			(job) =>
-				execute(config, store, job.data.conversationId, job.id, handler, fetch),
+				execute(config, store, job.data.conversationId, job.id, handler, mcp),
 			{
 				concurrency,
 				// bullmq tables live in their own "bullmq" schema; migrate is advisory-locked across processes
@@ -828,9 +828,8 @@ export async function serveRuns(
 		worker.on("failed", (job, err) => {
 			console.error(`job ${job?.id} failed`, err);
 			if (job)
-				void failed(job.data.conversationId, err, config, fetch).catch(
-					(error) =>
-						console.error(`could not mark job ${job.id}'s Run failed`, error),
+				void failed(job.data.conversationId, err, config, mcp).catch((error) =>
+					console.error(`could not mark job ${job.id}'s Run failed`, error),
 				);
 		});
 		worker.on("error", (err) => console.error("worker error", err));
@@ -865,8 +864,7 @@ export async function serveRuns(
 				config,
 				job.data.backgroundCallId,
 				job.id as string,
-				fetch,
-				connections,
+				mcp,
 			),
 		{
 			connection: { connectionString: databaseUrl, migrate: true },

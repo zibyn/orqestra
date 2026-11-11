@@ -396,6 +396,17 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 		expect(as.revoked.map((r) => r.clientId)).toEqual(["orq-app"]);
 	});
 
+	it("revokes as the Client the Connection was made as, though another has been registered since", async () => {
+		await save({});
+		await connect("u1");
+		// its authorization server moved: the next User connecting registers Orqestra there
+		as.issuer = "https://as2.example.com";
+		await start("u2");
+		expect(as.registered).toHaveLength(2);
+		await disconnect("u1");
+		expect(as.revoked.map((r) => r.clientId)).toEqual([as.registered[0]]);
+	});
+
 	it("ends every Connection and pending authorization when the Admin changes the URL, auth mode or pre-registered Client, and revokes them", async () => {
 		const client = { oauthClientId: "orq-app", oauthClientSecret: "s3cret" };
 		const changes = [
