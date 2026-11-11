@@ -1,4 +1,5 @@
 import { catalogProviders, modelRef } from "@orqestra/config";
+import { spendingLimitStatus } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { agent, enabledModel, usage, user } from "@orqestra/db/schema";
 import {
@@ -134,6 +135,8 @@ export const usageRoutes = (signedIn: SignedIn) =>
 					"/mine",
 					async ({ user, query }) => ({
 						rows: await summarizeUsage({ ...query, user: user.id }),
+						// this month's, whatever the range; null without a limit
+						status: await spendingLimitStatus(user.id),
 					}),
 					{ query: usageQuery },
 				),

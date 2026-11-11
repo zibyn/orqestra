@@ -16,7 +16,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { api, ok } from "#/lib/api";
 import { errorText } from "#/lib/save-errors";
-import { type UsagePreset, usageRange } from "#/lib/usage";
+import { resetDate, type UsagePreset, usageRange } from "#/lib/usage";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
 
@@ -27,12 +27,16 @@ type Query = { from: string; to: string; group: UsageGroup } & Filters;
 const getAll = (query: Query) => ok(api().api.usage.get({ query }));
 type Row = Awaited<ReturnType<typeof getAll>>["rows"][number];
 // My Usage never groups by User
-const getMine = (query: Query) =>
+const fetchMine = (query: Query) =>
 	ok(
 		api().api.usage.mine.get({
 			query: query as Query & { group: "agent" | "model" },
 		}),
-	) as Promise<{ rows: Row[] }>;
+	);
+type SpendingStatus = Awaited<ReturnType<typeof fetchMine>>["status"];
+const getMine = fetchMine as (
+	query: Query,
+) => Promise<{ rows: Row[]; status?: SpendingStatus }>;
 
 const presets: Record<UsagePreset | "custom", () => string> = {
 	today: m.usage_today,
@@ -71,6 +75,8 @@ export function UsageReport({ mine = false }: { mine?: boolean }) {
 		{ group: UsageGroup; key: string; name: string }[]
 	>([]);
 	const [rows, setRows] = useState<Row[]>();
+	// My Usage only, and only with a Spending Limit
+	const [status, setStatus] = useState<SpendingStatus>(null);
 	const [error, setError] = useState("");
 
 	// fetched in the browser, whose time zone draws the days
@@ -85,6 +91,7 @@ export function UsageReport({ mine = false }: { mine?: boolean }) {
 			(r) => {
 				if (!current) return;
 				setRows(r.rows);
+				setStatus(("status" in r && r.status) || null);
 				setError("");
 			},
 			(e) => current && setError(errorText(e)),
@@ -121,6 +128,17 @@ export function UsageReport({ mine = false }: { mine?: boolean }) {
 
 	return (
 		<>
+			{status && (
+				<Alert variant={status.reached ? "destructive" : "default"}>
+					<AlertDescription>
+						{m.usage_spending_status({
+							spent: usd(status.spent),
+							usd: usd(status.usd),
+							date: resetDate(status, locale),
+						})}
+					</AlertDescription>
+				</Alert>
+			)}
 			<div className="flex flex-wrap items-center gap-3">
 				<ToggleGroup
 					variant="outline"

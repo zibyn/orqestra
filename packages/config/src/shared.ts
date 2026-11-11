@@ -38,6 +38,13 @@ export const spendingLimit = z.discriminatedUnion("mode", [
 ]);
 export type SpendingLimit = z.infer<typeof spendingLimit>;
 
+/** A User's own Spending Limit, or `default`: the Limits' default for everyone. */
+export const userSpendingLimit = z.discriminatedUnion("mode", [
+	z.object({ mode: z.literal("default") }),
+	...spendingLimit.options,
+]);
+export type UserSpendingLimit = z.infer<typeof userSpendingLimit>;
+
 /** An IANA time zone name this runtime knows. */
 export const timeZone = z.string().refine((zone) => {
 	try {

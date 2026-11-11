@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { usageRange } from "./usage";
+import { resetDate, usageRange } from "./usage";
 
 // the browser's time zone draws the days
 process.env.TZ = "Asia/Shanghai";
@@ -30,4 +30,17 @@ test("a custom range covers both its days", () => {
 	expect(
 		iso(usageRange({ from: "2026-02-10", to: "2026-02-11" }, now)),
 	).toEqual(["2026-02-09T16:00:00.000Z", "2026-02-11T16:00:00.000Z"]);
+});
+
+test("a Spending Limit resets on the 1st where its reset time zone has it, not the browser", () => {
+	// midnight on 1 December in Auckland is still 30 November in Shanghai
+	expect(
+		resetDate(
+			{
+				resetsAt: "2026-11-30T11:00:00.000Z",
+				resetTimeZone: "Pacific/Auckland",
+			},
+			"en-US",
+		),
+	).toBe("December 1");
 });

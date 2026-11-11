@@ -88,7 +88,11 @@ export {
 	type TranscriptMessage,
 	type Turn,
 } from "./serve.ts";
-export { SpendingLimitReached, spendingLimitStatus } from "./spending.ts";
+export {
+	SpendingLimitReached,
+	spendingLimitStatus,
+	spendingMonth,
+} from "./spending.ts";
 export {
 	checkSchedule,
 	nextFirings,

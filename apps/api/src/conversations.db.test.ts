@@ -285,7 +285,9 @@ describe.skipIf(!url)("The Spending Limit through the api", () => {
 		stopWorker = await conversations.serveRuns(async () => {});
 	});
 	beforeEach(async () => {
-		await db.$client.query("truncate conversation, usage, limits cascade");
+		await db.$client.query(
+			'truncate conversation, usage, limits, "user" cascade',
+		);
 	});
 	afterAll(() => stopWorker?.());
 
@@ -352,11 +354,35 @@ describe.skipIf(!url)("The Spending Limit through the api", () => {
 				usd: 5,
 				reached: false,
 				resetsAt: shanghaiFirst(1).toISOString(),
+				resetTimeZone: "Asia/Shanghai",
 			},
 		});
 		await spend(3, new Date());
 		expect((await app(ada)("GET", "/api/spending-limit")).body.status).toEqual(
 			expect.objectContaining({ spent: 5, reached: true }),
 		);
+	});
+
+	it("puts a User's own setting before the default, and follows the default on `default`", async () => {
+		const setting = (spendingLimit: object) =>
+			db.$client.query(
+				`insert into "user" (id, name, last_active_at, spending_limit) values ('ada', 'Ada', now(), $1)
+				on conflict (id) do update set spending_limit = excluded.spending_limit`,
+				[JSON.stringify(spendingLimit)],
+			);
+		const status = async () =>
+			(await app(ada)("GET", "/api/spending-limit")).body.status;
+		await limitTo(5);
+		await spend(3, new Date());
+		await setting({ mode: "limited", usd: 2 });
+		expect(await status()).toMatchObject({ usd: 2, reached: true });
+		await setting({ mode: "unlimited" });
+		expect(await status()).toBeNull();
+		await setting({ mode: "default" });
+		expect(await status()).toMatchObject({ usd: 5, reached: false });
+		// own setting limited while the default is unlimited
+		await db.$client.query("truncate limits");
+		await setting({ mode: "limited", usd: 1 });
+		expect(await status()).toMatchObject({ usd: 1, reached: true });
 	});
 });

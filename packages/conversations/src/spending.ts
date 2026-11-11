@@ -1,6 +1,6 @@
 import { DEFAULT_LIMITS } from "@orqestra/config";
 import { db } from "@orqestra/db";
-import { limits, usage } from "@orqestra/db/schema";
+import { limits, usage, user } from "@orqestra/db/schema";
 import { CronExpressionParser } from "cron-parser";
 import { and, eq, gte, sum } from "drizzle-orm";
 
@@ -30,14 +30,25 @@ export function spendingMonth(timeZone: string, now: Date) {
  * the limit, whether it is used up and when it resets. Null when they have none.
  */
 export async function spendingLimitStatus(userId: string, now = new Date()) {
-	const [row] = await db
-		.select({
-			spendingLimit: limits.spendingLimit,
-			resetTimeZone: limits.resetTimeZone,
-		})
-		.from(limits);
-	// shortcut: the default limit for everyone; #109 lets a User's own setting replace it
-	const { spendingLimit, resetTimeZone } = row ?? DEFAULT_LIMITS;
+	const [[row], [own]] = await Promise.all([
+		db
+			.select({
+				spendingLimit: limits.spendingLimit,
+				resetTimeZone: limits.resetTimeZone,
+			})
+			.from(limits),
+		db
+			.select({ spendingLimit: user.spendingLimit })
+			.from(user)
+			.where(eq(user.id, userId)),
+	]);
+	const defaults = row ?? DEFAULT_LIMITS;
+	const { resetTimeZone } = defaults;
+	// the User's own setting, unless it follows the default (as one without a local record does)
+	const spendingLimit =
+		!own || own.spendingLimit.mode === "default"
+			? defaults.spendingLimit
+			: own.spendingLimit;
 	if (spendingLimit.mode === "unlimited") return null;
 	const { start, resetsAt } = spendingMonth(resetTimeZone, now);
 	// summed on each request over the (user_id, created_at) index; concurrent requests may overshoot, unlocked
@@ -52,5 +63,7 @@ export async function spendingLimitStatus(userId: string, now = new Date()) {
 		// so $0 is used up from the start
 		reached: used >= spendingLimit.usd,
 		resetsAt,
+		// to show the reset date as it falls there, not in the browser's zone
+		resetTimeZone,
 	};
 }

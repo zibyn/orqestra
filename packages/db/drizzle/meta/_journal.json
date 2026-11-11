@@ -162,6 +162,13 @@
       "when": 1794365647014,
       "tag": "0022_spending_limit",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794365971607,
+      "tag": "0023_user_spending_limit",
+      "breakpoints": true
     }
   ]
 }

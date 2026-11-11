@@ -334,6 +334,11 @@ export const user = pgTable("user", {
 	email: text("email"),
 	// moved at most hourly
 	lastActiveAt: timestamp("last_active_at", { withTimezone: true }).notNull(),
+	// default: the Limits' default for everyone
+	spendingLimit: jsonb("spending_limit")
+		.$type<SpendingLimit | { mode: "default" }>()
+		.default({ mode: "default" })
+		.notNull(),
 });
 
 // A browser that receives the User's Alerts by Web Push: one row per browser

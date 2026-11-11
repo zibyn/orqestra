@@ -23,7 +23,10 @@ async function call(user: User | null, path: string) {
 	const response = await api.handle(new Request(`http://localhost/api${path}`));
 	return {
 		status: response.status,
-		body: (await response.json()) as { rows: Record<string, unknown>[] },
+		body: (await response.json()) as {
+			rows: Record<string, unknown>[];
+			status?: Record<string, unknown> | null;
+		},
 	};
 }
 
@@ -61,7 +64,7 @@ const january = range("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z");
 describe.skipIf(!url)("/api/usage/mine", () => {
 	const reset = async () => {
 		await db.execute(
-			sql`truncate usage, provider, enabled_model, agent cascade`,
+			sql`truncate usage, provider, enabled_model, agent, limits, "user" cascade`,
 		);
 		await config.agents.save({
 			id: "general",
@@ -114,6 +117,22 @@ describe.skipIf(!url)("/api/usage/mine", () => {
 		expect(
 			(await call(bob, `/usage/mine?${january}&group=model`)).body.rows,
 		).toMatchObject([{ requests: 1, cost: 9 }]);
+	});
+
+	it("adds the User's Spending Limit this month, whatever the range, and nothing without one", async () => {
+		await used("ada", new Date().toISOString(), { cost: 3 });
+		const mine = async () =>
+			(await call(ada, `/usage/mine?${january}&group=model`)).body;
+		expect((await mine()).status).toBeNull();
+		await db.execute(
+			sql`insert into "user" (id, name, last_active_at, spending_limit) values ('ada', 'Ada', now(), '{"mode":"limited","usd":5}')`,
+		);
+		expect((await mine()).status).toMatchObject({
+			spent: 3,
+			usd: 5,
+			reached: false,
+			resetTimeZone: "UTC",
+		});
 	});
 
 	it("counts a range from its start up to, not including, its end", async () => {

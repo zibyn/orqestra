@@ -22,6 +22,7 @@ import {
 import { InputGroupButton } from "#/components/ui/input-group";
 import { type Api, api, ok } from "#/lib/api";
 import { tooLarge, UploadError } from "#/lib/uploads";
+import { resetDate } from "#/lib/usage";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
 
@@ -104,10 +105,7 @@ export function Composer({
 				<Alert variant="destructive" className="mb-2">
 					<AlertDescription>
 						{m.spending_limit_reached_banner({
-							date: new Date(usedUp.resetsAt).toLocaleDateString(getLocale(), {
-								month: "long",
-								day: "numeric",
-							}),
+							date: resetDate(usedUp, getLocale()),
 						})}
 					</AlertDescription>
 				</Alert>

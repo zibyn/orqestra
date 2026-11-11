@@ -1,0 +1,1 @@
+ALTER TABLE "user" ADD COLUMN "spending_limit" jsonb DEFAULT '{"mode":"default"}'::jsonb NOT NULL;

@@ -1,3 +1,14 @@
+/** The day a Spending Limit resets, as it falls in its reset time zone. */
+export const resetDate = (
+	s: { resetsAt: string | Date; resetTimeZone: string },
+	locale: string,
+) =>
+	new Date(s.resetsAt).toLocaleDateString(locale, {
+		month: "long",
+		day: "numeric",
+		timeZone: s.resetTimeZone,
+	});
+
 export type UsagePreset = "today" | "7d" | "30d" | "month";
 /** A custom range: two days as an `<input type="date">` gives them, both included. */
 export type CustomRange = { from: string; to: string };

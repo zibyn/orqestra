@@ -25,7 +25,7 @@ import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
 const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
 const { asc, eq, sql } = await import("drizzle-orm");
-const { limits, usage } = await import("@orqestra/db/schema");
+const { limits, usage, user } = await import("@orqestra/db/schema");
 const { config, skillFiles } = await import("@orqestra/config/live");
 const { DEFAULT_LIMITS } = await import("@orqestra/config");
 const { createConversations } = await import("@orqestra/conversations");
@@ -257,7 +257,7 @@ describe.skipIf(!url)(
 				sql`select pg_notify('conversation_stop', id::text) from conversation where status = 'running'`,
 			);
 			await db.execute(
-				sql`truncate conversation, scheduled_task, usage, limits cascade`,
+				sql`truncate conversation, scheduled_task, usage, limits, "user" cascade`,
 			);
 		});
 
@@ -729,6 +729,27 @@ describe.skipIf(!url)(
 				);
 				expect(retried?.messages.at(-1)?.message.role).toBe("assistant");
 				expect(retried?.failure).toBeNull();
+			});
+
+			it("checks a User's own limit before the unlimited default", async () => {
+				await db.insert(user).values({
+					id: userId,
+					name: "U",
+					lastActiveAt: new Date(),
+					spendingLimit: { mode: "limited", usd: 0 },
+				});
+				faux.setResponses([fauxAssistantMessage("Hello")]);
+				const id = await conversations.send(userId, {
+					agentId: "faux",
+					text: "hi",
+				});
+				const view = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "failed",
+				);
+				expect(view?.failure).toBe("spending_limit");
+				expect(faux.getPendingResponseCount()).toBe(1);
+				faux.setResponses([]);
 			});
 
 			it("leaves the title for a Turn that ends once the limit allows, without failing the Run", async () => {
