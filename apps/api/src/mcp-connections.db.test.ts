@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { config, connectionStore } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
+import { user as userRecord } from "@orqestra/db/schema";
 import { fakeAuthorizationServer } from "@orqestra/tools/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
@@ -29,7 +30,9 @@ const app = (orqestraUrl: string) =>
 			cookies: [],
 		}),
 		auth: () => new Response(null, { status: 404 }),
-		conversations: {} as Conversations,
+		conversations: {
+			deletingMcpServer: async () => {},
+		} as unknown as Conversations,
 		orqestraUrl,
 		// looked up per request, so each test's fake is used
 		fetch: (input, init) => as.fetch(input, init),
@@ -109,6 +112,17 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 			},
 		});
 		as = fakeAuthorizationServer();
+		// the names the Admin sees, from the local User records
+		await db
+			.insert(userRecord)
+			.values(
+				Object.values(users).map(({ id, name }) => ({
+					id,
+					name,
+					lastActiveAt: new Date(),
+				})),
+			)
+			.onConflictDoNothing();
 	};
 	beforeEach(reset);
 	afterAll(reset);
@@ -327,5 +341,139 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 		expect((await listed("u2"))[0].status).toBe("none");
 		expect((await call("", "GET", "/connections")).status).toBe(401);
 		expect((await call("", "POST", "/connections/github")).status).toBe(401);
+	});
+
+	const connect = async (user: string) =>
+		expect(
+			(await callback(user, as.authorize((await start(user)).href))).location,
+		).toBe("/connections?connected=github");
+	const disconnect = (user: string) =>
+		call(user, "DELETE", "/connections/github");
+	/** Revocations after an Admin's change run in the background. */
+	const revocations = async (count: number) => {
+		for (let i = 0; i < 100 && as.revoked.length < count; i++)
+			await Bun.sleep(10);
+		return as.revoked;
+	};
+
+	it("disconnects the User's own Connection and revokes its refresh token", async () => {
+		await save({});
+		await connect("u1");
+		await connect("u2");
+		expect((await disconnect("u1")).status).toBe(200);
+		expect((await listed("u1"))[0].status).toBe("none");
+		expect((await listed("u2"))[0].status).toBe("connected");
+		expect(as.revoked).toEqual([
+			{
+				token: expect.stringMatching(/^refresh-/),
+				hint: "refresh_token",
+				clientId: as.registered[0],
+			},
+		]);
+		expect((await disconnect("u1")).status).toBe(404);
+		// an Admin cannot disconnect anyone else
+		expect((await disconnect("a1")).status).toBe(404);
+		expect((await listed("u2"))[0].status).toBe("connected");
+	});
+
+	it("disconnects all the same when revoking fails or the authorization server cannot revoke", async () => {
+		await save({});
+		await connect("u1");
+		await connect("u2");
+		as.revocation = "fails";
+		expect((await disconnect("u1")).status).toBe(200);
+		expect((await listed("u1"))[0].status).toBe("none");
+		as.revocation = false;
+		expect((await disconnect("u2")).status).toBe(200);
+		expect((await listed("u2"))[0].status).toBe("none");
+		expect(as.revoked).toEqual([]);
+	});
+
+	it("revokes as the pre-registered Client", async () => {
+		await save({ oauthClientId: "orq-app", oauthClientSecret: "s3cret" });
+		await connect("u1");
+		await disconnect("u1");
+		expect(as.revoked.map((r) => r.clientId)).toEqual(["orq-app"]);
+	});
+
+	it("ends every Connection and pending authorization when the Admin changes the URL, auth mode or pre-registered Client, and revokes them", async () => {
+		const client = { oauthClientId: "orq-app", oauthClientSecret: "s3cret" };
+		const changes = [
+			{ url: "https://mcp.example.com/mcp/v2" },
+			{ auth: "shared" as const },
+			{ oauthClientId: "orq-app-2" },
+			{ oauthClientSecret: "other" },
+		];
+		for (const change of changes) {
+			await reset();
+			await save(client);
+			await connect("u1");
+			await connect("u2");
+			const pending = as.authorize((await start("u3")).href);
+			await save({ create: false, ...client, ...change });
+			if (change.auth) await save({ create: false, ...client });
+			expect((await listed("u1"))[0].status).toBe("none");
+			expect((await listed("u2"))[0].status).toBe("none");
+			expect(await revocations(2)).toHaveLength(2);
+			expect((await callback("u3", pending)).location).toBe(
+				"/connections?error=state_invalid",
+			);
+		}
+	});
+
+	it("keeps Connections when the Admin renames, disables or saves the same Client again", async () => {
+		const client = { oauthClientId: "orq-app", oauthClientSecret: "s3cret" };
+		await save(client);
+		await connect("u1");
+		await save({ create: false, ...client, name: "GitHub!" });
+		await save({ create: false, ...client, oauthClientSecret: "" });
+		await call("a1", "PUT", "/mcp-servers/enabled", {
+			body: { id: "github", enabled: false },
+		});
+		expect((await listed("u1"))[0]).toMatchObject({
+			status: "connected",
+			disabled: true,
+		});
+		expect(as.revoked).toEqual([]);
+	});
+
+	it("ends every Connection when the Admin deletes the MCP Server, and revokes them", async () => {
+		await save({});
+		await connect("u1");
+		expect((await call("a1", "DELETE", "/mcp-servers/github")).status).toBe(
+			200,
+		);
+		expect(await listed("u1")).toEqual([]);
+		expect(await revocations(1)).toHaveLength(1);
+		await save({});
+		expect((await listed("u1"))[0].status).toBe("none");
+	});
+
+	it("lists a per-User OAuth server's connected Users for the Admin: name, when, status, never a token", async () => {
+		await save({});
+		await save({ id: "shared", auth: "shared", url: "https://s.example.com" });
+		await connect("u1");
+		await connect("u2");
+		await db.execute(
+			sql`update mcp_connection set status = 'needs_reconnect' where user_id = 'u2'`,
+		);
+		const { body } = await call("a1", "GET", "/mcp-servers");
+		const oauth = body.find((s: { id: string }) => s.id === "github");
+		expect(
+			oauth.connections.map((c: { name: string; status: string }) => [
+				c.name,
+				c.status,
+			]),
+		).toEqual([
+			["Uma", "connected"],
+			["Ugo", "needs_reconnect"],
+		]);
+		expect(
+			new Date(oauth.connections[0].connectedAt).getTime(),
+		).toBeGreaterThan(Date.now() - 60_000);
+		expect(JSON.stringify(body)).not.toMatch(/access-|refresh-/);
+		expect(
+			body.find((s: { id: string }) => s.id === "shared").connections,
+		).toBeUndefined();
 	});
 });

@@ -1,16 +1,21 @@
 // Users' Connections to per-User OAuth MCP Servers, kept in Postgres with their secrets encrypted: the ConnectionStore the api and
 // the worker both use, and what a User's Connections page lists.
-import { db } from "@orqestra/db";
+import { db, type Tx } from "@orqestra/db";
 import {
 	mcpConnection,
 	mcpPendingAuthorization,
 	mcpRegisteredClient,
 	mcpServer,
+	user,
 } from "@orqestra/db/schema";
 import {
 	type ConnectionStore,
+	type ConnectionTokens,
+	type Fetch,
+	type McpServer,
 	PENDING_TTL_MS,
 	type PendingAuthorization,
+	revokeConnection,
 } from "@orqestra/tools";
 import { and, eq, lt, or, sql } from "drizzle-orm";
 import { mcpToolRef, type OrqestraConfig } from "./index.ts";
@@ -189,4 +194,121 @@ export async function userConnections(userId: string, current: OrqestraConfig) {
 				: (status ?? ("none" as const)),
 		connectedAt,
 	}));
+}
+
+/** Who is connected to each per-User OAuth MCP Server, for the Admin: the User's name, when, status. Never a token. */
+export async function connectedUsers() {
+	const rows = await db
+		.select({
+			serverId: mcpConnection.mcpServerId,
+			userId: mcpConnection.userId,
+			name: user.name,
+			tokens: mcpConnection.tokens,
+			status: mcpConnection.status,
+			connectedAt: mcpConnection.connectedAt,
+		})
+		.from(mcpConnection)
+		.leftJoin(user, eq(user.id, mcpConnection.userId))
+		.orderBy(mcpConnection.connectedAt);
+	const byServer: Record<
+		string,
+		{
+			name: string;
+			connectedAt: Date;
+			status: "connected" | "needs_reconnect";
+		}[]
+	> = {};
+	for (const { serverId, userId, name, tokens, status, connectedAt } of rows) {
+		byServer[serverId] ??= [];
+		byServer[serverId].push({
+			// shortcut: a User with no local record yet shows by their `sub`; every signed-in User gets one (ADR 0008)
+			name: name ?? userId,
+			connectedAt,
+			status: decryptSecret(tokens) === undefined ? "needs_reconnect" : status,
+		});
+	}
+	return byServer;
+}
+
+/** What revoking a deleted Connection needs once its delete is committed. */
+export interface DeletedConnection {
+	tokens: ConnectionTokens;
+	issuer: string;
+	oauthClient?: McpServer["oauthClient"];
+	registered?: Awaited<ReturnType<ConnectionStore["registeredClient"]>>;
+}
+
+const deleted = (
+	rows: { tokens: string; issuer: string }[],
+	extra: Omit<DeletedConnection, "tokens" | "issuer">,
+): DeletedConnection[] =>
+	rows.flatMap(({ tokens, issuer }) => {
+		const plain = opened<ConnectionTokens>(tokens);
+		// tokens that no longer decrypt cannot be revoked
+		return plain ? [{ tokens: plain, issuer, ...extra }] : [];
+	});
+
+/** Deletes the User's own Connection to the server; what revoking it needs, undefined when there was none. */
+export async function deleteConnection(
+	userId: string,
+	serverId: string,
+	oauthClient?: McpServer["oauthClient"],
+) {
+	const [registered, rows] = await Promise.all([
+		connectionStore.registeredClient(serverId),
+		db
+			.delete(mcpConnection)
+			.where(
+				and(
+					eq(mcpConnection.userId, userId),
+					eq(mcpConnection.mcpServerId, serverId),
+				),
+			)
+			.returning(),
+	]);
+	return rows.length ? deleted(rows, { oauthClient, registered }) : undefined;
+}
+
+/**
+ * In `tx`, deletes every Connection to the server, its pending authorizations and its registered Client, the server's old
+ * `oauthClient` being the one they were made as; what revoking them needs, after the commit.
+ */
+export async function clearConnections(
+	tx: Tx,
+	serverId: string,
+	oauthClient?: McpServer["oauthClient"],
+) {
+	const rows = await tx
+		.delete(mcpConnection)
+		.where(eq(mcpConnection.mcpServerId, serverId))
+		.returning();
+	await tx
+		.delete(mcpPendingAuthorization)
+		.where(eq(mcpPendingAuthorization.mcpServerId, serverId));
+	const [client] = await tx
+		.delete(mcpRegisteredClient)
+		.where(eq(mcpRegisteredClient.mcpServerId, serverId))
+		.returning();
+	return deleted(rows, {
+		oauthClient,
+		registered: client && opened(client.client),
+	});
+}
+
+/** Revokes deleted Connections as far as their authorization servers let it; failures are only logged. */
+export async function revokeConnections(
+	connections: DeletedConnection[],
+	{ orqestraUrl, fetch }: { orqestraUrl?: string; fetch?: Fetch } = {},
+) {
+	await Promise.all(
+		connections.map(({ tokens, issuer, ...client }) =>
+			revokeConnection(
+				{ tokens, issuer },
+				{ ...client, orqestraUrl },
+				fetch,
+			).catch((error) =>
+				console.error(`Revoking a Connection at ${issuer} failed`, error),
+			),
+		),
+	);
 }

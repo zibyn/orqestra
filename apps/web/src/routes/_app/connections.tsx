@@ -102,6 +102,19 @@ function ConnectionsPage() {
 		}
 	}
 
+	async function disconnect(serverId: string) {
+		setBusy(serverId);
+		try {
+			await ok(api().api.connections({ serverId }).delete());
+			setError("");
+			await router.invalidate();
+		} catch (e) {
+			setError(errorText(e));
+		} finally {
+			setBusy(undefined);
+		}
+	}
+
 	const date = (d: Date | string) =>
 		new Date(d).toLocaleDateString(getLocale());
 	const list = (names: string[]) =>
@@ -164,20 +177,39 @@ function ConnectionsPage() {
 								</>
 							}
 							actions={
-								// shortcut: no Disconnect yet, it comes with disconnecting (#120)
-								r.status !== "connected" &&
-								!r.disabled && (
-									<Button
-										size="sm"
-										disabled={!!busy}
-										onClick={() => void connect(r.id)}
-									>
-										<ExternalLinkIcon data-icon="inline-start" />
-										{r.status === "needs_reconnect"
-											? m.connections_reconnect()
-											: m.connections_connect()}
-									</Button>
-								)
+								<>
+									{r.status !== "none" && (
+										<Button
+											size="sm"
+											variant="ghost"
+											disabled={!!busy}
+											onClick={() => {
+												if (
+													confirm(
+														m.connections_disconnect_confirm({
+															server: r.name,
+														}),
+													)
+												)
+													void disconnect(r.id);
+											}}
+										>
+											{m.connections_disconnect()}
+										</Button>
+									)}
+									{r.status !== "connected" && !r.disabled && (
+										<Button
+											size="sm"
+											disabled={!!busy}
+											onClick={() => void connect(r.id)}
+										>
+											<ExternalLinkIcon data-icon="inline-start" />
+											{r.status === "needs_reconnect"
+												? m.connections_reconnect()
+												: m.connections_connect()}
+										</Button>
+									)}
+								</>
 							}
 						>
 							{r.status === "needs_reconnect" && (
