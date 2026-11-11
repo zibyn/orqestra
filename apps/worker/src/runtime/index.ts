@@ -3,6 +3,7 @@ import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import {
 	NOOP_TELEMETRY_CONTEXT,
 	type SpanAttributes,
+	type TelemetryCarrier,
 	type TelemetryContext,
 	type TelemetrySpan,
 } from "@earendil-works/pi-telemetry";
@@ -85,10 +86,10 @@ const withAttributes = (
 /**
  * `tool`, each call a span of its own under `span`: the Tool's name, its call id and whether it failed, never its
  * arguments or result. A thrown error is `_OTHER` (the adapter's default); a result that is an error, MCP's `isError`
- * included, is `tool_error`.
+ * included, is `tool_error`. While a call runs, `carriers` holds its span's trace context by call id, for the work it sets going.
  */
 const traced =
-	(span: TelemetrySpan) =>
+	(span: TelemetrySpan, carriers: Map<string, TelemetryCarrier>) =>
 	(tool: AgentTool & { mcpServerId?: string }): AgentTool => ({
 		...tool,
 		execute: (toolCallId, ...rest) =>
@@ -103,13 +104,19 @@ const traced =
 					},
 				},
 				async (toolSpan) => {
-					const result = await tool.execute(toolCallId, ...rest);
-					if (result.isError)
-						toolSpan.setStatus({
-							status: "error",
-							error: { name: "tool_error", message: "" },
-						});
-					return result;
+					const carrier = toolSpan.propagation?.inject(toolSpan);
+					if (carrier) carriers.set(toolCallId, carrier);
+					try {
+						const result = await tool.execute(toolCallId, ...rest);
+						if (result.isError)
+							toolSpan.setStatus({
+								status: "error",
+								error: { name: "tool_error", message: "" },
+							});
+						return result;
+					} finally {
+						carriers.delete(toolCallId);
+					}
 				},
 			),
 	});
@@ -127,7 +134,13 @@ export function runAgent(
 	{ telemetry = NOOP_TELEMETRY_CONTEXT, ...deps }: RuntimeDeps,
 ) {
 	const attributes = runAttributes(run);
-	return telemetry.startSpan(
+	const { propagation } = telemetry;
+	// a Subagent's first Run goes under the Tool call that started it; a woken one is a root, linked to what woke it
+	const parent =
+		run.trace.parent && propagation
+			? propagation.extract(run.trace.parent)
+			: telemetry;
+	return parent.startSpan(
 		{
 			name: "invoke_agent",
 			attributes: {
@@ -136,6 +149,9 @@ export function runAgent(
 				"orqestra.run.unattended": run.unattended,
 				"orqestra.run.subagent": run.isSubagent,
 			},
+			links: propagation
+				? run.trace.links.map((c) => ({ context: propagation.extract(c) }))
+				: [],
 		},
 		(span) =>
 			reply(run, {
@@ -175,6 +191,8 @@ async function reply(
 	const rows = run.transcript.messages;
 	const last = rows.at(-1) as (typeof rows)[number];
 	const provider = config.sandboxProvider;
+	// the trace context of each Tool call under way, handed to the Subagents it starts or continues
+	const carriers = new Map<string, TelemetryCarrier>();
 	// MCP Servers are connected for this Run only, so changes on the server side show up in the next one
 	const background = run.backgroundCalls;
 	const toolbox = await openToolbox(config, turn.agent.tools, {
@@ -251,7 +269,9 @@ async function reply(
 					...(memory
 						? [...memoryTools(memory, sub), recallTool(run.recall)]
 						: []),
-					...(run.subagents ? subagentTools(config, run.subagents) : []),
+					...(run.subagents
+						? subagentTools(config, run.subagents, (id) => carriers.get(id))
+						: []),
 					...(sub ? [] : [question.tool, draftTool(config.limits)]),
 					...(run.timer ? timerTools(run.timer) : []),
 				].map(
@@ -260,6 +280,7 @@ async function reply(
 							...runAttributes(run),
 							"orqestra.purpose": runPurpose(run),
 						}),
+						carriers,
 					),
 				),
 				messages,

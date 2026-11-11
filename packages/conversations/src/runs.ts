@@ -384,6 +384,7 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 		thinkingLevel: last?.thinkingLevel ?? "off",
 		subagentId: conversationId,
 		wake,
+		trace: row.trace ? { link: row.trace } : undefined,
 	});
 	return parentId;
 }

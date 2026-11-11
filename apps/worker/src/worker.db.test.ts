@@ -58,6 +58,16 @@ const { createConversations, MAX_SUBAGENTS_PER_USER_MESSAGE } = await import(
 	"@orqestra/conversations"
 );
 const { startAgentWorker } = await import("./worker.ts");
+const { otelTelemetry } = await import("./tracing.ts");
+const { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } =
+	await import("@opentelemetry/sdk-trace");
+// every Run's spans, wiped before every test
+const spans = new InMemorySpanExporter();
+const telemetry = otelTelemetry(
+	new TracerProvider({
+		spanProcessors: [new SimpleSpanProcessor({ exporter: spans })],
+	}).getTracer("test"),
+);
 const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
 // one store, as the api and worker share one
@@ -321,6 +331,7 @@ describe.skipIf(!url)(
 				toolbox: (services, allowed, options) =>
 					openToolbox(services, allowed, { ...options, fetch: fetchFake }),
 				fetch: fetchFake,
+				telemetry,
 			});
 		};
 
@@ -341,6 +352,7 @@ describe.skipIf(!url)(
 			await db.execute(
 				sql`truncate conversation, scheduled_task, usage, limits, push_subscription, "user" cascade`,
 			);
+			spans.reset();
 		});
 
 		it("streams a reply over SSE, then saves it and a title", async () => {
@@ -445,6 +457,72 @@ describe.skipIf(!url)(
 			expect(notified).toContain('status=\\"partial\\"');
 			expect(notified).toContain("what I found");
 			expect(view?.subagents[0].outcome).toBe("partial");
+		});
+
+		it("traces a Subagent's first Run under the Tool call that started it, and the Run its Notification wakes as a root linked back to it", async () => {
+			script({
+				parent: [
+					fauxAssistantMessage(
+						fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }),
+						{ stopReason: "toolUse" },
+					),
+					fauxAssistantMessage("Digging"),
+					fauxAssistantMessage("Done"),
+				],
+				sub: [
+					// once the parent's Run is over, so the Notification wakes another
+					async () => {
+						await waitFor(
+							async () => spans.getFinishedSpans(),
+							(all) =>
+								all.some(
+									(s) =>
+										s.name === "invoke_agent" &&
+										s.attributes["gen_ai.conversation.id"] === id,
+								),
+						);
+						return fauxAssistantMessage("what I found");
+					},
+				],
+			});
+			const id = await conversations.send(userId, {
+				agentId: "faux",
+				text: "dig deep",
+			});
+			const runs = await waitFor(
+				async () =>
+					spans.getFinishedSpans().filter((s) => s.name === "invoke_agent"),
+				(r) => r.length === 3,
+			);
+			const [tool] = spans
+				.getFinishedSpans()
+				.filter((s) => s.name === "execute_tool subagent");
+			const [first, woken] = runs.filter(
+				(r) => r.attributes["gen_ai.conversation.id"] === id,
+			);
+			const sub = runs.find(
+				(r) => r.attributes["gen_ai.conversation.id"] !== id,
+			);
+
+			expect(first?.parentSpanContext).toBeUndefined();
+			expect(tool?.parentSpanContext?.spanId).toBe(
+				first?.spanContext().spanId as string,
+			);
+			expect(sub?.spanContext().traceId).toBe(
+				first?.spanContext().traceId as string,
+			);
+			expect(sub?.parentSpanContext?.spanId).toBe(
+				tool?.spanContext().spanId as string,
+			);
+			expect(woken?.parentSpanContext).toBeUndefined();
+			expect(woken?.spanContext().traceId).not.toBe(
+				first?.spanContext().traceId as string,
+			);
+			expect(woken?.links.map((l) => l.context.spanId)).toEqual([
+				tool?.spanContext().spanId as string,
+			]);
+			// a User's message links to nothing
+			expect(first?.links).toEqual([]);
 		});
 
 		it("cancels the command a Subagent runs when the User stops the parent", async () => {

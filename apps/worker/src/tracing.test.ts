@@ -41,8 +41,10 @@ const conformance = createTelemetryAdapterConformance(async () => {
 	const provider = new TracerProvider({
 		spanProcessors: [new SimpleSpanProcessor({ exporter })],
 	});
+	const context = otelTelemetry(provider.getTracer("test"));
 	return {
-		context: otelTelemetry(provider.getTracer("test")),
+		context,
+		propagation: context.propagation,
 		getSpans: async () => {
 			const spans = exporter.getFinishedSpans();
 			const ids = spans.map((s) => s.spanContext().spanId);

@@ -41,6 +41,7 @@ export function memoryRun({
 	turn,
 	scheduledTaskId,
 	firingId,
+	trace = { links: [] },
 	inbox = [],
 	isSubagent = false,
 	unattended = false,
@@ -61,6 +62,8 @@ export function memoryRun({
 	/** A Firing of this Scheduled Task started the Conversation. */
 	scheduledTaskId?: string;
 	firingId?: number;
+	/** Where the Run's span goes; a root of its own by default, as for a User's message. */
+	trace?: RunHandle["trace"];
 	/** Inputs that arrive once the Run has begun. */
 	inbox?: Message[];
 	isSubagent?: boolean;
@@ -105,6 +108,7 @@ export function memoryRun({
 		rootConversationId: isSubagent ? "memory-root" : "memory",
 		scheduledTaskId,
 		firingId,
+		trace,
 		isSubagent,
 		unattended,
 		turn,

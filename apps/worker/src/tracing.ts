@@ -5,10 +5,12 @@ import {
 	type SpanOptions,
 	type SpanStatus,
 	type TelemetryContext,
+	type TelemetryPropagation,
 	type TelemetrySpan,
 } from "@earendil-works/pi-telemetry";
 import {
 	type Attributes,
+	isSpanContextValid,
 	ROOT_CONTEXT,
 	type Span,
 	type SpanContext,
@@ -62,7 +64,43 @@ const contexts = new WeakMap<TelemetryContext, SpanContext>();
 
 /** pi's telemetry contract on an OTel tracer, its `pi.ai.request` spans renamed and mapped to the GenAI conventions. */
 export function otelTelemetry(tracer: Tracer): TelemetryContext {
-	return { startSpan: starter(tracer, undefined) };
+	// W3C trace context, so a Run in another job, or another worker, continues or links to a span of this one
+	const propagation: TelemetryPropagation = {
+		inject: (context) => {
+			const c = contexts.get(context);
+			return (
+				c && {
+					traceparent: `00-${c.traceId}-${c.spanId}-${c.traceFlags.toString(16).padStart(2, "0")}`,
+				}
+			);
+		},
+		extract: (carrier) => {
+			const m = carrier?.traceparent?.match(
+				/^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/,
+			);
+			const found: SpanContext | undefined = m
+				? {
+						traceId: m[1] as string,
+						spanId: m[2] as string,
+						traceFlags: Number.parseInt(m[3] as string, 16),
+						isRemote: true,
+					}
+				: undefined;
+			const remote = found && isSpanContextValid(found) ? found : undefined;
+			const context: TelemetryContext = {
+				propagation,
+				startSpan: starter(
+					tracer,
+					remote && trace.wrapSpanContext(remote),
+					propagation,
+				),
+			};
+			// so a span can link to it
+			if (remote) contexts.set(context, remote);
+			return context;
+		},
+	};
+	return { propagation, startSpan: starter(tracer, undefined, propagation) };
 }
 
 const clean = (attributes: SpanAttributes = {}): Attributes =>
@@ -79,7 +117,11 @@ const links = (list: readonly SpanLink[] = []) =>
 	});
 
 /** Starts children of `parent` (roots when undefined); `null` makes inert ones, the children of a settled span. */
-function starter(tracer: Tracer, parent: Span | undefined | null) {
+function starter(
+	tracer: Tracer,
+	parent: Span | undefined | null,
+	propagation: TelemetryPropagation,
+) {
 	return <T>(
 		options: SpanOptions,
 		callback: (span: TelemetrySpan) => T | Promise<T>,
@@ -101,7 +143,9 @@ function starter(tracer: Tracer, parent: Span | undefined | null) {
 		let settled = otel === null;
 		let status: SpanStatus | undefined;
 		const span: TelemetrySpan = {
-			startSpan: (o, cb) => starter(tracer, settled ? null : otel)(o, cb),
+			propagation,
+			startSpan: (o, cb) =>
+				starter(tracer, settled ? null : otel, propagation)(o, cb),
 			addLink: (link) => {
 				if (!settled) otel?.addLinks(links([link]));
 			},

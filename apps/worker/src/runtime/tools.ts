@@ -219,6 +219,9 @@ export function refusal(error: unknown) {
 export function subagentTools(
 	config: Pick<OrqestraConfig, "agents">,
 	subagents: NonNullable<RunHandle["subagents"]>,
+	/** The trace context of the Tool call's span, by call id. */
+	trace: (toolCallId: string) => Record<string, string> | undefined = () =>
+		undefined,
 ) {
 	const templates = config.agents
 		.map((a) => `- ${a.id} (${a.name}): ${a.description}`)
@@ -246,7 +249,9 @@ export function subagentTools(
 			),
 		}),
 		execute: async (toolCallId, { tasks }) => {
-			const started = await subagents.start(toolCallId, tasks).catch(refused);
+			const started = await subagents
+				.start(toolCallId, tasks, trace(toolCallId))
+				.catch(refused);
 			return {
 				content: text(
 					`Started subagent${started.length > 1 ? "s" : ""} ${started.join(", ")}.`,
@@ -264,9 +269,9 @@ export function subagentTools(
 			number: Type.Integer({ minimum: 1 }),
 			message: Type.String(),
 		}),
-		execute: async (_id, { number, message }) => {
+		execute: async (toolCallId, { number, message }) => {
 			const { continued } = await subagents
-				.message(number, message)
+				.message(number, message, trace(toolCallId))
 				.catch(refused);
 			return {
 				content: text(continued ? `Subagent ${number} continues.` : "Sent."),

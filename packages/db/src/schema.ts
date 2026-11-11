@@ -246,6 +246,11 @@ export const inbox = pgTable(
 		origin: text("origin").$type<InputOrigin>(),
 		// false: delivered by the next Run, but does not start one
 		wake: boolean("wake").notNull(),
+		// the W3C trace context of the Tool call that set it going: the Run it wakes goes under `parent` (a Subagent's brief) or links to `link`
+		trace: jsonb("trace").$type<{
+			parent?: Record<string, string>;
+			link?: Record<string, string>;
+		}>(),
 		createdAt: timestamp("created_at").defaultNow().notNull(),
 	},
 	(table) => [index("inbox_conversationId_idx").on(table.conversationId)],
@@ -344,6 +349,8 @@ export const subagent = pgTable("subagent", {
 	// what the parent Agent calls it by: 1, 2, ... within the parent Conversation
 	number: integer("number").notNull(),
 	brief: text("brief").notNull(),
+	// the W3C trace context of the Tool call that started or last continued it, which its Notification's Run links to
+	trace: jsonb("trace").$type<Record<string, string>>(),
 	outcome: text("outcome")
 		.$type<
 			"queued" | "running" | "completed" | "partial" | "failed" | "stopped"

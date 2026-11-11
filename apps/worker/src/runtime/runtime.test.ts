@@ -1381,6 +1381,103 @@ describe("runAgent traces", () => {
 		}
 	});
 
+	// the trace context of a Tool call span another Run made
+	const toolCall = async (t: ReturnType<typeof traced>) => {
+		let carrier: Record<string, string> | undefined;
+		await t.telemetry.startSpan({ name: "execute_tool subagent" }, (span) => {
+			carrier = span.propagation?.inject(span);
+		});
+		const [span] = named(t.spans(), "execute_tool subagent");
+		return { carrier: carrier as Record<string, string>, span };
+	};
+
+	it("starts a Subagent's first Run under the Tool call that started it", async () => {
+		script([fauxAssistantMessage("found")]);
+		const t = traced();
+		const started = await toolCall(t);
+		const m = memoryRun({
+			transcript: transcript(user("brief")),
+			turn: turn(),
+			isSubagent: true,
+			trace: { parent: started.carrier, links: [] },
+		});
+		await runAgent(m.run, { ...deps(), telemetry: t.telemetry });
+
+		const [root] = named(t.spans(), "invoke_agent");
+		expect(root?.spanContext().traceId).toBe(
+			started.span?.spanContext().traceId as string,
+		);
+		expect(root?.parentSpanContext?.spanId).toBe(
+			started.span?.spanContext().spanId as string,
+		);
+		expect(root?.links).toEqual([]);
+	});
+
+	it("makes a woken Run a root of its own, linked to the Tool call that set the work going", async () => {
+		script([fauxAssistantMessage("summed up")]);
+		const t = traced();
+		const started = await toolCall(t);
+		const m = memoryRun({
+			transcript: transcript(user("[Subagent 1 completed]")),
+			turn: turn(),
+			titled: true,
+			trace: { links: [started.carrier] },
+		});
+		await runAgent(m.run, { ...deps(), telemetry: t.telemetry });
+
+		const [root] = named(t.spans(), "invoke_agent");
+		expect(root?.parentSpanContext).toBeUndefined();
+		expect(root?.spanContext().traceId).not.toBe(
+			started.span?.spanContext().traceId as string,
+		);
+		expect(root?.links.map((l) => l.context.spanId)).toEqual([
+			started.span?.spanContext().spanId as string,
+		]);
+	});
+
+	it("hands the trace context of the Tool call that starts or continues a Subagent to it", async () => {
+		script([
+			fauxAssistantMessage(
+				[
+					fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }, { id: "s" }),
+					fauxToolCall(
+						"subagent_message",
+						{ number: 1, message: "more" },
+						{ id: "m" },
+					),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("waiting"),
+		]);
+		const t = traced();
+		const handed: Record<string, Record<string, string> | undefined> = {};
+		const m = memoryRun({
+			transcript: transcript(user("delegate")),
+			turn: turn(),
+			titled: true,
+			subagents: {
+				start: async (_id, _tasks, trace) => {
+					handed.start = trace;
+					return [1];
+				},
+				message: async (_n, _text, trace) => {
+					handed.message = trace;
+					return { continued: true };
+				},
+				stop: async () => [],
+			},
+		});
+		await runAgent(m.run, { ...deps(), telemetry: t.telemetry });
+
+		const id = (name: string) =>
+			named(t.spans(), `execute_tool ${name}`)[0]?.spanContext().spanId;
+		expect(handed.start?.traceparent).toContain(id("subagent") as string);
+		expect(handed.message?.traceparent).toContain(
+			id("subagent_message") as string,
+		);
+	});
+
 	it("traces each Tool call under the Run, with its name and call id but no arguments or result", async () => {
 		script([
 			fauxAssistantMessage(

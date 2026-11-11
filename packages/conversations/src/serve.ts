@@ -109,6 +109,9 @@ export type StreamEvent =
 	| { type: "start" }
 	| { type: "delta"; kind: "text" | "thinking"; index: number; delta: string };
 
+/** A span's W3C trace context (`traceparent`), as the worker's tracer injects it, kept so a Run in another job can continue or link to it. */
+export type TraceCarrier = Record<string, string>;
+
 /** One Run, as its handler sees it: what to reply to, and every way to save or show the reply. */
 export type RunHandle = {
 	conversationId: string;
@@ -119,6 +122,11 @@ export type RunHandle = {
 	/** The Scheduled Task whose Firing started the top-level Conversation, and that Firing; none otherwise. */
 	scheduledTaskId?: string;
 	firingId?: number;
+	/**
+	 * Where the Run's span goes: a Subagent's first Run under `parent`, the Tool call that started it; any other Run a root of its own,
+	 * linked to the Tool calls that set going the work whose inputs woke it (a Subagent continued, a Notification). None for a User's message.
+	 */
+	trace: { parent?: TraceCarrier; links: TraceCarrier[] };
 	isSubagent: boolean;
 	/**
 	 * Nobody is watching: an Unattended Run, under the Limits' step cap; past their wall-clock time its signal aborts with RunTimedOut.
@@ -198,13 +206,21 @@ export type RunHandle = {
 	};
 	/** The Run's Subagents; none for a Subagent at the deepest level Subagents may nest to. */
 	subagents?: {
-		/** Starts a Subagent per task, numbered in order; throws NoSuchTemplate, TemplateOffline or BudgetExceeded. */
+		/**
+		 * Starts a Subagent per task, numbered in order; throws NoSuchTemplate, TemplateOffline or BudgetExceeded.
+		 * `trace`: the trace context of the Tool call's span, which the Subagent's first Run goes under and its Notification links to.
+		 */
 		start(
 			toolCallId: string,
 			tasks: { brief: string; template?: string }[],
+			trace?: TraceCarrier,
 		): Promise<number[]>;
-		/** Gives a Subagent more instructions, or continues it once finished; throws NoSuchSubagent or BudgetExceeded. */
-		message(number: number, text: string): Promise<{ continued: boolean }>;
+		/** Gives a Subagent more instructions, or continues it once finished; throws NoSuchSubagent or BudgetExceeded. `trace`: the Tool call's, as for `start`. */
+		message(
+			number: number,
+			text: string,
+			trace?: TraceCarrier,
+		): Promise<{ continued: boolean }>;
 		/** Stops those of them still queued or running and returns their numbers; throws NoSuchSubagent. */
 		stop(numbers: number[]): Promise<number[]>;
 	};
@@ -391,6 +407,13 @@ async function open(
 ): Promise<RunHandle> {
 	const conversationId = conv.id;
 	const sub = conv.parentId ? conversationId : undefined;
+	// the trace context of the inputs about to wake it; one arriving in between just goes unlinked
+	const traces = (
+		await db
+			.select({ trace: inbox.trace })
+			.from(inbox)
+			.where(eq(inbox.conversationId, conversationId))
+	).flatMap((r) => (r.trace ? [r.trace] : []));
 	// nothing to reload: the inputs showed already, from the inbox
 	await drain(conversationId);
 	const rows = await db
@@ -435,6 +458,10 @@ async function open(
 		rootConversationId: conv.rootId,
 		scheduledTaskId: root.scheduledTaskId ?? undefined,
 		firingId: root.firingId,
+		trace: {
+			parent: traces.find((t) => t.parent)?.parent,
+			links: traces.flatMap((t) => (t.link ? [t.link] : [])),
+		},
 		isSubagent: !!sub,
 		unattended,
 		turn,
@@ -642,7 +669,7 @@ function subagentsOf(
 		return row;
 	};
 	return {
-		async start(toolCallId, tasks) {
+		async start(toolCallId, tasks, trace) {
 			const picked = tasks.map((t) => {
 				const template = cfg.agents.find((a) => a.id === t.template);
 				if (t.template && !template) throw new NoSuchTemplate(t.template);
@@ -684,6 +711,7 @@ function subagentsOf(
 						toolCallId,
 						number: first + i,
 						brief: t.brief,
+						trace,
 					})),
 				);
 				await tx.insert(inbox).values(
@@ -693,6 +721,7 @@ function subagentsOf(
 						model: modelRef(t.model),
 						thinkingLevel: t.thinking,
 						wake: true,
+						trace: trace && { parent: trace },
 					})),
 				);
 				return { first, children };
@@ -703,17 +732,17 @@ function subagentsOf(
 			return children.map((_, i) => first + i);
 		},
 
-		async message(number, text) {
+		async message(number, text, trace) {
 			const row = await db.transaction(async (tx) => {
 				await lockRoot(tx, parentId);
 				const row = await find(tx, number);
 				const continued = !["queued", "running"].includes(row.outcome);
 				if (continued) {
 					await spend(tx, conv.rootId, 1);
-					// it waits for a slot like a new one, and a stop catches it while it waits
+					// it waits for a slot like a new one, and a stop catches it while it waits; its Notification now links to this call
 					await tx
 						.update(subagent)
-						.set({ outcome: "queued" })
+						.set({ outcome: "queued", trace })
 						.where(eq(subagent.conversationId, row.conversationId));
 				}
 				// it continues on the Model it last used
@@ -724,6 +753,8 @@ function subagentsOf(
 					model: last?.model ?? modelRef(parent.model),
 					thinkingLevel: last?.thinkingLevel ?? parent.thinking,
 					wake: true,
+					// a running one reads it in the Run it is in
+					trace: continued && trace ? { link: trace } : undefined,
 				});
 				return { ...row, continued };
 			});
