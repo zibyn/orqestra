@@ -300,6 +300,13 @@ export type McpTaskState =
 	| { status: "failed"; message: string }
 	| { status: "cancelled" };
 
+/** How a Background Call's task is asked about: for a per-User OAuth server, with its User's Connection. */
+export type TaskRequestOptions = {
+	fetch?: Fetch;
+	timeoutMs: number;
+	authProvider?: AuthProvider;
+};
+
 /**
  * Looks a handed-off task up once (one `tasks/get`) on its MCP Server as configured now, then releases it again.
  * A completed task's result comes as an immediate one would. A server that no longer knows the task, or refuses
@@ -308,7 +315,7 @@ export type McpTaskState =
 export async function pollMcpTask(
 	server: Pick<McpServer, "url" | "headers">,
 	reference: SerializedTaskReference,
-	options: { fetch?: Fetch; timeoutMs: number },
+	options: TaskRequestOptions,
 ): Promise<McpTaskState> {
 	try {
 		return await getTaskState(server, reference, options);
@@ -338,12 +345,12 @@ export async function pollMcpTask(
 export async function cancelMcpTask(
 	server: Pick<McpServer, "url" | "headers">,
 	reference: SerializedTaskReference,
-	{ fetch, timeoutMs }: { fetch?: Fetch; timeoutMs: number },
+	{ fetch, timeoutMs, authProvider }: TaskRequestOptions,
 ) {
 	const signal = AbortSignal.timeout(timeoutMs * 2);
 	const connection = await connectMcpServer(
 		server.url,
-		{ headers: server.headers },
+		{ headers: server.headers, authProvider },
 		{ signal, timeoutMs, fetch },
 	);
 	try {
@@ -357,12 +364,12 @@ export async function cancelMcpTask(
 async function getTaskState(
 	server: Pick<McpServer, "url" | "headers">,
 	reference: SerializedTaskReference,
-	{ fetch, timeoutMs }: { fetch?: Fetch; timeoutMs: number },
+	{ fetch, timeoutMs, authProvider }: TaskRequestOptions,
 ): Promise<McpTaskState> {
 	const signal = AbortSignal.timeout(timeoutMs * 2);
 	const connection = await connectMcpServer(
 		server.url,
-		{ headers: server.headers },
+		{ headers: server.headers, authProvider },
 		{ signal, timeoutMs, fetch },
 	);
 	try {

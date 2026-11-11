@@ -20,6 +20,7 @@ import {
 } from "@orqestra/db/schema";
 import type {
 	BackgroundCallStart,
+	ConnectionStore,
 	Fetch,
 	ObjectStore,
 	Orrery,
@@ -244,6 +245,8 @@ export type ServeOptions = {
 	stalledInterval?: number;
 	/** The `fetch` Background Calls are polled with; tests stand in for the MCP Servers. */
 	fetch?: Fetch;
+	/** The Users' Connections, which the Background Calls of per-User OAuth MCP Servers are polled with. */
+	connections?: ConnectionStore;
 };
 
 /** Runs in this process, by Conversation id, so a stop request can abort them from the start (compaction included). */
@@ -792,6 +795,7 @@ export async function serveRuns(
 		subagentConcurrency = 8,
 		stalledInterval = 30_000,
 		fetch,
+		connections,
 	}: ServeOptions = {},
 ) {
 	const databaseUrl = process.env.DATABASE_URL as string;
@@ -862,6 +866,7 @@ export async function serveRuns(
 				job.data.backgroundCallId,
 				job.id as string,
 				fetch,
+				connections,
 			),
 		{
 			connection: { connectionString: databaseUrl, migrate: true },

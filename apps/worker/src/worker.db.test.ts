@@ -1,5 +1,6 @@
 import {
 	afterAll,
+	afterEach,
 	beforeAll,
 	beforeEach,
 	describe,
@@ -25,6 +26,7 @@ import type { ConversationEvent } from "@orqestra/conversations";
 import { openToolbox } from "@orqestra/tools";
 import {
 	fakeMcpServer,
+	memoryConnections,
 	memoryOrrery,
 	memoryStore,
 } from "@orqestra/tools/testing";
@@ -165,6 +167,8 @@ const fetchFake = (async (input: string | URL, init?: RequestInit) =>
 		? slow.fetch(input, init)
 		: new Response(JSON.stringify({ results: [] }))) as typeof fetch;
 const userId = "u1";
+/** The Users' Connections to per-User OAuth MCP Servers, as the worker reads them. */
+const connections = memoryConnections();
 // a command that runs until it is canceled, one that writes a report, and the check attach makes
 const orrery = memoryOrrery({
 	exec: (command, files) => {
@@ -331,6 +335,7 @@ describe.skipIf(!url)(
 				toolbox: (services, allowed, options) =>
 					openToolbox(services, allowed, { ...options, fetch: fetchFake }),
 				fetch: fetchFake,
+				connections,
 				telemetry,
 			});
 		};
@@ -2162,6 +2167,58 @@ describe.skipIf(!url)(
 					const id = await backgrounded();
 					task().status = "cancelled";
 					await woken(id, "cancelled");
+				});
+
+				describe("of a per-User OAuth MCP Server", () => {
+					let shared: Awaited<
+						ReturnType<typeof config.current>
+					>["mcpServers"][string];
+					beforeEach(async () => {
+						const loaded = await config.current();
+						shared = loaded.mcpServers.slow;
+						loaded.mcpServers.slow = { ...shared, auth: "oauth" };
+						connections.connections.clear();
+						await connections.saveConnection(userId, "slow", {
+							tokens: { access_token: "u1-token", token_type: "Bearer" },
+							issuer: "https://as.example.com",
+						});
+					});
+					afterEach(async () => {
+						(await config.current()).mcpServers.slow = shared;
+					});
+					/** Starts a Background Call and waits until its server has been polled with the User's token. */
+					const polledAsUser = async () => {
+						const id = await backgrounded();
+						await waitFor(
+							async () => slow.requests,
+							(r) =>
+								r.some(
+									(q) =>
+										q.method === "tasks/get" &&
+										q.headers.get("authorization") === "Bearer u1-token",
+								),
+						);
+						return id;
+					};
+
+					it("polls with its User's token until it is done", async () => {
+						const id = await polledAsUser();
+						finishTask("as u1");
+						expect(await woken(id, "completed")).toContain("as u1");
+					});
+
+					it("as failed once its User's Connection is removed", async () => {
+						const id = await polledAsUser();
+						connections.connections.delete(`${userId} slow`);
+						expect(await woken(id, "failed")).toContain("disconnected");
+					});
+
+					it("as failed once its User's Connection needs reconnecting", async () => {
+						const id = await polledAsUser();
+						const c = connections.connections.get(`${userId} slow`);
+						if (c) c.status = "needs_reconnect";
+						expect(await woken(id, "failed")).toContain("reconnect");
+					});
 				});
 
 				it("keeps tracking with the new request headers when an Admin edits its MCP Server", async () => {

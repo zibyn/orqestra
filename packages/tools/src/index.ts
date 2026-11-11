@@ -244,6 +244,7 @@ export {
 	type McpTool,
 	pollMcpTask,
 	type StartBackgroundCall,
+	type TaskRequestOptions,
 	testMcpServer,
 } from "./mcp.ts";
 export {
@@ -251,6 +252,7 @@ export {
 	type ConnectionTokens,
 	callbackUrl,
 	clientMetadataDocument,
+	connectionAuth,
 	type FinishConnectionError,
 	finishConnection,
 	type OAuthDiscoveryStep,

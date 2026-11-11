@@ -10,12 +10,15 @@ import {
 } from "@orqestra/db/schema";
 import {
 	type BackgroundCallStart,
+	type ConnectionStore,
 	cancelMcpTask,
+	connectionAuth,
 	type Fetch,
 	INPUT_REQUIRED,
 	type McpServer,
 	type McpTaskState,
 	pollMcpTask,
+	type TaskRequestOptions,
 } from "@orqestra/tools";
 import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
 import {
@@ -107,6 +110,7 @@ export async function pollBackgroundCall(
 	id: string,
 	jobId: string,
 	fetch?: Fetch,
+	connections?: ConnectionStore,
 ) {
 	const row = await db.query.backgroundCall.findFirst({
 		where: eq(backgroundCall.id, id),
@@ -120,9 +124,13 @@ export async function pollBackgroundCall(
 			{ status: "failed", message: "The MCP Server has been disabled." },
 			row.mcpServerId,
 		);
+	const signIn =
+		server.auth === "oauth" ? await asUser(row, connections) : undefined;
+	if (signIn && "status" in signIn) return end(row, signIn, server.name);
+	const authProvider = signIn;
 	const maxSeconds = cfg.limits.backgroundCallMaxDuration;
 	if (Date.now() - row.startedAt.getTime() >= maxSeconds * 1000)
-		return cancelAndEnd(row, server, fetch, {
+		return cancelAndEnd(row, server, fetch, authProvider, {
 			status: "failed",
 			message: `The call ran longer than the ${maxSeconds} seconds Orqestra tracks a Background Call, so it was cancelled.`,
 		});
@@ -131,6 +139,7 @@ export async function pollBackgroundCall(
 		state = await pollMcpTask(server, referenceOf(row), {
 			fetch,
 			timeoutMs: POLL_TIMEOUT_MS,
+			authProvider,
 		});
 	} catch (error) {
 		// network errors, timeouts, 5xx: asked again at the interval, until it has been too long since an answer
@@ -147,7 +156,7 @@ export async function pollBackgroundCall(
 	}
 	if (state && state.status !== "working")
 		return state.status === "input_required"
-			? cancelAndEnd(row, server, fetch, {
+			? cancelAndEnd(row, server, fetch, authProvider, {
 					status: "failed",
 					message: INPUT_REQUIRED,
 				})
@@ -179,16 +188,47 @@ export async function requeueBackgroundCalls() {
 	for (const r of running) await schedule(r.id, r.jobId, 0);
 }
 
+/**
+ * How a poll of a per-User OAuth server signs in: with the Connection of the User of the row's Conversation (a Subagent's is
+ * its top-level Conversation's User); how the Background Call ends when that Connection is gone or needs reconnecting.
+ */
+async function asUser(
+	row: Row,
+	connections: ConnectionStore | undefined,
+): Promise<NonNullable<TaskRequestOptions["authProvider"]> | Ending> {
+	const conv = await db.query.conversation.findFirst({
+		columns: { userId: true },
+		where: eq(conversation.id, row.conversationId),
+	});
+	const provider =
+		connections &&
+		conv &&
+		(await connectionAuth(connections, conv.userId, row.mcpServerId));
+	if (provider) return provider;
+	const kept =
+		connections &&
+		conv &&
+		(await connections.connection(conv.userId, row.mcpServerId));
+	return {
+		status: "failed",
+		message: kept
+			? "The User's Connection to the service needs reconnecting."
+			: "The User's Connection to the service is gone: they disconnected, or an Admin reconfigured its MCP Server.",
+	};
+}
+
 /** Asks the server to cancel the task, giving up when it cannot be reached, then ends the Background Call as `state`. */
 async function cancelAndEnd(
 	row: Row,
 	server: McpServer,
 	fetch: Fetch | undefined,
+	authProvider: TaskRequestOptions["authProvider"],
 	state: Ending,
 ) {
 	await cancelMcpTask(server, referenceOf(row), {
 		fetch,
 		timeoutMs: POLL_TIMEOUT_MS,
+		authProvider,
 	}).catch((error) =>
 		console.error(`could not cancel Background Call ${row.id}`, error),
 	);
@@ -212,8 +252,9 @@ export async function endBackgroundCallsOf(
 				eq(backgroundCall.status, "running"),
 			),
 		);
+	// its Connections go with it, so a per-User OAuth server is asked without one
 	for (const row of rows)
-		await cancelAndEnd(row, server, fetch, {
+		await cancelAndEnd(row, server, fetch, undefined, {
 			status: "failed",
 			message: "The MCP Server has been deleted.",
 		});
