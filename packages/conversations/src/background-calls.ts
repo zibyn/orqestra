@@ -15,7 +15,9 @@ import {
 	pollMcpTask,
 } from "@orqestra/tools";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { alertRun } from "./alerts.ts";
 import {
+	endIdleFiring,
 	ensureRun,
 	lastModel,
 	lockRoot,
@@ -24,6 +26,7 @@ import {
 	runQueue,
 	saved,
 	spend,
+	unschedule,
 } from "./runs.ts";
 
 // A Background Call is its `background_call` row: polled by delayed jobs that carry only its id, one at a time,
@@ -244,7 +247,7 @@ export async function cancelBackgroundCalls(
 	fetch?: Fetch,
 ) {
 	const cfg = await config();
-	const cancelled = await db.transaction(async (tx) => {
+	const ended = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
 		const rows = await tx
 			.update(backgroundCall)
@@ -292,11 +295,20 @@ export async function cancelBackgroundCalls(
 				wake: false,
 			});
 		}
-		return rows;
+		// waking nothing, it may have been the last its Firing waited for
+		const rootId = rows.length ? await rootOf(conversationId) : undefined;
+		const fired = rootId
+			? await endIdleFiring(tx, rootId, by === "stop")
+			: undefined;
+		return { rows, rootId, fired };
 	});
+	const { rows: cancelled, rootId, fired } = ended;
 	if (!cancelled.length) return 0;
-	const rootId = await rootOf(conversationId);
 	if (rootId) await saved(rootId);
+	if (fired?.paused) await unschedule(fired.taskId);
+	// a Stop of the User's sends no Alert
+	if (rootId && fired && by !== "stop")
+		await alertRun(rootId, fired.paused ? "auto_paused" : fired.outcome);
 	await cancelTasks(async () => cfg, cancelled, fetch);
 	return cancelled.length;
 }
