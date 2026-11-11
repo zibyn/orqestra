@@ -17,10 +17,22 @@ import {
 	type UsagePurpose,
 	usage,
 } from "@orqestra/db/schema";
-import type { ObjectStore, Orrery, SandboxProvider } from "@orqestra/tools";
+import type {
+	BackgroundCallStart,
+	Fetch,
+	ObjectStore,
+	Orrery,
+	SandboxProvider,
+} from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { alertRun } from "./alerts.ts";
+import {
+	BACKGROUND_CALLS_QUEUE,
+	pollBackgroundCall,
+	requeueBackgroundCalls,
+	startBackgroundCall,
+} from "./background-calls.ts";
 import { type Memories, memoriesOf, memoryOn } from "./memories.ts";
 import { type Recall, recallOf } from "./recall.ts";
 import {
@@ -181,6 +193,11 @@ export type RunHandle = {
 		/** True when there was one to cancel. */
 		cancel(): Promise<boolean>;
 	};
+	/** The Run's Background Calls: Tool calls its MCP Servers put in the background, tracked past the Run until they end. */
+	backgroundCalls?: {
+		/** Starts tracking one; its outcome comes as a Notification. Returns its id. */
+		start(call: BackgroundCallStart): Promise<string>;
+	};
 	/** The Run's Subagents; none for a Subagent at the deepest level Subagents may nest to. */
 	subagents?: {
 		/** Starts a Subagent per task, numbered in order; throws NoSuchTemplate, TemplateOffline or BudgetExceeded. */
@@ -208,6 +225,8 @@ export type ServeOptions = {
 	subagentConcurrency?: number;
 	/** How soon a crashed worker's Run is noticed; tests shorten it. */
 	stalledInterval?: number;
+	/** The `fetch` Background Calls are polled with; tests stand in for the MCP Servers. */
+	fetch?: Fetch;
 };
 
 /** Runs in this process, by Conversation id, so a stop request can abort them from the start (compaction included). */
@@ -580,6 +599,9 @@ async function open(
 						}),
 					cancel: () => cancelTimer(conversationId),
 				},
+		backgroundCalls: {
+			start: (call) => startBackgroundCall(conversationId, call),
+		},
 		subagents:
 			conv.depth < cfg.limits.maxSubagentDepth
 				? subagentsOf(cfg, conv, turn, saved)
@@ -717,6 +739,7 @@ export async function serveRuns(
 		concurrency = 8,
 		subagentConcurrency = 8,
 		stalledInterval = 30_000,
+		fetch,
 	}: ServeOptions = {},
 ) {
 	const databaseUrl = process.env.DATABASE_URL as string;
@@ -776,10 +799,31 @@ export async function serveRuns(
 		console.error(`Firing job ${job?.id} failed`, err),
 	);
 	firings.on("error", (err) => console.error("worker error", err));
-	workers.push(timers, firings);
+	// polls hold no Run, Timer or Subagent slot
+	const polls = new Worker(
+		BACKGROUND_CALLS_QUEUE,
+		(job) =>
+			pollBackgroundCall(
+				config,
+				job.data.backgroundCallId,
+				job.id as string,
+				fetch,
+			),
+		{
+			connection: { connectionString: databaseUrl, migrate: true },
+			concurrency: 8,
+		},
+		createPostgresBackend,
+	);
+	polls.on("failed", (job, err) =>
+		console.error(`Background Call job ${job?.id} failed`, err),
+	);
+	polls.on("error", (err) => console.error("worker error", err));
+	workers.push(timers, firings, polls);
 	// the pg backend doesn't emit 'error' on connect failure, so fail fast instead of idling silently
 	await Promise.all(workers.map((w) => w.waitUntilReady()));
 	await requeue();
+	await requeueBackgroundCalls();
 	// every worker sweeps; a row is deleted, with its object, by whichever gets it first
 	const sweep = setInterval(
 		() =>

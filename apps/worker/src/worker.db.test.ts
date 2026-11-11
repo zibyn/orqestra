@@ -22,7 +22,11 @@ import {
 import type { AgentDefinition } from "@orqestra/config";
 import type { ConversationEvent } from "@orqestra/conversations";
 import { openToolbox } from "@orqestra/tools";
-import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
+import {
+	fakeMcpServer,
+	memoryOrrery,
+	memoryStore,
+} from "@orqestra/tools/testing";
 
 // Smoke tests of the assembled worker: the runtime replying through the real @orqestra/conversations
 // (lifecycle scenarios are tested there, runtime ones in src/runtime): needs TEST_DATABASE_URL, which src/test-env.ts sets up
@@ -99,6 +103,29 @@ const smallAgent: AgentDefinition = {
 	tools: [],
 	compaction: { reserveTokens: 1000, keepRecentTokens: 50 },
 };
+// an Agent that may use the MCP Server `slow`, whose `crunch` it puts in the background
+const mcpAgent: AgentDefinition = {
+	...fauxAgent,
+	id: "mcp",
+	tools: ["search", "mcp:slow"],
+};
+const newSlow = () =>
+	fakeMcpServer({
+		era: "modern",
+		tools: [
+			{
+				name: "crunch",
+				inputSchema: { type: "object" },
+				call: () => ({ task: { status: "working", pollIntervalMs: 250 } }),
+			},
+		],
+	});
+let slow = newSlow();
+/** Search answers with no results; the MCP Server `slow` is the fake one. */
+const fetchFake = (async (input: string | URL, init?: RequestInit) =>
+	new URL(String(input)).hostname === "slow.example.com"
+		? slow.fetch(input, init)
+		: new Response(JSON.stringify({ results: [] }))) as typeof fetch;
 const userId = "u1";
 // a command that runs until it is canceled, one that writes a report, and the check attach makes
 const orrery = memoryOrrery({
@@ -213,7 +240,12 @@ async function patch() {
 				!loaded.models.some((l) => l.provider === m.provider && l.id === m.id),
 		),
 	);
-	loaded.agents.push(fauxAgent, skilledAgent, smallAgent);
+	loaded.agents.push(fauxAgent, skilledAgent, smallAgent, mcpAgent);
+	loaded.mcpServers.slow = {
+		name: "Slow",
+		url: "https://slow.example.com/mcp",
+		headers: {},
+	};
 	loaded.sandboxProvider = {
 		url: "http://orrery",
 		token: "t",
@@ -245,24 +277,21 @@ describe.skipIf(!url)(
 	"Runs replied by the runtime (Postgres + faux provider)",
 	() => {
 		let stopWorker: () => Promise<void>;
-
-		beforeAll(async () => {
-			await patch();
+		const start = async () => {
 			// faux replies are one shared queue, so runs go one at a time
 			stopWorker = await startAgentWorker(config.current, {
 				concurrency: 1,
 				orrery: () => orrery.client,
 				store,
-				// Search answers with no results
 				toolbox: (services, allowed, options) =>
-					openToolbox(services, allowed, {
-						...options,
-						fetch: (async () =>
-							new Response(
-								JSON.stringify({ results: [] }),
-							)) as unknown as typeof fetch,
-					}),
+					openToolbox(services, allowed, { ...options, fetch: fetchFake }),
+				fetch: fetchFake,
 			});
+		};
+
+		beforeAll(async () => {
+			await patch();
+			await start();
 		});
 		afterAll(async () => {
 			await stopWorker?.();
@@ -951,6 +980,199 @@ describe.skipIf(!url)(
 				(await conversations.get(userId, stopped))?.messages[1],
 			).toMatchObject({
 				message: { stopReason: "aborted" },
+			});
+		});
+
+		describe("Background Calls", () => {
+			beforeEach(() => {
+				slow = newSlow();
+			});
+			const finishTask = (text: string) =>
+				Object.assign(slow.tasks.get("task-1") ?? {}, {
+					status: "completed",
+					result: { content: [{ type: "text", text }] },
+				});
+			const crunch = () =>
+				fauxAssistantMessage(fauxToolCall("slow__crunch", {}));
+			const notifications = (
+				v: Awaited<ReturnType<typeof conversations.get>>,
+			) => v?.messages.filter((m) => m.backgroundCallId) ?? [];
+
+			it("tells the Agent at once the call went to the background, and its result wakes the Conversation once done", async () => {
+				let woken: unknown;
+				script({
+					parent: [
+						crunch(),
+						fauxAssistantMessage("Crunching in the background"),
+						(context) => {
+							woken = context.messages;
+							return fauxAssistantMessage("The answer is 42");
+						},
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "crunch it",
+				});
+				const ran = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && v.messages.length === 4,
+				);
+				const result = ran?.messages[2].message;
+				expect(JSON.stringify(result)).toContain("background");
+				expect(ran?.backgroundCalls).toMatchObject([
+					{
+						conversationId: id,
+						toolCallId: (result as { toolCallId: string }).toolCallId,
+						status: "running",
+					},
+				]);
+				expect(
+					(result as { details?: { backgroundCall?: string } }).details
+						?.backgroundCall,
+				).toBe(ran?.backgroundCalls[0].id);
+
+				finishTask("42 it is");
+				const done = await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant" &&
+						v.messages.length === 6,
+				);
+				expect(done?.backgroundCalls[0].status).toBe("completed");
+				const [notified] = notifications(done);
+				expect(notified.backgroundCallId).toBe(
+					done?.backgroundCalls[0].id ?? "",
+				);
+				const frame = JSON.stringify(notified.message.content);
+				expect(frame).toContain("<task-notification");
+				expect(frame).toContain('server=\\"Slow\\"');
+				expect(frame).toContain('tool=\\"crunch\\"');
+				expect(frame).toContain('status=\\"completed\\"');
+				expect(JSON.stringify(woken)).toContain("42 it is");
+				expect(slow.requests.map((r) => r.method)).not.toContain(
+					"tasks/cancel",
+				);
+			});
+
+			it("delivers a result that comes in during the Run between two steps of that Run", async () => {
+				let next: unknown;
+				script({
+					parent: [
+						crunch(),
+						async () => {
+							finishTask("in time");
+							await waitFor(
+								() => db.execute(sql`select 1 from inbox`),
+								(r) => r.rows.length > 0,
+							);
+							return fauxAssistantMessage(
+								fauxToolCall("search", { query: "more" }),
+							);
+						},
+						(context) => {
+							next = context.messages;
+							return fauxAssistantMessage("Used it");
+						},
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "crunch it",
+				});
+				const view = await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant" &&
+						notifications(v).length === 1,
+				);
+				expect(JSON.stringify(next)).toContain("in time");
+				// one Run: nothing woke it again
+				expect(view?.messages.map((m) => m.message.role)).toEqual([
+					"user",
+					"assistant",
+					"toolResult",
+					"assistant",
+					"toolResult",
+					"user",
+					"assistant",
+				]);
+			});
+
+			it("holds a result that comes in while the Agent waits on its Question until the User answers", async () => {
+				let answered: unknown;
+				script({
+					parent: [
+						fauxAssistantMessage([
+							fauxToolCall("slow__crunch", {}),
+							fauxToolCall("ask_user", { question: "Which one?" }),
+						]),
+						(context) => {
+							answered = context.messages;
+							return fauxAssistantMessage("Thanks");
+						},
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "crunch it",
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && !!v.awaitingReply,
+				);
+				finishTask("while asking");
+				const held = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.backgroundCalls[0]?.status === "completed",
+				);
+				await new Promise((r) => setTimeout(r, 300));
+				const still = await conversations.get(userId, id);
+				expect(still?.status).toBe("idle");
+				expect(still?.messages.length).toBe(held?.messages.length);
+
+				await conversations.send(userId, { conversationId: id, text: "B" });
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant" &&
+						notifications(v).length === 1,
+				);
+				expect(JSON.stringify(answered)).toContain("while asking");
+			});
+
+			it("keeps tracking a call across a worker restart", async () => {
+				script({
+					parent: [
+						crunch(),
+						fauxAssistantMessage("Crunching"),
+						fauxAssistantMessage("Back with it"),
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "crunch it",
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && v.messages.length === 4,
+				);
+				await stopWorker();
+				finishTask("after the restart");
+				await start();
+				const view = await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant" &&
+						notifications(v).length === 1,
+				);
+				expect(JSON.stringify(notifications(view)[0].message)).toContain(
+					"after the restart",
+				);
 			});
 		});
 	},

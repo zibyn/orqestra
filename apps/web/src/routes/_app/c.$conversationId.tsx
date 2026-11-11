@@ -306,7 +306,11 @@ function ConversationView() {
 							key={row.id}
 							messageId={String(row.id)}
 							// the User's turn settles near the top, and the reply streams in under it
-							scrollAnchor={row.message.role === "user" && !row.subagentId}
+							scrollAnchor={
+								row.message.role === "user" &&
+								!row.subagentId &&
+								!row.backgroundCallId
+							}
 							className="flex flex-col gap-6"
 						>
 							{conversation.compactedBefore.includes(row.id) && (
@@ -316,6 +320,11 @@ function ConversationView() {
 							)}
 							{row.origin === "timer" ? (
 								<TimerRang />
+							) : row.backgroundCallId ? (
+								<BackgroundCallLine
+									id={row.backgroundCallId}
+									text={messageText(row.message)}
+								/>
 							) : row.message.role === "user" && row.subagentId ? (
 								<NotificationLine
 									run={conversation.subagents.find(
@@ -383,6 +392,11 @@ function ConversationView() {
 						>
 							{row.origin === "timer" ? (
 								<TimerRang />
+							) : row.backgroundCallId ? (
+								<BackgroundCallLine
+									id={row.backgroundCallId}
+									text={messageText(row.message)}
+								/>
 							) : row.subagentId ? (
 								<NotificationLine
 									run={conversation.subagents.find(
@@ -734,7 +748,8 @@ function ToolCallView({
 	result?: ToolResultMessage;
 	conversationId?: string;
 }) {
-	const { subagents } = Route.useLoaderData();
+	const { subagents, backgroundCalls } = Route.useLoaderData();
+	const background = backgroundCalls.find((b) => b.toolCallId === call.id);
 	const runs =
 		(result?.details as { subagents?: SubagentTranscript[] } | undefined)
 			?.subagents ?? subagents.filter((s) => s.toolCallId === call.id);
@@ -756,20 +771,30 @@ function ToolCallView({
 				conversationId={conversationId}
 			/>
 		);
+	// a call its MCP Server put in the background goes on past its result
+	const pending = !result || background?.status === "running";
 	const line = (
 		<TraceLine
-			status={!result ? "running" : result.isError ? "error" : undefined}
+			status={
+				pending
+					? "running"
+					: result?.isError || background?.status === "failed"
+						? "error"
+						: undefined
+			}
 		>
 			<TraceIcon>
-				{result ? (
-					<WrenchIcon />
-				) : (
+				{pending ? (
 					<Loader2Icon className="animate-spin text-signal" />
+				) : (
+					<WrenchIcon />
 				)}
 			</TraceIcon>
 			<TraceTitle>{call.name}</TraceTitle>
 			<TraceDescription className="min-w-0 shrink truncate">
-				{Object.values(call.arguments).map(String).join(" · ")}
+				{background
+					? backgroundCallLabel(background.status)
+					: Object.values(call.arguments).map(String).join(" · ")}
 			</TraceDescription>
 		</TraceLine>
 	);
@@ -948,6 +973,30 @@ function NotificationLine({
 		>
 			<MarkerContent>
 				{m.subagent_number({ number: run.number })} · {outcomeLabel(outcome)}
+			</MarkerContent>
+		</Marker>
+	);
+}
+
+const backgroundCallLabel = (status?: string) =>
+	(
+		({
+			running: m.background_call_running(),
+			completed: m.background_call_completed(),
+			failed: m.background_call_failed(),
+			cancelled: m.background_call_cancelled(),
+		}) as Record<string, string>
+	)[status ?? "completed"];
+
+/** A Background Call's Notification, as one divider like a Subagent's: its MCP Server and Tool, and how it ended. */
+function BackgroundCallLine({ id, text }: { id: string; text: string }) {
+	const call = Route.useLoaderData().backgroundCalls.find((b) => b.id === id);
+	const outcome = text.match(/^<task-notification [^>]*status="(\w+)"/)?.[1];
+	if (!call) return null;
+	return (
+		<Marker variant="separator" className="text-xs">
+			<MarkerContent>
+				{call.mcpServerName} · {call.toolName} · {backgroundCallLabel(outcome)}
 			</MarkerContent>
 		</Marker>
 	);

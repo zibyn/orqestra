@@ -44,6 +44,12 @@ export const rootOf = async (conversationId: string) =>
 		})
 	)?.rootId;
 
+/** Matches the inputs that are no Notification, of a Subagent or a Background Call: a Question waits for those only. */
+const notNotification = and(
+	isNull(inbox.subagentId),
+	isNull(inbox.backgroundCallId),
+);
+
 /** Matches the `subagent` rows of a parent Conversation's Subagents. */
 export const subagentOf = (parentId: string) =>
 	inArray(
@@ -116,12 +122,13 @@ const newQueue = (name: string) =>
 		createPostgresBackend,
 	);
 const queues = new Map<string, ReturnType<typeof newQueue>>();
-/** The queue of top-level Runs, of Subagent Runs, of Timers or of Firings. */
+/** The queue of top-level Runs, of Subagent Runs, of Timers, of Background Call polls or of Firings. */
 export function runQueue(
 	name:
 		| typeof AGENT_RUNS_QUEUE
 		| typeof SUBAGENT_RUNS_QUEUE
 		| "timers"
+		| "background-calls"
 		| typeof FIRINGS_QUEUE,
 ) {
 	const queue = queues.get(name) ?? newQueue(name);
@@ -181,7 +188,7 @@ export async function ensureRun(conversationId: string) {
 					eq(inbox.conversationId, conversationId),
 					eq(inbox.wake, true),
 					// a Question waits for the User: Notifications go with the reply
-					conv.awaitingReply ? isNull(inbox.subagentId) : undefined,
+					conv.awaitingReply ? notNotification : undefined,
 				),
 			)
 			.limit(1);
@@ -230,7 +237,10 @@ export async function ensureRun(conversationId: string) {
  */
 export async function queueInput(
 	tx: Tx,
-	input: Omit<typeof inbox.$inferInsert, "wake" | "subagentId"> & {
+	input: Omit<
+		typeof inbox.$inferInsert,
+		"wake" | "subagentId" | "backgroundCallId"
+	> & {
 		origin: InputOrigin;
 	},
 ) {
@@ -258,9 +268,23 @@ export type Ended = {
 	result: string;
 };
 
-// a Subagent's output may come from any web page: it must not close the tag that frames it
+/** A Notification's text: `body` in a `<task-notification>` tag with `attributes`. */
+export const notificationFrame = (
+	attributes: Record<string, string>,
+	body: string,
+) =>
+	`<task-notification ${Object.entries(attributes)
+		.map(
+			([k, v]) =>
+				`${k}="${v.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"`,
+		)
+		.join(" ")}>\n${
+		// what it frames may come from any web page or service: it must not close the tag
+		body.replaceAll("</task-notification", "<\\/task-notification")
+	}\n</task-notification>`;
+
 const notification = (number: number, { outcome, result }: Ended) =>
-	`<task-notification subagent="${number}" status="${outcome}">\n${result.replaceAll("</task-notification", "<\\/task-notification")}\n</task-notification>`;
+	notificationFrame({ subagent: String(number), status: outcome }, result);
 
 /**
  * Under the parent's lock (which `tx` holds): saves how a Subagent ended, sets it idle and hands its result to the parent as a Notification.
@@ -531,7 +555,7 @@ export async function drain(
 						and(
 							eq(inbox.conversationId, conversationId),
 							eq(inbox.wake, true),
-							finish === "question" ? isNull(inbox.subagentId) : undefined,
+							finish === "question" ? notNotification : undefined,
 						),
 					)
 					.limit(1)
@@ -552,6 +576,7 @@ export async function drain(
 					model: i.model,
 					thinkingLevel: i.thinkingLevel,
 					subagentId: i.subagentId,
+					backgroundCallId: i.backgroundCallId,
 					origin: i.origin,
 				})),
 			);

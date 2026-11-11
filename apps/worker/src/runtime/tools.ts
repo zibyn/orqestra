@@ -182,6 +182,14 @@ export function draftTool(limits: Pick<Limits, "minFiringInterval">) {
 	});
 }
 
+/** The Tool result of a call its MCP Server put in the background, as Background Call `id`. */
+export const backgrounded = (id: string) => ({
+	content: text(
+		"The call started in the background. Its result comes to you by itself as a <task-notification> once it ends: do not poll for it or call the tool again. Until it is in, you may go on with other work, or tell the user what you are doing and end your reply.",
+	),
+	details: { backgroundCall: id },
+});
+
 /** Told to a Subagent whose next request is its last, made without Tools. */
 export const STEP_LIMIT =
 	"You have reached your step limit and can no longer use tools. Reply now with your final answer from what you have so far, saying what is left undone.";

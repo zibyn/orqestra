@@ -16,6 +16,7 @@ import type { MemoryChange } from "@orqestra/config/shared";
 import { db } from "@orqestra/db";
 import {
 	attachment,
+	backgroundCall,
 	compaction,
 	conversation,
 	inbox,
@@ -275,7 +276,7 @@ export function createConversations({
 		async get(userId: string, id: string) {
 			const conv = await owned(userId, id);
 			if (!conv) return undefined;
-			const [messages, pending, compactions, subagents, set] =
+			const [messages, pending, compactions, subagents, set, calls] =
 				await Promise.all([
 					db
 						.select({
@@ -284,6 +285,7 @@ export function createConversations({
 							model: message.model,
 							thinkingLevel: message.thinkingLevel,
 							subagentId: message.subagentId,
+							backgroundCallId: message.backgroundCallId,
 							origin: message.origin,
 							queued: sql<boolean>`false`,
 						})
@@ -298,6 +300,7 @@ export function createConversations({
 							model: inbox.model,
 							thinkingLevel: inbox.thinkingLevel,
 							subagentId: inbox.subagentId,
+							backgroundCallId: inbox.backgroundCallId,
 							origin: inbox.origin,
 							// its id is the inbox's, not a message's
 							queued: sql<boolean>`true`,
@@ -329,7 +332,25 @@ export function createConversations({
 						.where(eq(conversation.rootId, id))
 						.orderBy(asc(conversation.depth), asc(subagent.number)),
 					db.query.timer.findFirst({ where: eq(timer.conversationId, id) }),
+					// the whole tree's, each shown at the Tool call that made it
+					db
+						.select({
+							id: backgroundCall.id,
+							conversationId: backgroundCall.conversationId,
+							toolCallId: backgroundCall.toolCallId,
+							mcpServerId: backgroundCall.mcpServerId,
+							toolName: backgroundCall.toolName,
+							status: backgroundCall.status,
+						})
+						.from(backgroundCall)
+						.innerJoin(
+							conversation,
+							eq(conversation.id, backgroundCall.conversationId),
+						)
+						.where(eq(conversation.rootId, id))
+						.orderBy(asc(backgroundCall.startedAt)),
 				]);
+			const cfg = await config();
 			return {
 				id: conv.id,
 				agentId: conv.agentId,
@@ -341,7 +362,7 @@ export function createConversations({
 				unread: conv.unread,
 				awaitingReply: conv.awaitingReply,
 				// the Agent was removed from config or has no Model left
-				readOnly: !resolveTurn(await config(), conv.agentId),
+				readOnly: !resolveTurn(cfg, conv.agentId),
 				messages: [...messages, ...pending].map((m) => ({
 					...m,
 					message: m.message as Message,
@@ -350,6 +371,11 @@ export function createConversations({
 				subagents,
 				/** The Timer set to ring, if any: the Conversation stays idle until it does. */
 				timer: set ? { note: set.note, ringsAt: set.ringsAt } : null,
+				/** The tree's Background Calls, with the name of their MCP Server (its id once it is gone). */
+				backgroundCalls: calls.map((c) => ({
+					...c,
+					mcpServerName: cfg.mcpServers[c.mcpServerId]?.name ?? c.mcpServerId,
+				})),
 			};
 		},
 

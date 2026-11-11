@@ -1,7 +1,7 @@
 import type { SerializedTaskReference } from "@modelcontextprotocol/ext-tasks/client";
 import { describe, expect, it } from "vitest";
 import { openToolbox, type ToolServices } from "./index.ts";
-import { connectMcpServer } from "./mcp.ts";
+import { connectMcpServer, pollMcpTask } from "./mcp.ts";
 import { type FakeTool, fakeMcpServer, type McpEra } from "./testing.ts";
 
 type Fake = ReturnType<typeof fakeMcpServer>;
@@ -342,5 +342,159 @@ describe("connectMcpServer and the Tasks extension", () => {
 		expect(fake.requests.map((r) => r.method)).not.toContain("tasks/cancel");
 		for (const r of fake.requests)
 			expect(r.headers.get("authorization")).toBe("Bearer s3cret");
+	});
+});
+
+describe("openToolbox with Background Calls", () => {
+	type Started = Parameters<
+		NonNullable<Parameters<typeof openToolbox>[2]["backgroundCall"]>
+	>[0];
+	const started: Started[] = [];
+	const backgroundCall = async (call: Started) => {
+		started.push(call);
+		return {
+			content: [{ type: "text" as const, text: "in the background" }],
+			details: { backgroundCall: "bc-1" },
+		};
+	};
+	const declaresTasks = (r: Fake["requests"][number]) =>
+		JSON.stringify(r.params?._meta ?? {}).includes(
+			"io.modelcontextprotocol/tasks",
+		);
+
+	it.each([
+		"legacy",
+		"dual",
+		"modern",
+	] as const)("answers an immediate result as before on a %s server", async (era) => {
+		const fake = fakeServer([echo], era);
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			fetch: fake.fetch,
+			backgroundCall,
+		});
+		const result = await tools[0].execute("1", { text: "hi" }, never);
+		expect(result).toMatchObject({
+			content: [{ type: "text", text: "hi" }],
+			isError: false,
+		});
+		await close();
+	});
+
+	it("declares the Tasks extension on every Tool call, and not without a way to start a Background Call", async () => {
+		const fake = fakeServer([echo], "modern");
+		for (const withCallback of [true, false]) {
+			const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+				signal: never,
+				fetch: fake.fetch,
+				backgroundCall: withCallback ? backgroundCall : undefined,
+			});
+			await tools[0].execute("1", { text: "hi" }, never);
+			await close();
+		}
+		const calls = fake.requests.filter((r) => r.method === "tools/call");
+		expect(calls.map(declaresTasks)).toEqual([true, false]);
+	});
+
+	it("hands a call the server puts in the background to the Background Call, and leaves the task running when it closes", async () => {
+		started.length = 0;
+		const fake = fakeServer(
+			[
+				{
+					name: "slow",
+					inputSchema: { type: "object" },
+					call: () => ({ task: { status: "working" } }),
+				},
+			],
+			"modern",
+		);
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			fetch: fake.fetch,
+			backgroundCall,
+		});
+		const result = await tools[0].execute("call-7", {}, never);
+		await close();
+		expect(result).toMatchObject({
+			content: [{ type: "text", text: "in the background" }],
+			details: { backgroundCall: "bc-1" },
+		});
+		expect(started).toEqual([
+			{
+				toolCallId: "call-7",
+				serverId: "s",
+				toolName: "slow",
+				reference: expect.objectContaining({ taskId: "task-1" }),
+			},
+		]);
+		const methods = fake.requests.map((r) => r.method);
+		expect(methods).not.toContain("tasks/cancel");
+		expect(methods).not.toContain("tasks/get");
+	});
+
+	it("polls a handed-off task once per look, and gets its result as an immediate one would be, even after its server moved", async () => {
+		started.length = 0;
+		const fake = fakeServer(
+			[
+				{
+					name: "slow",
+					inputSchema: { type: "object" },
+					call: () => ({ task: { status: "working", pollIntervalMs: 5000 } }),
+				},
+			],
+			"modern",
+		);
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			fetch: fake.fetch,
+			backgroundCall,
+		});
+		await tools[0].execute("1", {}, never);
+		await close();
+		const moved = { ...server("s"), url: "https://s.example.com/v2/mcp" };
+		const poll = () =>
+			pollMcpTask(moved, started[0].reference, {
+				fetch: fake.fetch,
+				timeoutMs: 1000,
+			});
+
+		expect(await poll()).toEqual({ status: "working", pollIntervalMs: 5000 });
+		Object.assign(fake.tasks.get("task-1") ?? {}, {
+			status: "completed",
+			result: {
+				content: [{ type: "text", text: "x".repeat(100_000) }],
+				isError: true,
+			},
+		});
+		const done = await poll();
+		expect(done).toMatchObject({ status: "completed", isError: true });
+		const text = done.status === "completed" ? done.content[0] : undefined;
+		expect(text?.type === "text" && text.text.length).toBeLessThan(100_000);
+		expect(fake.requests.filter((r) => r.method === "tasks/get")).toHaveLength(
+			2,
+		);
+		expect(fake.requests.map((r) => r.method)).not.toContain("tasks/cancel");
+	});
+
+	it("fails a call whose service asks for more input, as without Background Calls", async () => {
+		const fake = fakeServer(
+			[
+				{
+					name: "ask",
+					inputSchema: { type: "object" },
+					call: () => ({ inputRequired: true }),
+				},
+			],
+			"modern",
+		);
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			fetch: fake.fetch,
+			backgroundCall,
+		});
+		await expect(tools[0].execute("1", {}, never)).rejects.toThrow(
+			"This service asked for more input, which Orqestra does not support.",
+		);
+		await close();
 	});
 });

@@ -16,6 +16,7 @@ import { memoryPrompt, memoryTools, recallTool } from "./memory.ts";
 import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
 import { generateTitle } from "./title.ts";
 import {
+	backgrounded,
 	draftTool,
 	MAX_SUBAGENT_STEPS,
 	questionTool,
@@ -65,8 +66,12 @@ export async function runAgent(
 	const last = rows.at(-1) as (typeof rows)[number];
 	const provider = config.sandboxProvider;
 	// MCP Servers are connected for this Run only, so changes on the server side show up in the next one
+	const background = run.backgroundCalls;
 	const toolbox = await openToolbox(config, turn.agent.tools, {
 		signal,
+		backgroundCall:
+			background &&
+			(async (call) => backgrounded(await background.start(call))),
 		files: store && {
 			store,
 			attachment: (name) => run.attachment(name),

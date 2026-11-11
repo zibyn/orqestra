@@ -183,6 +183,8 @@ export const message = pgTable(
 		thinkingLevel: text("thinking_level").notNull(),
 		// a delivered Notification: the Subagent's Conversation it came from
 		subagentId: uuid("subagent_id"),
+		// a delivered Notification: the Background Call it reports on
+		backgroundCallId: uuid("background_call_id"),
 		// as in `inbox`
 		origin: text("origin").$type<InputOrigin>(),
 		// what Recall searches: a user or assistant message's text, without thinking or Tool calls; null for other messages
@@ -238,6 +240,8 @@ export const inbox = pgTable(
 		thinkingLevel: text("thinking_level").notNull(),
 		// set: a Notification from this Subagent's Conversation
 		subagentId: uuid("subagent_id"),
+		// set: a Notification of how this Background Call ended
+		backgroundCallId: uuid("background_call_id"),
 		// set: sent on the User's behalf by a Scheduled Task, or delivered by a Timer
 		origin: text("origin").$type<InputOrigin>(),
 		// false: delivered by the next Run, but does not start one
@@ -263,6 +267,46 @@ export const timer = pgTable("timer", {
 	model: text("model").notNull(),
 	thinkingLevel: text("thinking_level").notNull(),
 });
+
+// A Tool call its MCP Server put in the background: polled until it ends, when its outcome comes to the Conversation as a Notification
+export const backgroundCall = pgTable(
+	"background_call",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		// the Conversation whose Agent made the call, and gets the Notification
+		conversationId: uuid("conversation_id")
+			.notNull()
+			.references(() => conversation.id, { onDelete: "cascade" }),
+		// the Tool call it answers, so the UI shows it under that call
+		toolCallId: text("tool_call_id").notNull(),
+		// no foreign key: polled with the server's current config, its deletion handled apart
+		mcpServerId: text("mcp_server_id").notNull(),
+		// the Tool's name on its MCP Server
+		toolName: text("tool_name").notNull(),
+		// ext-tasks' SerializedTaskReference, to resume the task by
+		reference: jsonb("reference").notNull(),
+		status: text("status")
+			.$type<"running" | "completed" | "failed" | "cancelled">()
+			.default("running")
+			.notNull(),
+		// the BullMQ job id of its next poll, so queueing that poll twice adds one job
+		jobId: text("job_id").notNull(),
+		// as the Timer's: the Conversation's latest message when it started, in the Turn that made it
+		messageId: integer("message_id")
+			.notNull()
+			.references(() => message.id, { onDelete: "cascade" }),
+		startedAt: timestamp("started_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+		// when the server last answered a poll; the start until it has
+		polledAt: timestamp("polled_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [
+		index("background_call_conversationId_idx").on(table.conversationId),
+	],
+);
 
 // The model sees `summary` plus the messages from firstKeptMessageId on; users still see everything
 export const compaction = pgTable(

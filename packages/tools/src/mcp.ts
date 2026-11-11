@@ -1,4 +1,4 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import {
 	type CallToolResult,
@@ -16,6 +16,7 @@ import {
 	DispatchError,
 	type JsonRpcResponse,
 	type RawClientDispatch,
+	type SerializedTaskReference,
 	type TaskEnabledSession,
 } from "@modelcontextprotocol/ext-tasks/client";
 import { cut } from "./cut.ts";
@@ -33,6 +34,83 @@ export type McpConnection = {
 
 const clientInfo = { name: "orqestra", version: "1.0.0" };
 
+/** A Tool call its MCP Server put in the background, as the Toolbox hands it over: the task's reference, to poll it by. */
+export type BackgroundCallStart = {
+	toolCallId: string;
+	/** The MCP Server's id. */
+	serverId: string;
+	/** The Tool's name on its MCP Server. */
+	toolName: string;
+	reference: SerializedTaskReference;
+};
+/** Starts tracking a Background Call; returns the Tool result the Agent gets for it. */
+export type StartBackgroundCall = (
+	call: BackgroundCallStart,
+) => Promise<AgentToolResult<unknown>>;
+
+const INPUT_REQUIRED =
+	"This service asked for more input, which Orqestra does not support.";
+
+/** A Tool's result as the Agent gets it: its content converted and cut, MCP's `isError` as a Tool error. */
+function toolResult(result: CallToolResult) {
+	return {
+		content: toLlmContent(result).map((c) =>
+			c.type === "text" ? { ...c, text: cut(c.text) } : c,
+		),
+		details: undefined,
+		// MCP reports a Tool's failure in its result, not as a protocol error
+		isError: result.isError === true,
+	};
+}
+
+/**
+ * Calls a Tool declaring the Tasks extension: an immediate result comes back as the Agent gets it; a task is handed off
+ * to `handoff`, its local ownership released so closing the connection does not cancel it, and what that returns comes back.
+ */
+async function callWithTasks(
+	{ session }: McpConnection,
+	name: string,
+	args: Record<string, unknown>,
+	{
+		signal,
+		timeoutMs,
+		handoff,
+	}: {
+		signal?: AbortSignal;
+		timeoutMs: number;
+		handoff: (
+			reference: SerializedTaskReference,
+		) => Promise<AgentToolResult<unknown>>;
+	},
+): Promise<AgentToolResult<unknown>> {
+	const execution = await session
+		.callTool<CallToolResult>(name, args as never, {
+			signal,
+			requestTimeoutMs: timeoutMs,
+		})
+		.catch((error) => {
+			// the session allows no input rounds (see connectMcpServer), and says so only in its message
+			throw error instanceof Error &&
+				/input-required rounds/.test(error.message)
+				? new Error(INPUT_REQUIRED)
+				: error;
+		});
+	if (execution.kind === "task") {
+		let reference: SerializedTaskReference | undefined;
+		await execution.handoff((r) => {
+			reference = r;
+		});
+		// settled before the connection closes, which would otherwise cancel it
+		await execution.result().catch(() => {});
+		return handoff(reference as SerializedTaskReference);
+	}
+	const outcome = await execution.result();
+	if (outcome.status === "completed") return toolResult(outcome.result);
+	throw outcome.status === "failed"
+		? outcome.error
+		: new Error("The Tool call was cancelled");
+}
+
 /**
  * The Tools of the MCP Servers `ids`, connected in parallel; a server that cannot be connected to or listed is skipped (logged).
  * Every connection is pushed to `connections`, for the caller to close.
@@ -45,7 +123,14 @@ export async function mcpTools(
 		signal,
 		timeoutMs,
 		fetch,
-	}: { signal: AbortSignal; timeoutMs: number; fetch?: Fetch },
+		backgroundCall,
+	}: {
+		signal: AbortSignal;
+		timeoutMs: number;
+		fetch?: Fetch;
+		/** Without it, no Tool call declares the Tasks extension. */
+		backgroundCall?: StartBackgroundCall;
+	},
 ): Promise<AgentTool[]> {
 	const connected = await Promise.all(
 		ids.map(async (id) => {
@@ -76,12 +161,22 @@ export async function mcpTools(
 							type: "object",
 							properties: t.inputSchema.properties ?? {},
 						}),
-						execute: async (_toolCallId, params, callSignal) => {
+						execute: async (toolCallId, params, callSignal) => {
+							const args = params as Record<string, unknown>;
+							if (backgroundCall)
+								return callWithTasks(connection, t.name, args, {
+									signal: callSignal,
+									timeoutMs,
+									handoff: (reference) =>
+										backgroundCall({
+											toolCallId,
+											serverId: id,
+											toolName: t.name,
+											reference,
+										}),
+								});
 							const result = await client.callTool(
-								{
-									name: t.name,
-									arguments: params as Record<string, unknown>,
-								},
+								{ name: t.name, arguments: args },
 								{
 									signal: callSignal,
 									timeout: timeoutMs,
@@ -89,17 +184,8 @@ export async function mcpTools(
 								},
 							);
 							if (isInputRequiredResult(result))
-								throw new Error(
-									"This service asked for more input, which Orqestra does not support.",
-								);
-							return {
-								content: toLlmContent(result).map((c) =>
-									c.type === "text" ? { ...c, text: cut(c.text) } : c,
-								),
-								details: undefined,
-								// MCP reports a Tool's failure in its result, not as a protocol error
-								isError: result.isError === true,
-							};
+								throw new Error(INPUT_REQUIRED);
+							return toolResult(result);
 						},
 					}),
 				);
@@ -165,6 +251,8 @@ export async function connectMcpServer(
 			endpointId: url,
 			// ext-tasks then asks for no Tool declarations of its own (one `tools/list` fewer)
 			tools: { currentTool: () => undefined },
+			// Orqestra answers no request for input: a call asking for some fails at once
+			maxInputRounds: 0,
 			rawDispatch: raw.dispatch,
 			v2RequestFraming: {
 				protocolVersion: client.getNegotiatedProtocolVersion() ?? "",
@@ -176,6 +264,59 @@ export async function connectMcpServer(
 	} catch (error) {
 		await close();
 		throw error;
+	}
+}
+
+/** Where a Background Call's task stands: still going, with the server's hint for when to look again, or how it ended. */
+export type McpTaskState =
+	| { status: "working" | "input_required"; pollIntervalMs?: number }
+	| ({ status: "completed" } & ReturnType<typeof toolResult>)
+	| { status: "failed"; message: string }
+	| { status: "cancelled" };
+
+/**
+ * Looks a handed-off task up once (one `tasks/get`) on its MCP Server as configured now, then releases it again.
+ * A completed task's result comes as an immediate one would. Throws when the server cannot be asked.
+ */
+export async function pollMcpTask(
+	server: Pick<McpServer, "url" | "headers">,
+	reference: SerializedTaskReference,
+	{ fetch, timeoutMs }: { fetch?: Fetch; timeoutMs: number },
+): Promise<McpTaskState> {
+	const signal = AbortSignal.timeout(timeoutMs * 2);
+	const connection = await connectMcpServer(
+		server.url,
+		{ headers: server.headers },
+		{ signal, timeoutMs, fetch },
+	);
+	try {
+		// the session refuses a reference to another endpoint, and an Admin may have moved the server since
+		const execution = await connection.session.resumeTask<CallToolResult>(
+			{ ...reference, endpointId: server.url },
+			{ signal, requestTimeoutMs: timeoutMs },
+		);
+		try {
+			const first = await execution.updates()[Symbol.asyncIterator]().next();
+			const task = first.value?.type === "task" ? first.value.task : undefined;
+			if (task?.status === "working" || task?.status === "input_required")
+				return {
+					status: task.status,
+					pollIntervalMs: task.suggestedPollIntervalMs,
+				};
+			// with 2026-07-28 the outcome came with the lookup: no second request
+			const outcome = await execution.result();
+			if (outcome.status === "completed")
+				return { status: "completed", ...toolResult(outcome.result) };
+			if (outcome.status === "failed")
+				return { status: "failed", message: outcome.error.message };
+			return { status: "cancelled" };
+		} finally {
+			await execution.detach();
+			// settled before the connection closes, which would otherwise cancel it
+			await execution.result().catch(() => {});
+		}
+	} finally {
+		await connection.close();
 	}
 }
 

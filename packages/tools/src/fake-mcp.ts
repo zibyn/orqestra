@@ -43,7 +43,7 @@ const anything = {
 };
 
 /**
- * `requests` records every request as it arrived: its JSON-RPC method, URL and headers. `tasks` holds the tasks
+ * `requests` records every request as it arrived: its JSON-RPC method and params, URL and headers. `tasks` holds the tasks
  * handed out by id (`task-1`, …). `down` makes every request fail as an unreachable server does; `status` answers
  * every request with that HTTP status; `supported` answers every request with -32022 naming those versions; `delayMs`
  * holds every answer that long.
@@ -58,7 +58,12 @@ export function fakeMcpServer({
 	/** Whether a 2026-07-28 server offers the Tasks extension. */
 	tasks?: boolean;
 } = {}) {
-	const requests: { method?: string; url: string; headers: Headers }[] = [];
+	const requests: {
+		method?: string;
+		params?: Record<string, unknown>;
+		url: string;
+		headers: Headers;
+	}[] = [];
 	const tasks = new Map<string, FakeTask>();
 	const now = new Date().toISOString();
 	const view = (taskId: string, task: FakeTask) => ({
@@ -158,6 +163,7 @@ export function fakeMcpServer({
 		const body = init?.body ? JSON.parse(String(init.body)) : undefined;
 		requests.push({
 			method: body?.method,
+			params: body?.params,
 			url: String(input),
 			headers: new Headers(init?.headers),
 		});

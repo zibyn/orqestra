@@ -3,7 +3,11 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
 import { cut } from "./cut.ts";
-import { type McpConnection, mcpTools } from "./mcp.ts";
+import {
+	type McpConnection,
+	mcpTools,
+	type StartBackgroundCall,
+} from "./mcp.ts";
 import { type DocumentParser, type ParseFiles, parseTool } from "./parse.ts";
 import {
 	mcpServerOf,
@@ -148,9 +152,17 @@ export async function openToolbox(
 		files?: ParseFiles;
 		/** How often Parse asks the Document Parser whether it is done. */
 		pollMs?: number;
+		/** Starts a Background Call for an MCP Tool call its server puts in the background; without it, no call declares the Tasks extension. */
+		backgroundCall?: StartBackgroundCall;
 	},
 ): Promise<{ tools: AgentTool[]; close: () => Promise<unknown> }> {
-	const { signal, fetch, timeoutMs = 60_000, ...parse } = options;
+	const {
+		signal,
+		fetch,
+		timeoutMs = 60_000,
+		backgroundCall,
+		...parse
+	} = options;
 	const available = availableTools(services);
 	const offered = allowed.filter((t) => available.includes(t));
 	const ids = offered.flatMap((t) => mcpServerOf(t) ?? []);
@@ -159,6 +171,7 @@ export async function openToolbox(
 		signal,
 		timeoutMs,
 		fetch,
+		backgroundCall,
 	});
 	// a name twice makes the Provider refuse the whole request: keep the first
 	const names = new Set<string>();
@@ -182,7 +195,14 @@ export async function openToolbox(
 	};
 }
 
-export { type McpTestResult, testMcpServer } from "./mcp.ts";
+export {
+	type BackgroundCallStart,
+	type McpTaskState,
+	type McpTestResult,
+	pollMcpTask,
+	type StartBackgroundCall,
+	testMcpServer,
+} from "./mcp.ts";
 export * from "./orrery.ts";
 export * from "./sandbox.ts";
 export type { ObjectStore } from "./store.ts";
