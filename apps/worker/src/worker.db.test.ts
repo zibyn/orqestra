@@ -179,6 +179,40 @@ const priced = (u: {
 		u.cacheWriteTokens * 4) /
 	1e6;
 
+/** Adds the test's faux Provider, Agents, Sandbox and Tools to the loaded config; again after each reload replaces it. */
+async function patch() {
+	const loaded = await config.current();
+	// with a baseUrl, so faux is in the Catalog and a test can configure it as a Provider
+	loaded.registry.registerProvider({
+		...faux.provider,
+		baseUrl: faux.models[0].baseUrl,
+	});
+	// faux-1 is loaded from the database while a test configures faux as a Provider
+	loaded.models.push(
+		...faux.models.filter(
+			(m) =>
+				!loaded.models.some((l) => l.provider === m.provider && l.id === m.id),
+		),
+	);
+	loaded.agents.push(fauxAgent, skilledAgent, smallAgent);
+	loaded.sandboxProvider = {
+		url: "http://orrery",
+		token: "t",
+		cpu: 1,
+		memory: 1,
+	};
+	loaded.skills.notes = {
+		versionId: 0,
+		description: "Takes notes",
+		disableModelInvocation: false,
+	};
+	loaded.tools.search = {
+		provider: "tavily",
+		apiKey: "k",
+		baseUrl: "https://api.tavily.com",
+	};
+}
+
 async function waitFor<T>(read: () => Promise<T>, ok: (v: T) => boolean) {
 	for (let i = 0; i < 100; i++) {
 		const v = await read();
@@ -194,26 +228,7 @@ describe.skipIf(!url)(
 		let stopWorker: () => Promise<void>;
 
 		beforeAll(async () => {
-			const loaded = await config.current();
-			loaded.registry.registerProvider(faux.provider);
-			loaded.models.push(...faux.models);
-			loaded.agents.push(fauxAgent, skilledAgent, smallAgent);
-			loaded.sandboxProvider = {
-				url: "http://orrery",
-				token: "t",
-				cpu: 1,
-				memory: 1,
-			};
-			loaded.skills.notes = {
-				versionId: 0,
-				description: "Takes notes",
-				disableModelInvocation: false,
-			};
-			loaded.tools.search = {
-				provider: "tavily",
-				apiKey: "k",
-				baseUrl: "https://api.tavily.com",
-			};
+			await patch();
 			// faux replies are one shared queue, so runs go one at a time
 			stopWorker = await startAgentWorker(config.current, {
 				concurrency: 1,
@@ -466,6 +481,58 @@ describe.skipIf(!url)(
 				expect(row.outputTokens).toBeGreaterThan(0);
 				expect(row.cost).toBeGreaterThan(0);
 				expect(row.cost).toBeCloseTo(priced(row), 12);
+			}
+		});
+
+		it("costs requests at an Admin's price from when it is set, keeping what was recorded, and at the Catalog's once it is cleared", async () => {
+			const [model] = faux.models;
+			await config.providers.save({
+				id: "faux",
+				apiKey: "k",
+				baseUrl: model.baseUrl,
+			});
+			await config.providers.setModelEnabled({
+				providerId: "faux",
+				modelId: "faux-1",
+				enabled: true,
+			});
+			await patch();
+			const turn = async () => {
+				script({ parent: [fauxAssistantMessage("Hello")] });
+				const id = await conversations.send(userId, {
+					agentId: "faux",
+					text: "hi",
+				});
+				return waitFor(
+					() => usageOf(id),
+					(r) => r.length === 2,
+				);
+			};
+			const setPrice = async (cost: typeof model.cost | null) => {
+				await config.providers.setModelPrice({
+					providerId: "faux",
+					modelId: "faux-1",
+					cost,
+				});
+				await patch();
+			};
+			try {
+				const before = await turn();
+				await setPrice({ input: 10, output: 20, cacheRead: 5, cacheWrite: 40 });
+				const custom = await turn();
+				await setPrice(null);
+				const cleared = await turn();
+
+				for (const row of [...before, ...cleared])
+					expect(row.cost).toBeCloseTo(priced(row), 12);
+				for (const row of custom) {
+					expect(row.cost).toBeGreaterThan(0);
+					expect(row.cost).toBeCloseTo(priced(row) * 10, 12);
+				}
+				expect(await usageOf(before[0].conversationId)).toEqual(before);
+			} finally {
+				await config.providers.delete("faux");
+				await patch();
 			}
 		});
 

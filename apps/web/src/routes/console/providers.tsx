@@ -187,43 +187,198 @@ function ModelToggles({
 			<div className="flex flex-col gap-3 rounded-lg border p-3">
 				{catalog.models.map((model) => {
 					const id = `${provider.id}/${model.id}`;
+					const enabled = provider.enabledModels.find((e) => e.id === model.id);
 					return (
-						<Field key={model.id} orientation="horizontal">
-							<Switch
-								id={id}
-								checked={provider.enabledModels.includes(model.id)}
-								disabled={busy === id}
-								onCheckedChange={async (enabled) => {
-									setBusy(id);
-									try {
-										await ok(
-											api().api.providers.models.put({
-												providerId: provider.id,
-												modelId: model.id,
-												enabled,
-											}),
-										);
-										setError("");
-										await router.invalidate();
-									} catch (e) {
-										setError(errorText(e));
-									} finally {
-										setBusy(undefined);
-									}
-								}}
-							/>
-							<FieldLabel htmlFor={id} className="font-normal">
-								{model.name}
-								<span className="font-mono text-xs text-muted-foreground">
-									{model.id}
-								</span>
-							</FieldLabel>
-						</Field>
+						<div key={model.id} className="flex flex-col gap-1">
+							<Field orientation="horizontal">
+								<Switch
+									id={id}
+									checked={!!enabled}
+									disabled={busy === id}
+									onCheckedChange={async (enabled) => {
+										setBusy(id);
+										try {
+											await ok(
+												api().api.providers.models.put({
+													providerId: provider.id,
+													modelId: model.id,
+													enabled,
+												}),
+											);
+											setError("");
+											await router.invalidate();
+										} catch (e) {
+											setError(errorText(e));
+										} finally {
+											setBusy(undefined);
+										}
+									}}
+								/>
+								<FieldLabel htmlFor={id} className="font-normal">
+									{model.name}
+									<span className="font-mono text-xs text-muted-foreground">
+										{model.id}
+									</span>
+								</FieldLabel>
+							</Field>
+							{enabled?.cost && (
+								<ModelPrice
+									providerId={provider.id}
+									modelId={model.id}
+									cost={enabled.cost}
+									custom={enabled.source === "custom"}
+								/>
+							)}
+						</div>
 					);
 				})}
 			</div>
 			<FieldError>{error}</FieldError>
 		</FieldSet>
+	);
+}
+
+type Cost = NonNullable<Configured["enabledModels"][number]["cost"]>;
+const costFields = [
+	["input", m.price_input],
+	["output", m.price_output],
+	["cacheRead", m.price_cache_read],
+	["cacheWrite", m.price_cache_write],
+] as const;
+
+/** An enabled Model's price in force and where it comes from; the Admin sets their own or goes back to the Catalog's. */
+function ModelPrice({
+	providerId,
+	modelId,
+	cost,
+	custom,
+}: {
+	providerId: string;
+	modelId: string;
+	cost: Cost;
+	custom: boolean;
+}) {
+	const router = useRouter();
+	// the prices being edited, as typed; undefined while not editing
+	const [draft, setDraft] = useState<Record<keyof Cost, string>>();
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState("");
+
+	async function put(next: Cost | null) {
+		setBusy(true);
+		try {
+			const error = firstError(
+				await saved(
+					api().api.providers.models.price.put({
+						providerId,
+						modelId,
+						cost: next,
+					}),
+				),
+			);
+			setError(error ?? "");
+			if (!error) {
+				setDraft(undefined);
+				await router.invalidate();
+			}
+		} catch (e) {
+			setError(errorText(e));
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	return (
+		<div className="flex flex-col gap-1 pl-11 text-xs">
+			<div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+				<span>{m.model_price(cost)}</span>
+				<Badge variant={custom ? "default" : "outline"}>
+					{custom ? m.model_price_custom() : m.model_price_catalog()}
+				</Badge>
+				{!draft && (
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						onClick={() =>
+							setDraft({
+								input: String(cost.input),
+								output: String(cost.output),
+								cacheRead: String(cost.cacheRead),
+								cacheWrite: String(cost.cacheWrite),
+							})
+						}
+					>
+						{m.set_model_price()}
+					</Button>
+				)}
+			</div>
+			{draft && (
+				<FieldSet className="w-full gap-2">
+					<FieldDescription>{m.model_price_hint()}</FieldDescription>
+					<div className="grid grid-cols-2 gap-2">
+						{costFields.map(([key, label]) => (
+							<Field key={key}>
+								<FieldLabel htmlFor={`${providerId}/${modelId}/${key}`}>
+									{label()}
+								</FieldLabel>
+								<Input
+									id={`${providerId}/${modelId}/${key}`}
+									type="number"
+									min={0}
+									step="any"
+									required
+									value={draft[key]}
+									onChange={(e) =>
+										setDraft({ ...draft, [key]: e.target.value })
+									}
+								/>
+							</Field>
+						))}
+					</div>
+					<div className="flex justify-end gap-2">
+						{custom && (
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								disabled={busy}
+								onClick={() => void put(null)}
+							>
+								{m.clear_model_price()}
+							</Button>
+						)}
+						<Button
+							type="button"
+							size="sm"
+							variant="outline"
+							disabled={busy}
+							onClick={() => setDraft(undefined)}
+						>
+							{m.cancel()}
+						</Button>
+						<Button
+							type="button"
+							size="sm"
+							disabled={
+								busy || Object.values(draft).some((v) => v === "" || +v < 0)
+							}
+							onClick={() =>
+								void put({
+									input: +draft.input,
+									output: +draft.output,
+									cacheRead: +draft.cacheRead,
+									cacheWrite: +draft.cacheWrite,
+								})
+							}
+						>
+							{m.save()}
+						</Button>
+					</div>
+				</FieldSet>
+			)}
+			<FieldError>{error}</FieldError>
+		</div>
 	);
 }
 
@@ -247,7 +402,7 @@ function ProviderForm({
 	const [editedUrl, setBaseUrl] = useState<string>();
 	const baseUrl = editedUrl ?? existing?.baseUrl ?? catalog.baseUrl;
 	const [modelId, setModelId] = useState<string | undefined>(
-		existing?.enabledModels[0] ?? catalog.models[0]?.id,
+		existing?.enabledModels[0]?.id ?? catalog.models[0]?.id,
 	);
 	const [busy, setBusy] = useState<"save" | "test">();
 	const [result, setResult] = useState<{ ok: boolean; text: string }>();

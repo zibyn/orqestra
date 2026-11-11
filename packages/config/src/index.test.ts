@@ -35,6 +35,7 @@ const deepseek = (
 		{ id: "deepseek", apiKey: "sk-test", baseUrl: null, ...provider },
 	],
 	enabledModels: enabled.map((id) => `deepseek/${id}`),
+	modelPrices: {},
 	agents: Object.entries(agents).map(([id, definition]) => ({
 		id,
 		definition,

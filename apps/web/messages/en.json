@@ -335,5 +335,16 @@
   "task_error_in_past": "That time has passed.",
   "task_error_too_frequent": "Firings would come closer together than the Admin allows.",
   "task_error_too_many": "You have as many Scheduled Tasks as allowed.",
-  "alerts_browser": "Receive Alerts in this browser"
+  "alerts_browser": "Receive Alerts in this browser",
+  "model_price": "${input} in · ${output} out · ${cacheRead} cache read · ${cacheWrite} cache write per 1M tokens",
+  "model_price_catalog": "Catalog",
+  "model_price_custom": "Custom",
+  "set_model_price": "Set price",
+  "clear_model_price": "Use the Catalog's price",
+  "model_price_hint": "US dollars per million tokens. Applies to requests made after you save; recorded Usage keeps its cost.",
+  "price_input": "Input",
+  "price_output": "Output",
+  "price_cache_read": "Cache read",
+  "price_cache_write": "Cache write",
+  "save_model_not_enabled": "This Model is not enabled."
 }

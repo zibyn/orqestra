@@ -335,5 +335,16 @@
   "task_error_in_past": "这个时间已经过去了。",
   "task_error_too_frequent": "两次 Firing 的间隔短于管理员允许的最短间隔。",
   "task_error_too_many": "定时任务已达上限。",
-  "alerts_browser": "在此浏览器接收 Alert"
+  "alerts_browser": "在此浏览器接收 Alert",
+  "model_price": "输入 ${input} · 输出 ${output} · 缓存读 ${cacheRead} · 缓存写 ${cacheWrite}，每百万 token",
+  "model_price_catalog": "Catalog 价格",
+  "model_price_custom": "自定义价格",
+  "set_model_price": "设定单价",
+  "clear_model_price": "恢复 Catalog 价格",
+  "model_price_hint": "单位是美元每百万 token。保存后只对之后的请求生效，已记下的用量不重算。",
+  "price_input": "输入",
+  "price_output": "输出",
+  "price_cache_read": "缓存读",
+  "price_cache_write": "缓存写",
+  "save_model_not_enabled": "该模型未启用。"
 }

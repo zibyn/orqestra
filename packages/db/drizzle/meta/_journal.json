@@ -148,6 +148,13 @@
       "when": 1794364591433,
       "tag": "0020_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794364912910,
+      "tag": "0021_model_price",
+      "breakpoints": true
     }
   ]
 }
