@@ -7,7 +7,7 @@ A self-hosted platform where signed-in users talk to an AI agent, with identity 
 ### People and access
 
 **User**:
-A person in Polaris' User pool who may use Orqestra, identified by their Polaris `sub`. Who may sign in, and with which role, is decided in Polaris; Orqestra remembers every User who has signed in, with the name and email they last signed in with, and the settings it keeps for them, such as their Spending Limit. A User removed in Polaris is still remembered, along with their Usage. Every User is either an Admin or a Member.
+A person in Polaris' User pool who may use Orqestra, identified by their Polaris `sub`. Who may sign in, and with which role, is decided in Polaris; Orqestra remembers every User who has used it, with their latest name and email and when they were last active, and the settings it keeps for them, such as their Spending Limit. A User removed in Polaris is still remembered, along with their Usage. Every User is either an Admin or a Member.
 _Avoid_: Account, customer
 
 **Admin**:
@@ -65,7 +65,7 @@ A Scheduled Task an Agent proposes in a Conversation, shown to the User as a car
 _Avoid_: Proposal, suggestion, template
 
 **Firing**:
-One time a Scheduled Task comes due: it starts a new Conversation, with its own Sandbox, whose first message is the task's prompt, sent as the User's message but marked as sent by the task. A Firing whose previous Conversation is still running, or whose User has used up their Spending Limit, is skipped and recorded; one whose Agent can no longer be picked, or whose Model is disabled, fails.
+One time a Scheduled Task comes due: it starts a new Conversation, with its own Sandbox, whose first message is the task's prompt, sent as the User's message but marked as sent by the task. A Firing ends only once its Conversation has stopped running and every Subagent and Background Call it started has finished; its outcome, and any Alert, come then. A Firing that comes due while the previous one has not ended, or whose User has used up their Spending Limit, is skipped and recorded; one whose Agent can no longer be picked, or whose Model is disabled, fails.
 _Avoid_: Trigger, occurrence, scheduled run, execution
 
 **Inbox**:
