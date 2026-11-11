@@ -1,3 +1,11 @@
+import type {
+	AssistantMessage,
+	Context,
+	ImageContent,
+	TextContent,
+	ThinkingContent,
+	ToolCall,
+} from "@earendil-works/pi-ai";
 import {
 	NOOP_TELEMETRY_CONTEXT,
 	type SpanAttributes,
@@ -30,11 +38,14 @@ import { BatchSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 /**
  * The worker's tracer, from the environment: Run traces go over OTLP/HTTP (protobuf) once OTEL_EXPORTER_OTLP_ENDPOINT or
  * OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is set, nowhere otherwise. The SDK reads the headers, the timeout and OTEL_SERVICE_NAME itself.
+ * With `captureContent`, spans also carry what was said: messages, Tool arguments and results, error text.
  * `shutdown` flushes what is still queued; a backend that cannot be reached only loses spans.
  */
 export function tracing(env: Record<string, string | undefined>) {
-	// shortcut: content capture is always off until OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT is read (#113)
-	const captureContent = false;
+	// only span attributes carry content: EVENT_ONLY, NO_CONTENT and anything else is off
+	const captureContent = ["true", "SPAN_ONLY", "SPAN_AND_EVENT"].includes(
+		env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT ?? "",
+	);
 	if (
 		!env.OTEL_EXPORTER_OTLP_ENDPOINT &&
 		!env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
@@ -53,7 +64,10 @@ export function tracing(env: Record<string, string | undefined>) {
 		],
 	});
 	return {
-		telemetry: otelTelemetry(provider.getTracer("orqestra-worker")),
+		telemetry: otelTelemetry(
+			provider.getTracer("orqestra-worker"),
+			captureContent,
+		),
 		captureContent,
 		shutdown: () => provider.shutdown(),
 	};
@@ -62,8 +76,14 @@ export function tracing(env: Record<string, string | undefined>) {
 /** The OTel context of each span the adapter started, for links. */
 const contexts = new WeakMap<TelemetryContext, SpanContext>();
 
-/** pi's telemetry contract on an OTel tracer, its `pi.ai.request` spans renamed and mapped to the GenAI conventions. */
-export function otelTelemetry(tracer: Tracer): TelemetryContext {
+/**
+ * pi's telemetry contract on an OTel tracer, its `pi.ai.request` spans renamed and mapped to the GenAI conventions;
+ * a failed request keeps its error text only with `captureContent`.
+ */
+export function otelTelemetry(
+	tracer: Tracer,
+	captureContent = false,
+): TelemetryContext {
 	// W3C trace context, so a Run in another job, or another worker, continues or links to a span of this one
 	const propagation: TelemetryPropagation = {
 		inject: (context) => {
@@ -93,6 +113,7 @@ export function otelTelemetry(tracer: Tracer): TelemetryContext {
 					tracer,
 					remote && trace.wrapSpanContext(remote),
 					propagation,
+					captureContent,
 				),
 			};
 			// so a span can link to it
@@ -100,7 +121,10 @@ export function otelTelemetry(tracer: Tracer): TelemetryContext {
 			return context;
 		},
 	};
-	return { propagation, startSpan: starter(tracer, undefined, propagation) };
+	return {
+		propagation,
+		startSpan: starter(tracer, undefined, propagation, captureContent),
+	};
 }
 
 const clean = (attributes: SpanAttributes = {}): Attributes =>
@@ -121,6 +145,7 @@ function starter(
 	tracer: Tracer,
 	parent: Span | undefined | null,
 	propagation: TelemetryPropagation,
+	captureContent: boolean,
 ) {
 	return <T>(
 		options: SpanOptions,
@@ -145,7 +170,12 @@ function starter(
 		const span: TelemetrySpan = {
 			propagation,
 			startSpan: (o, cb) =>
-				starter(tracer, settled ? null : otel, propagation)(o, cb),
+				starter(
+					tracer,
+					settled ? null : otel,
+					propagation,
+					captureContent,
+				)(o, cb),
 			addLink: (link) => {
 				if (!settled) otel?.addLinks(links([link]));
 			},
@@ -171,7 +201,7 @@ function starter(
 			if (s.status === "error") {
 				// pi puts up to 500 characters of the Provider's error text there, which may echo the prompt
 				const { type, code, message } = request
-					? requestError(s.error?.message ?? "")
+					? requestError(s.error?.message ?? "", captureContent)
 					: { type: s.error?.name ?? "_OTHER", message: s.error?.message };
 				otel.setAttributes(
 					clean({ "error.type": type, "http.response.status_code": code }),
@@ -233,11 +263,12 @@ function requestEnd(a: SpanAttributes): SpanAttributes {
 		"gen_ai.usage.cache_read.input_tokens": a["usage.cache_read"],
 		"gen_ai.usage.cache_creation.input_tokens": a["usage.cache_write"],
 		"gen_ai.response.id": a["response.id"],
+		"gen_ai.output.messages": a["gen_ai.output.messages"],
 	};
 }
 
-/** A failed Model request's category, from the error text pi gives, with the HTTP status code in it; the text itself goes. */
-function requestError(text: string) {
+/** A failed Model request's category, from the error text pi gives, with the HTTP status code in it; the text goes unless captured. */
+function requestError(text: string, captureContent: boolean) {
 	const code = Number(text.match(/\b([45]\d\d)\b/)?.[1]) || undefined;
 	const type =
 		code === 401 || code === 403 || /unauthori[sz]ed|api key/i.test(text)
@@ -251,5 +282,75 @@ function requestError(text: string) {
 						: code !== undefined && code >= 500
 							? "server_error"
 							: "_OTHER";
-	return { type, code, message: undefined };
+	return { type, code, message: captureContent ? text : undefined };
 }
+
+const parts = (
+	content: string | (TextContent | ThinkingContent | ToolCall | ImageContent)[],
+) =>
+	typeof content === "string"
+		? [{ type: "text", content }]
+		: content.map((p) =>
+				p.type === "text"
+					? { type: "text", content: p.text }
+					: p.type === "thinking"
+						? { type: "reasoning", content: p.thinking }
+						: p.type === "toolCall"
+							? {
+									type: "tool_call",
+									id: p.id,
+									name: p.name,
+									arguments: p.arguments,
+								}
+							: // shortcut: images go without their data, add it as a blob part if a backend needs to show them
+								{ type: "blob", modality: "image", mime_type: p.mimeType },
+			);
+
+/** A Model request's input in the GenAI conventions: the system messages as instructions, the rest as messages. */
+export function inputContent({ systemPrompt, messages }: Context) {
+	return {
+		"gen_ai.system_instructions": JSON.stringify([
+			...(systemPrompt ? [{ type: "text", content: systemPrompt }] : []),
+			...messages.flatMap((m) =>
+				m.role === "system"
+					? [
+							...parts(m.content),
+							...Object.values(m.sections ?? {}).flatMap((s) =>
+								s === null ? [] : [{ type: "text", content: s }],
+							),
+						]
+					: [],
+			),
+		]),
+		"gen_ai.input.messages": JSON.stringify(
+			messages.flatMap((m) =>
+				m.role === "system"
+					? []
+					: [
+							m.role === "toolResult"
+								? {
+										role: "tool",
+										parts: [
+											{
+												type: "tool_call_response",
+												id: m.toolCallId,
+												response: parts(m.content),
+											},
+										],
+									}
+								: { role: m.role, parts: parts(m.content) },
+						],
+			),
+		),
+	};
+}
+
+/** A Model request's answer in the GenAI conventions. */
+export const outputContent = (message: AssistantMessage) =>
+	JSON.stringify([
+		{
+			role: "assistant",
+			parts: parts(message.content),
+			finish_reason: message.stopReason,
+		},
+	]);
