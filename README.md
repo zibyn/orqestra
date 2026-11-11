@@ -60,6 +60,7 @@ Compose 启动八个服务：`postgres`、`rustfs`（存放 Attachment 的对象
 | `S3_REGION` | 否 | 对象存储的 region，服务需要时填写 |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | 否 | Web Push 发送 Alert 用的 VAPID 密钥（`npx web-push generate-vapid-keys` 生成）和联系方式（`mailto:` 或 `https://`）；三项都填才启用，需要 HTTPS。不填时用户菜单里没有「在此浏览器接收 Alert」开关 |
 | `WORKER_CONCURRENCY` / `SUBAGENT_CONCURRENCY` / `PROVIDER_CONCURRENCY` | 否 | worker 并发度（正整数） |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | 否 | Run 追踪的 OTLP 后端，见[输出 Run 追踪](#输出-run-追踪)；都不填时不输出 |
 
 ## 本地开发
 
@@ -149,6 +150,15 @@ Admin 在 `/console/agents` 新建、编辑、删除 Agent，保存后 api 和 w
 - Tools 全选表示所有 Tool（包括以后新增的）。
 - 恰好一个默认 Agent，且必须是用户可选的；默认 Agent 不能删除。删除 Agent 后它的对话变为只读。
 - 关闭“用户可选”的 Agent 只作为子智能体（Subagent）模板。Agent 可通过 `subagent` Tool 把任务交给 Subagent，Subagent 从空白上下文开始，只把最终结果交回。
+
+### 输出 Run 追踪
+
+worker 可以按 OpenTelemetry 把 Run 追踪发给部署方已有的后端（Langfuse、LangSmith、Jaeger、Grafana Tempo、OTel Collector 等）：每个 Run 一个 `invoke_agent` 片段，下面是它的每次模型请求（`chat {model}`，按 GenAI 约定，含 Turn 的每一步、压缩和标题）。片段只带 User、Agent、Conversation、Scheduled Task 和 Firing 的 ID 与用途，以及耗时、token 用量、停止原因、Provider 的响应 ID 和错误类别，不带名字、邮箱、标题、消息正文和错误原文，也不带成本。
+
+- 设 `OTEL_EXPORTER_OTLP_ENDPOINT`（或只用于追踪的 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`）即开启；`OTEL_EXPORTER_OTLP_HEADERS`、`OTEL_EXPORTER_OTLP_TIMEOUT` 等标准变量照常生效，服务名默认 `orqestra-worker`，可用 `OTEL_SERVICE_NAME` 改。
+- 只支持 OTLP/HTTP（protobuf）；后端只收 gRPC 时，前面放一个 Collector。
+- 追踪是尽力而为：后端不可达或很慢时只丢片段，不影响 Run；worker 退出时先把剩下的片段发出去。它不是计量记录，花费以 Usage 为准。
+- 发到外部后端的数据由后端保管：Conversation 删除后，后端里的片段不会跟着删，保留期在后端设置。
 
 ## 发布
 

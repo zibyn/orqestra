@@ -12,6 +12,13 @@ import {
 	type Message,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
+import { SpanStatusCode } from "@opentelemetry/api";
+import {
+	InMemorySpanExporter,
+	type ReadableSpan,
+	SimpleSpanProcessor,
+	TracerProvider,
+} from "@opentelemetry/sdk-trace";
 import {
 	type AgentDefinition,
 	DEFAULT_LIMITS,
@@ -27,6 +34,7 @@ import {
 	memoryOrrery,
 	memoryStore,
 } from "@orqestra/tools/testing";
+import { otelTelemetry } from "../tracing.ts";
 import { type RuntimeDeps, runAgent } from "./index.ts";
 import { MAX_SUBAGENT_STEPS } from "./tools.ts";
 
@@ -1293,5 +1301,187 @@ describe("runAgent with a Document Parser", () => {
 				o.files(m.sandboxId as string).get("uploads/report.pdf.md"),
 			),
 		).toBe("# Report");
+	});
+});
+
+describe("runAgent traces", () => {
+	const traced = () => {
+		const exporter = new InMemorySpanExporter();
+		const provider = new TracerProvider({
+			spanProcessors: [new SimpleSpanProcessor({ exporter })],
+		});
+		return {
+			telemetry: otelTelemetry(provider.getTracer("test")),
+			spans: () => exporter.getFinishedSpans(),
+		};
+	};
+	const named = (spans: ReadableSpan[], name: string) =>
+		spans.filter((s) => s.name === name);
+
+	it("traces the Run with a request span per step and one for the title, carrying whose it is and no cost or names", async () => {
+		script(
+			[
+				fauxAssistantMessage(fauxToolCall("search", { query: "pi" }), {
+					stopReason: "toolUse",
+					responseId: "resp-1",
+				}),
+				fauxAssistantMessage("Pi is an agent", { responseId: "resp-2" }),
+			],
+			"About pi",
+		);
+		const t = traced();
+		const m = memoryRun({
+			transcript: transcript(user("what is pi?")),
+			turn: turn(),
+		});
+		await runAgent(m.run, { ...deps(), telemetry: t.telemetry });
+
+		const spans = t.spans();
+		const [root] = named(spans, "invoke_agent");
+		expect(root?.parentSpanContext).toBeUndefined();
+		expect(root?.attributes).toMatchObject({
+			"orqestra.run.outcome": "completed",
+			"orqestra.run.steps": 2,
+			"orqestra.run.unattended": false,
+			"orqestra.run.subagent": false,
+			"orqestra.purpose": "turn",
+		});
+		const chats = named(spans, "chat faux-1");
+		expect(chats).toHaveLength(3);
+		for (const chat of chats)
+			expect(chat.parentSpanContext?.spanId).toBe(
+				root?.spanContext().spanId as string,
+			);
+		expect(chats.map((c) => c.attributes["orqestra.purpose"])).toEqual([
+			"step",
+			"step",
+			"title",
+		]);
+		expect(chats[0]?.attributes).toMatchObject({
+			"gen_ai.operation.name": "chat",
+			"gen_ai.provider.name": "faux",
+			"gen_ai.request.model": "faux-1",
+			"gen_ai.response.finish_reasons": ["toolUse"],
+			"gen_ai.response.id": "resp-1",
+			"gen_ai.usage.input_tokens": expect.any(Number),
+			"gen_ai.usage.output_tokens": expect.any(Number),
+			"gen_ai.usage.cache_read.input_tokens": expect.any(Number),
+			"gen_ai.usage.cache_creation.input_tokens": expect.any(Number),
+		});
+		for (const span of spans) {
+			expect(span.attributes).toMatchObject({
+				"user.id": "memory-user",
+				"gen_ai.agent.id": "faux",
+				"gen_ai.conversation.id": "memory",
+				"orqestra.conversation.root_id": "memory",
+			});
+			const all = JSON.stringify([span.attributes, span.events]);
+			expect(all).not.toMatch(/cost|Faux|About pi|what is pi/);
+			expect(span.status.code).not.toBe(SpanStatusCode.ERROR);
+		}
+	});
+
+	it("traces compaction as a request of its own", async () => {
+		const old = fauxAssistantMessage("b".repeat(2000));
+		old.usage.totalTokens = 1500;
+		script([fauxAssistantMessage("SUMMARY"), fauxAssistantMessage("ok")]);
+		const t = traced();
+		const m = memoryRun({
+			transcript: transcript(user("a".repeat(4000)), old, user("next?")),
+			turn: turn("small"),
+			titled: true,
+		});
+		await runAgent(m.run, { ...deps(), telemetry: t.telemetry });
+
+		expect(
+			named(t.spans(), "chat faux-small").map(
+				(c) => c.attributes["orqestra.purpose"],
+			),
+		).toEqual(["compaction", "step"]);
+	});
+
+	it("marks a failed request and its Run with a category only, never the Provider's text", async () => {
+		faux.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "429 rate limit: you said what is pi?",
+			}),
+		]);
+		const t = traced();
+		const m = memoryRun({
+			transcript: transcript(user("what is pi?")),
+			turn: turn(),
+		});
+		await expect(
+			runAgent(m.run, { ...deps(), telemetry: t.telemetry }),
+		).rejects.toThrow();
+
+		const [chat] = named(t.spans(), "chat faux-1");
+		expect(chat?.status.code).toBe(SpanStatusCode.ERROR);
+		expect(chat?.attributes).toMatchObject({
+			"error.type": "rate_limited",
+			"http.response.status_code": 429,
+		});
+		const [root] = named(t.spans(), "invoke_agent");
+		expect(root?.status.code).toBe(SpanStatusCode.ERROR);
+		expect(root?.attributes).toMatchObject({
+			"error.type": "model_request_failed",
+			"orqestra.run.outcome": "failed",
+		});
+		expect(
+			JSON.stringify(t.spans().map((s) => [s.status, s.attributes, s.events])),
+		).not.toContain("what is pi");
+	});
+
+	it("marks no error on a stopped Run, nor on a partial Unattended one, whose Firing's ids it carries", async () => {
+		script([fauxAssistantMessage("word ".repeat(2000))]);
+		const t = traced();
+		const stopped = memoryRun({
+			transcript: transcript(user("write a lot")),
+			turn: turn(),
+			titled: true,
+		});
+		const stream = stopped.run.stream;
+		stopped.run.stream = async (event) => {
+			if (event.type === "delta") stopped.stop();
+			await stream(event);
+		};
+		await runAgent(stopped.run, { ...deps(), telemetry: t.telemetry });
+
+		script([fauxAssistantMessage("enough")]);
+		const partial = memoryRun({
+			transcript: transcript(user("check")),
+			turn: turn(),
+			unattended: true,
+			titled: true,
+			scheduledTaskId: "task-1",
+			firingId: 7,
+		});
+		await runAgent(partial.run, {
+			...deps(),
+			config: {
+				...config,
+				limits: { ...DEFAULT_LIMITS, unattendedMaxSteps: 1 },
+			},
+			telemetry: t.telemetry,
+		});
+
+		const runs = named(t.spans(), "invoke_agent");
+		expect(runs.map((r) => r.attributes["orqestra.run.outcome"])).toEqual([
+			"stopped",
+			"partial",
+		]);
+		for (const span of t.spans())
+			expect(span.status.code).not.toBe(SpanStatusCode.ERROR);
+		expect(runs[1]?.attributes).toMatchObject({
+			"orqestra.run.unattended": true,
+			"orqestra.purpose": "firing",
+			"orqestra.scheduled_task.id": "task-1",
+			"orqestra.firing.id": 7,
+		});
+		expect(named(t.spans(), "chat faux-1")[1]?.attributes).toMatchObject({
+			"orqestra.scheduled_task.id": "task-1",
+			"orqestra.firing.id": 7,
+		});
 	});
 });

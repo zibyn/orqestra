@@ -1,5 +1,6 @@
 import { config } from "@orqestra/config/live";
 import { s3Store } from "@orqestra/tools/s3";
+import { tracing } from "./tracing.ts";
 import { startAgentWorker } from "./worker.ts";
 
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set");
@@ -20,11 +21,13 @@ const count = (name: string) => {
 		throw new Error(`${name} must be a positive integer`);
 	return n;
 };
+const traces = tracing(process.env);
 const close = await startAgentWorker(config.current, {
 	concurrency: count("WORKER_CONCURRENCY"),
 	subagentConcurrency: count("SUBAGENT_CONCURRENCY"),
 	providerConcurrency: count("PROVIDER_CONCURRENCY"),
 	store,
+	telemetry: traces.telemetry,
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -33,6 +36,8 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 		// shortcut: 10s also cuts off active runs (they then fail and can be retried), revisit if that loses too much
 		setTimeout(() => process.exit(1), 10_000).unref();
 		await close();
+		// spans still queued go before the exit; an unreachable backend only loses them
+		await traces.shutdown().catch(() => {});
 		await config.close();
 		process.exit(0);
 	});

@@ -92,6 +92,7 @@ export function startAgentWorker(
 		toolbox = openToolbox,
 		orrery,
 		store,
+		telemetry,
 		...options
 	}: Parameters<ReturnType<typeof createConversations>["serveRuns"]>[1] & {
 		/** Model requests to one Provider at once, across this worker's Runs. */
@@ -102,6 +103,8 @@ export function startAgentWorker(
 		orrery?: RuntimeDeps["orrery"];
 		/** Object storage, where Attachments are kept. */
 		store: ObjectStore;
+		/** Where Run traces go; nowhere by default. */
+		telemetry?: RuntimeDeps["telemetry"];
 	},
 ) {
 	const limitProviders = providerLimiter(providerConcurrency);
@@ -118,6 +121,7 @@ export function startAgentWorker(
 				skillFiles,
 				orrery,
 				store,
+				telemetry,
 			}),
 		options,
 	);

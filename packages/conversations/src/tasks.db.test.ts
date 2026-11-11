@@ -109,9 +109,17 @@ describe.skipIf(!url)(
 		});
 
 		it("fires a one-time task into a new Conversation: the prompt as the User's message sent by the task, in an Unattended Run; then it is finished", async () => {
-			const seen: boolean[] = [];
+			const seen: Partial<RunHandle>[] = [];
 			handler = async (run) => {
-				seen.push(run.unattended);
+				const { unattended, userId, rootConversationId } = run;
+				const { scheduledTaskId, firingId } = run;
+				seen.push({
+					unattended,
+					userId,
+					rootConversationId,
+					scheduledTaskId,
+					firingId,
+				});
 				await reply(run);
 			};
 			const id = await tasks.create(
@@ -129,7 +137,15 @@ describe.skipIf(!url)(
 				message: { role: "user", content: "Summarize the news" },
 				origin: "task",
 			});
-			expect(seen).toEqual([true]);
+			expect(seen).toEqual([
+				{
+					unattended: true,
+					userId: ada,
+					rootConversationId: conversationId,
+					scheduledTaskId: id,
+					firingId: expect.any(Number),
+				},
+			]);
 		});
 
 		/** Each Run, in turn, ends as the next of these says. */

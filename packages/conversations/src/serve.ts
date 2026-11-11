@@ -11,6 +11,7 @@ import {
 	attachment,
 	compaction,
 	conversation,
+	firing,
 	inbox,
 	message,
 	subagent,
@@ -111,6 +112,13 @@ export type StreamEvent =
 /** One Run, as its handler sees it: what to reply to, and every way to save or show the reply. */
 export type RunHandle = {
 	conversationId: string;
+	/** The Polaris `sub` of the Conversation's User. */
+	userId: string;
+	/** The top-level Conversation: the Run's own for a top-level Run. */
+	rootConversationId: string;
+	/** The Scheduled Task whose Firing started the top-level Conversation, and that Firing; none otherwise. */
+	scheduledTaskId?: string;
+	firingId?: number;
 	isSubagent: boolean;
 	/**
 	 * Nobody is watching: an Unattended Run, under the Limits' step cap; past their wall-clock time its signal aborts with RunTimedOut.
@@ -318,6 +326,12 @@ async function execute(
 				})
 			: conv;
 		const unattended = !!root?.unattended;
+		const fired =
+			root?.scheduledTaskId &&
+			(await db.query.firing.findFirst({
+				where: eq(firing.conversationId, root.id),
+				columns: { id: true },
+			}));
 		if (unattended) {
 			const seconds = cfg.limits.unattendedMaxDuration;
 			clock = setTimeout(
@@ -333,6 +347,7 @@ async function execute(
 				incognito: !!root?.incognito,
 				unattended,
 				scheduledTaskId: root?.scheduledTaskId ?? null,
+				firingId: fired ? fired.id : undefined,
 			},
 			stop.signal,
 			emit,
@@ -367,6 +382,7 @@ async function open(
 		incognito: boolean;
 		unattended: boolean;
 		scheduledTaskId: string | null;
+		firingId?: number;
 	},
 	signal: AbortSignal,
 	emit: (event: ConversationEvent) => Promise<unknown>,
@@ -415,6 +431,10 @@ async function open(
 
 	return {
 		conversationId,
+		userId: conv.userId,
+		rootConversationId: conv.rootId,
+		scheduledTaskId: root.scheduledTaskId ?? undefined,
+		firingId: root.firingId,
 		isSubagent: !!sub,
 		unattended,
 		turn,

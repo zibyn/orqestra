@@ -39,6 +39,8 @@ const unavailable = async (): Promise<never> => {
 export function memoryRun({
 	transcript,
 	turn,
+	scheduledTaskId,
+	firingId,
 	inbox = [],
 	isSubagent = false,
 	unattended = false,
@@ -56,6 +58,9 @@ export function memoryRun({
 }: {
 	transcript: Transcript;
 	turn: Turn;
+	/** A Firing of this Scheduled Task started the Conversation. */
+	scheduledTaskId?: string;
+	firingId?: number;
 	/** Inputs that arrive once the Run has begun. */
 	inbox?: Message[];
 	isSubagent?: boolean;
@@ -96,6 +101,10 @@ export function memoryRun({
 	let rings = timerRings;
 	const run: RunHandle = {
 		conversationId: "memory",
+		userId: "memory-user",
+		rootConversationId: isSubagent ? "memory-root" : "memory",
+		scheduledTaskId,
+		firingId,
 		isSubagent,
 		unattended,
 		turn,

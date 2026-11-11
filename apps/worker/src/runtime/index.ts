@@ -1,5 +1,11 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import {
+	NOOP_TELEMETRY_CONTEXT,
+	type SpanAttributes,
+	type TelemetryContext,
+	type TelemetrySpan,
+} from "@earendil-works/pi-telemetry";
 import { messageText, type OrqestraConfig, turnSkills } from "@orqestra/config";
 import {
 	type RunHandle,
@@ -44,13 +50,80 @@ export type RuntimeDeps = {
 	orrery?: typeof orreryClient;
 	/** Object storage, where Attachments are kept; Parse reads them there. No Parse without it. */
 	store?: ObjectStore;
+	/** Where the Run's spans go; nowhere by default. */
+	telemetry?: TelemetryContext;
 };
+
+/** Whose a span is: on every span of the Run, never a name, an email or a title. */
+const runAttributes = (run: RunHandle): SpanAttributes => ({
+	"user.id": run.userId,
+	"gen_ai.agent.id": run.turn.agent.id,
+	"gen_ai.conversation.id": run.conversationId,
+	"orqestra.conversation.root_id": run.rootConversationId,
+	"orqestra.scheduled_task.id": run.scheduledTaskId,
+	"orqestra.firing.id": run.firingId,
+});
+
+/** `span`, its children starting with `attributes` too. */
+const withAttributes = (
+	span: TelemetrySpan,
+	attributes: SpanAttributes,
+): TelemetrySpan => ({
+	metrics: span.metrics,
+	propagation: span.propagation,
+	startSpan: (options, callback) =>
+		span.startSpan(
+			{ ...options, attributes: { ...attributes, ...options.attributes } },
+			callback,
+		),
+	addLink: (link) => span.addLink(link),
+	addEvent: (name, attributes) => span.addEvent(name, attributes),
+	setAttributes: (attributes) => span.setAttributes(attributes),
+	setStatus: (status) => span.setStatus(status),
+});
 
 /**
  * Replies to one Run, step by step, until no input is left: the Agent loop, compaction and the title.
  * A failed reply throws, and the Run fails.
  */
-export async function runAgent(
+export function runAgent(
+	run: RunHandle,
+	{ telemetry = NOOP_TELEMETRY_CONTEXT, ...deps }: RuntimeDeps,
+) {
+	const attributes = runAttributes(run);
+	return telemetry.startSpan(
+		{
+			name: "invoke_agent",
+			attributes: {
+				...attributes,
+				"orqestra.purpose": run.isSubagent
+					? "subagent"
+					: run.firingId === undefined
+						? "turn"
+						: "firing",
+				"orqestra.run.unattended": run.unattended,
+				"orqestra.run.subagent": run.isSubagent,
+			},
+		},
+		(span) =>
+			reply(run, {
+				...deps,
+				span,
+				// every Model request of the Run is a child of its span, saying what it is for
+				streamSimple: (purpose) => {
+					const streamSimple = deps.streamSimple(purpose);
+					const telemetry = withAttributes(span, {
+						...attributes,
+						"orqestra.purpose": purpose,
+					});
+					return (model, context, options) =>
+						streamSimple(model, context, { ...options, telemetry });
+				},
+			}),
+	);
+}
+
+async function reply(
 	run: RunHandle,
 	{
 		config,
@@ -59,10 +132,14 @@ export async function runAgent(
 		skillFiles,
 		orrery = orreryClient,
 		store,
-	}: RuntimeDeps,
+		span,
+	}: Omit<RuntimeDeps, "telemetry"> & { span: TelemetrySpan },
 ) {
 	const { conversationId, turn, signal } = run;
 	const sub = run.isSubagent;
+	let steps = 0;
+	// why the Run failed, for its span: a closed set, never the error's text
+	let failure = "_OTHER";
 	const rows = run.transcript.messages;
 	const last = rows.at(-1) as (typeof rows)[number];
 	const provider = config.sandboxProvider;
@@ -124,7 +201,6 @@ export async function runAgent(
 			: run.unattended
 				? config.limits.unattendedMaxSteps
 				: Number.POSITIVE_INFINITY;
-		let steps = 0;
 		// what a step's request threw, such as SpendingLimitReached, which pi turns into a failed reply
 		const step = streamSimple("step");
 		let refused: unknown;
@@ -214,14 +290,18 @@ export async function runAgent(
 			await (next.length ? agent.prompt(next) : agent.continue());
 			const answer = agent.state.messages.at(-1) as AssistantMessage;
 			// fails the job so the reason (e.g. an unreadable API key) is logged; the Run is then marked failed
-			if (answer.stopReason === "error")
+			if (answer.stopReason === "error") {
+				if (!(refused instanceof SpendingLimitReached))
+					failure = "model_request_failed";
 				throw refused ?? new Error(answer.errorMessage ?? "The reply failed");
+			}
 			next = await run.finish(sub || run.unattended ? ended() : undefined, {
 				question: question.asked,
 			});
 			if (!next.length) break;
 			question.reset();
 		}
+		span.setAttributes({ "orqestra.run.outcome": ended().outcome });
 		if (sub) return;
 		// a Question leaves its Tool result last
 		const answer = (agent.state.messages as Message[])
@@ -244,7 +324,29 @@ export async function runAgent(
 					if (!(error instanceof SpendingLimitReached))
 						console.error("title generation failed", error);
 				});
+	} catch (error) {
+		// a stopped or timed-out Run is no error
+		if (signal.aborted)
+			span.setAttributes({
+				"orqestra.run.outcome":
+					signal.reason instanceof RunTimedOut ? "partial" : "stopped",
+			});
+		else {
+			span.setAttributes({ "orqestra.run.outcome": "failed" });
+			span.setStatus({
+				status: "error",
+				error: {
+					name:
+						error instanceof SpendingLimitReached
+							? "spending_limit_reached"
+							: failure,
+					message: "",
+				},
+			});
+		}
+		throw error;
 	} finally {
+		span.setAttributes({ "orqestra.run.steps": steps });
 		await toolbox.close();
 	}
 }

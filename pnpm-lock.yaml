@@ -47,7 +47,7 @@ importers:
         version: 1.4.4
       drizzle-orm:
         specifier: ^0.45.4
-        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       jose:
         specifier: ^6.2.15
         version: 6.2.15
@@ -149,7 +149,7 @@ importers:
         version: 0.577.0(react@19.3.1)
       nitro:
         specifier: 3.0.260610-beta
-        version: 3.0.260610-beta(chokidar@5.0.0)(dotenv@17.4.2)(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))(jiti@2.7.0)(lru-cache@11.5.3)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+        version: 3.0.260610-beta(chokidar@5.0.0)(dotenv@17.4.2)(drizzle-orm@0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))(jiti@2.7.0)(lru-cache@11.5.3)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
       react:
         specifier: ^19.2.0
         version: 19.3.1
@@ -219,7 +219,7 @@ importers:
         version: 8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
       vitest:
         specifier: ^5.0.5
-        version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
   apps/worker:
     dependencies:
@@ -232,6 +232,21 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 1.4.0
         version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7)
+      '@earendil-works/pi-telemetry':
+        specifier: 1.4.0
+        version: 1.4.0
+      '@opentelemetry/api':
+        specifier: ^1.10.0
+        version: 1.10.0
+      '@opentelemetry/exporter-trace-otlp-proto':
+        specifier: ^0.301.1
+        version: 0.301.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/resources':
+        specifier: ^3.1.1
+        version: 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/sdk-trace':
+        specifier: ^3.1.1
+        version: 3.1.1(@opentelemetry/api@1.10.0)
       '@orqestra/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -250,7 +265,7 @@ importers:
         version: 1.4.4
       drizzle-orm:
         specifier: ^0.45.4
-        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       typescript:
         specifier: ^6.0.2
         version: 6.0.3
@@ -271,7 +286,7 @@ importers:
         version: link:../tools
       drizzle-orm:
         specifier: ^0.45.4
-        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -284,7 +299,7 @@ importers:
         version: 6.0.3
       vitest:
         specifier: ^5.0.5
-        version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
   packages/conversations:
     dependencies:
@@ -308,7 +323,7 @@ importers:
         version: 5.10.2
       drizzle-orm:
         specifier: ^0.45.4
-        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       pg:
         specifier: ^8.23.1
         version: 8.23.1
@@ -330,13 +345,13 @@ importers:
         version: 6.0.3
       vitest:
         specifier: ^5.0.5
-        version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
   packages/db:
     dependencies:
       drizzle-orm:
         specifier: ^0.45.1
-        version: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
       pg:
         specifier: ^8.16.3
         version: 8.23.1
@@ -386,7 +401,7 @@ importers:
         version: 6.0.3
       vitest:
         specifier: ^5.0.5
-        version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
 packages:
 
@@ -1483,6 +1498,62 @@ packages:
   '@oozcitak/util@10.0.0':
     resolution: {integrity: sha512-hAX0pT/73190NLqBPPWSdBVGtbY6VOhWYK3qqHqtXQ1gK7kS2yz4+ivsN07hpJ6I3aeMtKP6J6npsEKOAzuTLA==}
     engines: {node: '>=20.0'}
+
+  '@opentelemetry/api@1.10.0':
+    resolution: {integrity: sha512-lMkyes8iHrG+mk6WH7X70MdCLI2RS0FwNBY1PyQ8UemaijE2m5mv5A0Niy3HtbYTFrgkUEQjFMXmSAk2hQDuPQ==}
+    engines: {node: '>=8.0.0'}
+
+  '@opentelemetry/core@3.1.1':
+    resolution: {integrity: sha512-6wc9r0zrTsAVOd/5UrZBsrHhXWNfwisolgWxd8o3Eu1HKIz8cAxQjOdGrrJB406ceFiGV+ckTcLdXzB+y/QVTA==}
+    engines: {node: '>=22.15.0'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1.10.0 <1.11.0'
+
+  '@opentelemetry/exporter-trace-otlp-proto@0.301.1':
+    resolution: {integrity: sha512-Ek6428nXwwow1bsC5vUxYdOd0CEMLRBcC3Y8ZIPXO56C1CdPnkh9nnt1L1eubp+2Q0KFsKxg9fszpL+AjTN/oQ==}
+    engines: {node: '>=22.15.0'}
+    peerDependencies:
+      '@opentelemetry/api': ^1.10.0
+
+  '@opentelemetry/otlp-exporter-base@0.301.1':
+    resolution: {integrity: sha512-FKgY0SJAkMnWunU/BH1s+VQRSQaGbXjAxzZWoc+p8nBd+tH0a+rV3UD1tIn4TA9BqP1BG8TDTUK+4aWqSuDpxw==}
+    engines: {node: '>=22.15.0'}
+    peerDependencies:
+      '@opentelemetry/api': ^1.10.0
+
+  '@opentelemetry/otlp-transformer@0.301.1':
+    resolution: {integrity: sha512-3oNEm6He+NfE0LCbDjq0byKLhC4WcQ1fUrIF5Cvh/D4OHs0YkTqf06OOsPg5DnqqhxB6iJTIP5ZqdLerOFDp9g==}
+    engines: {node: '>=22.15.0'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1.10.0 <1.11.0'
+
+  '@opentelemetry/resources@3.1.1':
+    resolution: {integrity: sha512-dSd0FI1rfl+WHeaZxCTCEvwv6vcmUqkOHHTGWMkmyHg+PyL/wLbCqgsGKgI0wOwT0KGy9IMPAvY85hT8IPwApA==}
+    engines: {node: '>=22.15.0'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1.10.0 <1.11.0'
+
+  '@opentelemetry/sdk-logs@3.1.1':
+    resolution: {integrity: sha512-Z2V826tjNXRaCP7EtaJGzNuk16o8rq8OWnYBS60tfCkGyUv3Eugrz3GIj7AiXb5MAyeeOR2PJ9EC8WjeGeAgbg==}
+    engines: {node: '>=22.15.0'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1.10.0 <1.11.0'
+
+  '@opentelemetry/sdk-metrics@3.1.1':
+    resolution: {integrity: sha512-QBDkERTMERMxwtH7hHbE6esoo+5Tdb79MtF9lMh1EIFlij39prkSEWlfSD2flUGGv15b0GQ1X2jj/JqG9gQBTw==}
+    engines: {node: '>=22.15.0'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1.10.0 <1.11.0'
+
+  '@opentelemetry/sdk-trace@3.1.1':
+    resolution: {integrity: sha512-DJZXZJu1H3kek9Kh9SqJ46yN3faiNiabnqkEtl9eVnBvs4KuK+ynmk9jOyB0NfWAXWGZlTivCf46uwiXyr2PGA==}
+    engines: {node: '>=22.15.0'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1.10.0 <1.11.0'
+
+  '@opentelemetry/semantic-conventions@1.45.0':
+    resolution: {integrity: sha512-aOP45mbcOKbQVvFWfQmgoOPT8R2iwbbbgl83k4CujGV9BrJhFr3qG55MFpwFs4YLabpuW3HhzUY9eQxPlDqaZw==}
+    engines: {node: '>=14'}
 
   '@oxc-minify/binding-android-arm-eabi@0.136.0':
     resolution: {integrity: sha512-gk1jzky1vLeOcK7w9Ib2RT/UooZ7O21s8YSeXCsy4tzsmguKb3Cbsv/Ra2fKhMp4mKeKCzvC1Xa41OfSBWfWdQ==}
@@ -6582,6 +6653,63 @@ snapshots:
 
   '@oozcitak/util@10.0.0': {}
 
+  '@opentelemetry/api@1.10.0': {}
+
+  '@opentelemetry/core@3.1.1(@opentelemetry/api@1.10.0)':
+    dependencies:
+      '@opentelemetry/api': 1.10.0
+      '@opentelemetry/semantic-conventions': 1.45.0
+
+  '@opentelemetry/exporter-trace-otlp-proto@0.301.1(@opentelemetry/api@1.10.0)':
+    dependencies:
+      '@opentelemetry/api': 1.10.0
+      '@opentelemetry/otlp-exporter-base': 0.301.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/otlp-transformer': 0.301.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/sdk-trace': 3.1.1(@opentelemetry/api@1.10.0)
+
+  '@opentelemetry/otlp-exporter-base@0.301.1(@opentelemetry/api@1.10.0)':
+    dependencies:
+      '@opentelemetry/api': 1.10.0
+      '@opentelemetry/core': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/otlp-transformer': 0.301.1(@opentelemetry/api@1.10.0)
+
+  '@opentelemetry/otlp-transformer@0.301.1(@opentelemetry/api@1.10.0)':
+    dependencies:
+      '@opentelemetry/api': 1.10.0
+      '@opentelemetry/core': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/resources': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/sdk-logs': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/sdk-metrics': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/sdk-trace': 3.1.1(@opentelemetry/api@1.10.0)
+
+  '@opentelemetry/resources@3.1.1(@opentelemetry/api@1.10.0)':
+    dependencies:
+      '@opentelemetry/api': 1.10.0
+      '@opentelemetry/core': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/semantic-conventions': 1.45.0
+
+  '@opentelemetry/sdk-logs@3.1.1(@opentelemetry/api@1.10.0)':
+    dependencies:
+      '@opentelemetry/api': 1.10.0
+      '@opentelemetry/core': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/resources': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/semantic-conventions': 1.45.0
+
+  '@opentelemetry/sdk-metrics@3.1.1(@opentelemetry/api@1.10.0)':
+    dependencies:
+      '@opentelemetry/api': 1.10.0
+      '@opentelemetry/core': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/resources': 3.1.1(@opentelemetry/api@1.10.0)
+
+  '@opentelemetry/sdk-trace@3.1.1(@opentelemetry/api@1.10.0)':
+    dependencies:
+      '@opentelemetry/api': 1.10.0
+      '@opentelemetry/core': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/resources': 3.1.1(@opentelemetry/api@1.10.0)
+      '@opentelemetry/semantic-conventions': 1.45.0
+
+  '@opentelemetry/semantic-conventions@1.45.0': {}
+
   '@oxc-minify/binding-android-arm-eabi@0.136.0':
     optional: true
 
@@ -8159,9 +8287,9 @@ snapshots:
 
   dayjs@1.11.23: {}
 
-  db0@0.3.4(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)):
+  db0@0.3.4(drizzle-orm@0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)):
     optionalDependencies:
-      drizzle-orm: 0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+      drizzle-orm: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
 
   debounce-fn@4.0.0:
     dependencies:
@@ -8226,8 +8354,9 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.23.15
 
-  drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1):
+  drizzle-orm@0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1):
     optionalDependencies:
+      '@opentelemetry/api': 1.10.0
       '@types/pg': 8.23.1
       bun-types: 1.4.4
       kysely: 0.29.7
@@ -9535,11 +9664,11 @@ snapshots:
 
   nf3@0.3.24: {}
 
-  nitro@3.0.260610-beta(chokidar@5.0.0)(dotenv@17.4.2)(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))(jiti@2.7.0)(lru-cache@11.5.3)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)):
+  nitro@3.0.260610-beta(chokidar@5.0.0)(dotenv@17.4.2)(drizzle-orm@0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))(jiti@2.7.0)(lru-cache@11.5.3)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)):
     dependencies:
       consola: 3.4.2
       crossws: 0.4.17(srvx@0.11.22)
-      db0: 0.3.4(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))
+      db0: 0.3.4(drizzle-orm@0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))
       env-runner: 0.1.16
       h3: 2.0.1-rc.22(crossws@0.4.17(srvx@0.11.22))
       hookable: 6.1.2
@@ -9550,7 +9679,7 @@ snapshots:
       rolldown: 1.2.15
       srvx: 0.11.22
       unenv: 2.0.0-rc.24
-      unstorage: 2.0.0-alpha.7(chokidar@5.0.0)(db0@0.3.4(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)))(lru-cache@11.5.3)(ofetch@2.0.0-alpha.3)
+      unstorage: 2.0.0-alpha.7(chokidar@5.0.0)(db0@0.3.4(drizzle-orm@0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)))(lru-cache@11.5.3)(ofetch@2.0.0-alpha.3)
     optionalDependencies:
       dotenv: 17.4.2
       jiti: 2.7.0
@@ -10440,10 +10569,10 @@ snapshots:
       rolldown: 1.2.15
       vite: 8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
 
-  unstorage@2.0.0-alpha.7(chokidar@5.0.0)(db0@0.3.4(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)))(lru-cache@11.5.3)(ofetch@2.0.0-alpha.3):
+  unstorage@2.0.0-alpha.7(chokidar@5.0.0)(db0@0.3.4(drizzle-orm@0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)))(lru-cache@11.5.3)(ofetch@2.0.0-alpha.3):
     optionalDependencies:
       chokidar: 5.0.0
-      db0: 0.3.4(drizzle-orm@0.45.4(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))
+      db0: 0.3.4(drizzle-orm@0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1))
       lru-cache: 11.5.3
       ofetch: 2.0.0-alpha.3
 
@@ -10503,7 +10632,7 @@ snapshots:
     optionalDependencies:
       vite: 8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
 
-  vitest@5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)):
+  vitest@5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/mocker': 5.0.5(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
@@ -10520,6 +10649,7 @@ snapshots:
       vite: 8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
       why-is-node-running: 3.2.1
     optionalDependencies:
+      '@opentelemetry/api': 1.10.0
       '@types/node': 22.20.5
     transitivePeerDependencies:
       - msw
