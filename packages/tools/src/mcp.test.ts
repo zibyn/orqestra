@@ -31,6 +31,20 @@ const echo: FakeTool = {
 const never = new AbortController().signal;
 
 describe("openToolbox with MCP Servers", () => {
+	it("leaves out a per-User OAuth MCP Server, without connecting to it", async () => {
+		const fakes = { wiki: fakeServer([echo]), github: fakeServer([echo]) };
+		const services = config("wiki", "github");
+		services.mcpServers.github.auth = "oauth";
+		const { tools, close } = await openToolbox(
+			services,
+			["mcp:wiki", "mcp:github"],
+			{ signal: never, fetch: route(fakes) },
+		);
+		expect(tools.map((t) => t.name)).toEqual(["wiki__echo"]);
+		expect(fakes.github.requests).toEqual([]);
+		await close();
+	});
+
 	it("offers the Tools of allowed, available MCP Servers, prefixed with the server id and cleaned up", async () => {
 		const fakes = {
 			github: fakeServer([

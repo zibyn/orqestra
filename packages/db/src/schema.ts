@@ -537,6 +537,12 @@ export const mcpServer = pgTable("mcp_server", {
 		.$type<{ name: string; value: string }[]>()
 		.default([])
 		.notNull(),
+	// shared: every User sends the headers above; oauth: each User connects with their own account
+	auth: text("auth").$type<"shared" | "oauth">().default("shared").notNull(),
+	// a Client pre-registered with the authorization server, for oauth; null: none (Orqestra registers itself)
+	oauthClientId: text("oauth_client_id"),
+	// encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
+	oauthClientSecret: text("oauth_client_secret"),
 	enabled: boolean("enabled").default(true).notNull(),
 	createdAt: timestamp("created_at").defaultNow().notNull(),
 	updatedAt: timestamp("updated_at")

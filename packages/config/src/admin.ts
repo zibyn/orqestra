@@ -121,6 +121,12 @@ export const mcpServerInput = z.object({
 	name: z.string().trim().min(1),
 	url: httpUrl,
 	enabled: z.boolean(),
+	// shared: every User sends the headers; oauth: each User connects with their own account
+	auth: z.enum(["shared", "oauth"]).default("shared"),
+	// a Client pre-registered with the authorization server, for oauth; blank: none
+	oauthClientId: z.string().trim().optional(),
+	// blank keeps the stored secret
+	oauthClientSecret: z.string().trim().optional(),
 	headers: z.array(
 		z.object({
 			name: z.string().trim().min(1),
@@ -418,6 +424,11 @@ const mcpServers = ({ write }: Deps) => ({
 			name: r.name,
 			url: r.url,
 			enabled: r.enabled,
+			auth: r.auth,
+			oauthClientId: r.oauthClientId,
+			oauthClientSecret: r.oauthClientSecret
+				? { readable: secretReadable(r.oauthClientSecret) }
+				: null,
 			headers: r.headers.map((h) => ({
 				name: h.name,
 				readable: secretReadable(h.value),
@@ -446,6 +457,9 @@ const mcpServers = ({ write }: Deps) => ({
 				return { errors: { headers: { code: "header_invalid", header } } };
 			if (seen.has(header.toLowerCase()))
 				return { errors: { headers: { code: "header_twice", header } } };
+			// each User's Connection authorizes an oauth server
+			if (input.auth === "oauth" && header.toLowerCase() === "authorization")
+				return { errors: { headers: { code: "header_reserved", header } } };
 			seen.add(header.toLowerCase());
 			const kept = h.value
 				? undefined
@@ -461,10 +475,22 @@ const mcpServers = ({ write }: Deps) => ({
 			});
 			plain[header] = value;
 		}
+		const oauthClientId =
+			(input.auth === "oauth" && input.oauthClientId) || null;
 		const values = {
 			name: input.name,
 			url: input.url,
 			enabled: input.enabled,
+			auth: input.auth,
+			oauthClientId,
+			// a secret belongs to its Client: none without one
+			oauthClientSecret:
+				(oauthClientId &&
+					sealSecret(
+						input.oauthClientSecret,
+						stored?.oauthClientSecret ?? undefined,
+					)) ||
+				null,
 			headers,
 		};
 		await write((tx) =>
@@ -476,7 +502,11 @@ const mcpServers = ({ write }: Deps) => ({
 		// saved either way, so the Admin can fix the URL or headers later
 		return {
 			errors: {},
-			test: await testMcpServer({ url: input.url, headers: plain }),
+			test: await testMcpServer({
+				url: input.url,
+				headers: plain,
+				auth: input.auth,
+			}),
 		};
 	},
 

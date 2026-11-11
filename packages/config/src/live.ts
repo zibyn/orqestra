@@ -115,6 +115,7 @@ async function loadSettings(): Promise<Settings> {
 			name: s.name,
 			url: s.url,
 			enabled: s.enabled,
+			auth: s.auth,
 			headers: s.headers.map((h) => ({
 				name: h.name,
 				value: decryptSecret(h.value, key),

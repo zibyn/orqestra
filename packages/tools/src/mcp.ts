@@ -3,6 +3,9 @@ import { Type } from "@earendil-works/pi-ai";
 import {
 	type CallToolResult,
 	Client,
+	discoverAuthorizationServerMetadata,
+	discoverOAuthProtectedResourceMetadata,
+	extractWWWAuthenticateParams,
 	isInputRequiredResult,
 	type JSONRPCMessage,
 	ProtocolError,
@@ -437,20 +440,36 @@ function rawDispatcher(transport: StreamableHTTPClientTransport) {
 	return { dispatch, close: () => transport.close() };
 }
 
+/** The step of finding a per-User OAuth server's authorization server that failed. */
+export type OAuthDiscoveryStep =
+	| "resource_metadata"
+	| "authorization_server_metadata"
+	| "pkce";
+
 export type McpTestResult =
 	| { ok: true; tools: { name: string; description?: string }[] }
+	/** A per-User OAuth server: its authorization server's issuer, found without connecting. */
+	| { ok: true; authorizationServer: string }
 	| {
 			ok: false;
 			reason: "auth" | "unreachable" | "timeout" | "failed";
 			detail: string;
+			/** For a per-User OAuth server, when one step of finding its authorization server failed. */
+			step?: OAuthDiscoveryStep;
 	  };
 
-/** Connects to an MCP Server the way a Run does and lists its Tools within `timeoutMs` in all; never throws. */
+/**
+ * A shared server: connects the way a Run does and lists its Tools.
+ * A per-User OAuth one: only finds its authorization server, supporting PKCE S256, as no User is connected.
+ * Within `timeoutMs` in all; never throws.
+ */
 export async function testMcpServer(
-	server: Pick<McpServer, "url" | "headers">,
+	server: Pick<McpServer, "url" | "headers" | "auth">,
 	{ fetch, timeoutMs = 15_000 }: { fetch?: Fetch; timeoutMs?: number } = {},
 ): Promise<McpTestResult> {
 	const signal = AbortSignal.timeout(timeoutMs);
+	if (server.auth === "oauth")
+		return findAuthorizationServer(server, signal, fetch ?? globalThis.fetch);
 	let connection: McpConnection | undefined;
 	try {
 		connection = await connectMcpServer(
@@ -470,6 +489,54 @@ export async function testMcpServer(
 		return { ok: false, ...explain(error, signal) };
 	} finally {
 		await connection?.close();
+	}
+}
+
+// Protected Resource Metadata, then its authorization server's metadata; never the origin as the authorization server (2025-03-26)
+async function findAuthorizationServer(
+	{ url, headers }: Pick<McpServer, "url" | "headers">,
+	signal: AbortSignal,
+	fetch: Fetch,
+): Promise<McpTestResult> {
+	const timed: Fetch = (input, init) => fetch(input, { ...init, signal });
+	let step: OAuthDiscoveryStep | undefined;
+	try {
+		// the server may name its metadata in the 401 it answers a request without a token with (RFC 9728 §5.1)
+		const probe = await timed(url, {
+			method: "POST",
+			headers: {
+				...headers,
+				"content-type": "application/json",
+				accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "ping" }),
+		});
+		await probe.body?.cancel();
+		step = "resource_metadata";
+		const resource = await discoverOAuthProtectedResourceMetadata(
+			url,
+			{
+				resourceMetadataUrl:
+					extractWWWAuthenticateParams(probe).resourceMetadataUrl,
+			},
+			timed,
+		);
+		const issuer = resource.authorization_servers?.[0];
+		if (!issuer) throw new Error("No authorization_servers in its metadata");
+		step = "authorization_server_metadata";
+		// also checks the metadata's issuer is the one named (RFC 8414 §3.3)
+		const metadata = await discoverAuthorizationServerMetadata(issuer, {
+			fetchFn: timed,
+		});
+		if (!metadata) throw new Error(`No metadata found for ${issuer}`);
+		step = "pkce";
+		if (!metadata.code_challenge_methods_supported?.includes("S256"))
+			throw new Error(
+				`${issuer} does not list S256 in code_challenge_methods_supported`,
+			);
+		return { ok: true, authorizationServer: metadata.issuer };
+	} catch (error) {
+		return { ok: false, ...explain(error, signal), ...(step && { step }) };
 	}
 }
 

@@ -204,6 +204,7 @@ describe("loadConfig", () => {
 						name: "GitHub",
 						url: "https://mcp.example.com/mcp",
 						enabled: true,
+						auth: "shared",
 						headers: [{ name: "Authorization", value: "Bearer gh" }],
 					},
 					{
@@ -211,6 +212,7 @@ describe("loadConfig", () => {
 						name: "Wiki",
 						url: "http://10.0.0.2/mcp",
 						enabled: true,
+						auth: "oauth",
 						headers: [],
 					},
 				],
@@ -219,9 +221,16 @@ describe("loadConfig", () => {
 				github: {
 					name: "GitHub",
 					url: "https://mcp.example.com/mcp",
+					auth: "shared",
 					headers: { Authorization: "Bearer gh" },
 				},
-				wiki: { name: "Wiki", url: "http://10.0.0.2/mcp", headers: {} },
+				// left to each Run, by its User's Connection
+				wiki: {
+					name: "Wiki",
+					url: "http://10.0.0.2/mcp",
+					auth: "oauth",
+					headers: {},
+				},
 			});
 		});
 
@@ -230,6 +239,7 @@ describe("loadConfig", () => {
 				name: "S",
 				url: "https://mcp.example.com/mcp",
 				enabled: true,
+				auth: "shared" as const,
 				headers: [{ name: "X-Token", value: "t" }],
 			};
 			const config = await loadConfig({
@@ -252,6 +262,7 @@ describe("loadConfig", () => {
 				off: {
 					name: "S",
 					url: "https://mcp.example.com/mcp",
+					auth: "shared",
 					headers: { "X-Token": "t" },
 				},
 			});
@@ -329,6 +340,7 @@ describe("loadConfig", () => {
 						name: "GitHub",
 						url: "https://mcp.example.com/mcp",
 						enabled: true,
+						auth: "shared",
 						headers: [],
 					},
 				],

@@ -10,6 +10,7 @@ const { config, liveConfig } = await import("./live.ts");
 const { catalogProviders } = await import("./index.ts");
 const { skillFiles, limitsInput } = await import("./live.ts");
 const { zip } = await import("./test-zip.ts");
+const { decryptSecret } = await import("./secret.ts");
 
 const general = {
 	name: "General",
@@ -25,6 +26,7 @@ const mcp = (id: string) => ({
 	name: id,
 	url: "http://127.0.0.1:9/mcp",
 	enabled: true,
+	auth: "shared" as "shared" | "oauth",
 	headers: [],
 });
 
@@ -221,6 +223,56 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 				["other", []],
 			]);
 			expect(mcpServers).toEqual([{ id: "files", name: "files" }]);
+		});
+
+		it("is shared when stored before it had an auth mode, as after the migration", async () => {
+			await db.execute(
+				sql`insert into mcp_server (id, name, url) values ('docs', 'Docs', 'http://127.0.0.1:9/mcp')`,
+			);
+			expect((await config.mcpServers.list())[0]).toMatchObject({
+				auth: "shared",
+				oauthClientId: null,
+				oauthClientSecret: null,
+			});
+			// written past config, so read by a fresh one
+			const fresh = liveConfig();
+			try {
+				expect((await fresh.get()).mcpServers.docs.auth).toBe("shared");
+			} finally {
+				await fresh.close();
+			}
+		});
+
+		it("stores a pre-registered Client Secret encrypted, keeps it when left blank, and lists only whether it is readable", async () => {
+			const oauth = {
+				...mcp("docs"),
+				auth: "oauth" as const,
+				oauthClientId: "orq",
+			};
+			await config.mcpServers.save({ ...oauth, oauthClientSecret: "s3cret" });
+			const stored = async () =>
+				(
+					await db.execute<{ oauth_client_secret: string }>(
+						sql`select oauth_client_secret from mcp_server where id = 'docs'`,
+					)
+				).rows[0].oauth_client_secret;
+			const first = await stored();
+			expect(first).not.toContain("s3cret");
+			expect(decryptSecret(first)).toBe("s3cret");
+			await config.mcpServers.save({
+				...oauth,
+				create: false,
+				oauthClientSecret: "",
+			});
+			expect(await stored()).toBe(first);
+			const [listed] = await config.mcpServers.list();
+			expect(listed).toMatchObject({
+				auth: "oauth" as const,
+				oauthClientId: "orq",
+				oauthClientSecret: { readable: true },
+			});
+			expect(JSON.stringify(listed)).not.toContain("s3cret");
+			expect((await config.current()).mcpServers.docs.auth).toBe("oauth");
 		});
 	});
 

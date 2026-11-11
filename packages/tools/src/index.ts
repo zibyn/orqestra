@@ -51,6 +51,8 @@ export interface ToolService {
 export interface McpServer {
 	name: string;
 	url: string;
+	/** Omitted: shared, every User sends `headers`; oauth: each User connects with their own account. */
+	auth?: "shared" | "oauth";
 	headers: Record<string, string>;
 }
 
@@ -170,7 +172,10 @@ export async function openToolbox(
 	} = options;
 	const available = availableTools(services);
 	const offered = allowed.filter((t) => available.includes(t));
-	const ids = offered.flatMap((t) => mcpServerOf(t) ?? []);
+	const ids = offered
+		.flatMap((t) => mcpServerOf(t) ?? [])
+		// shortcut: oauth servers left out until Runs connect as their User (#117)
+		.filter((id) => services.mcpServers[id].auth !== "oauth");
 	const connections: McpConnection[] = [];
 	const mcp = await mcpTools(services.mcpServers, ids, connections, {
 		signal,

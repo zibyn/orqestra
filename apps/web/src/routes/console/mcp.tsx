@@ -2,6 +2,8 @@ import { slugify } from "@orqestra/config/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import {
 	CheckCircle2Icon,
+	ChevronDownIcon,
+	CopyIcon,
 	PlugIcon,
 	PlusIcon,
 	TriangleAlertIcon,
@@ -21,6 +23,11 @@ import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "#/components/ui/collapsible";
+import {
 	Field,
 	FieldDescription,
 	FieldError,
@@ -31,6 +38,7 @@ import {
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
 import { Switch } from "#/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { api, ok } from "#/lib/api";
 import { errorText, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
@@ -49,6 +57,9 @@ type McpServer = Awaited<ReturnType<typeof getMcpServers>>[number];
 type McpTestResult = NonNullable<
 	Awaited<ReturnType<typeof saveMcpServer>>["test"]
 >;
+
+// shortcut: assumes the console is opened at ORQESTRA_URL (Caddy serves /api there); upgrade by having the api send it if they can differ
+const callbackUrl = `${globalThis.location?.origin}/api/connections/callback`;
 
 /** MCP Servers with their write-only header values. */
 function McpServers() {
@@ -100,6 +111,9 @@ function McpServers() {
 								<Badge variant="outline" className="font-mono">
 									{s.id}
 								</Badge>
+								{s.auth === "oauth" && (
+									<Badge variant="secondary">{m.mcp_auth_oauth()}</Badge>
+								)}
 							</>
 						}
 						description={<span className="font-mono text-xs">{s.url}</span>}
@@ -146,6 +160,14 @@ function McpServers() {
 								<AlertDescription>{m.mcp_header_unreadable()}</AlertDescription>
 							</Alert>
 						)}
+						{s.oauthClientSecret?.readable === false && (
+							<Alert variant="destructive">
+								<TriangleAlertIcon />
+								<AlertDescription>
+									{m.mcp_oauth_client_secret_unreadable()}
+								</AlertDescription>
+							</Alert>
+						)}
 						{tested?.id === s.id && <McpTestOutcome result={tested.result} />}
 					</Item>
 				))}
@@ -184,6 +206,10 @@ function McpServerForm({
 	const [headers, setHeaders] = useState(
 		() => existing?.headers.map((h) => ({ name: h.name, value: "" })) ?? [],
 	);
+	const [auth, setAuth] = useState(existing?.auth ?? "shared");
+	const [clientId, setClientId] = useState(existing?.oauthClientId ?? "");
+	const [clientSecret, setClientSecret] = useState("");
+	const [clientOpen, setClientOpen] = useState(!!existing?.oauthClientId);
 	const [busy, setBusy] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
 	const fieldId = (field: string) => `mcp-${existing?.id ?? "new"}-${field}`;
@@ -199,6 +225,9 @@ function McpServerForm({
 				name,
 				url,
 				enabled: existing?.enabled ?? true,
+				auth,
+				oauthClientId: clientId,
+				oauthClientSecret: clientSecret,
 				headers,
 			});
 			setErrors(saveErrorTexts(result.errors));
@@ -266,7 +295,105 @@ function McpServerForm({
 					/>
 				</Field>
 				<FieldSet className="gap-3">
+					<FieldLegend variant="label">{m.mcp_auth()}</FieldLegend>
+					<ToggleGroup
+						variant="outline"
+						spacing={0}
+						className="w-full"
+						value={[auth]}
+						onValueChange={([k]) => k && setAuth(k as typeof auth)}
+					>
+						<ToggleGroupItem value="shared" className="flex-1">
+							{m.mcp_auth_shared()}
+						</ToggleGroupItem>
+						<ToggleGroupItem value="oauth" className="flex-1">
+							{m.mcp_auth_oauth()}
+						</ToggleGroupItem>
+					</ToggleGroup>
+					<FieldDescription>
+						{auth === "shared"
+							? m.mcp_auth_shared_hint()
+							: m.mcp_auth_oauth_hint()}
+					</FieldDescription>
+					{/* only an oauth server has Connections to lose */}
+					{existing?.auth === "oauth" && (
+						<Alert>
+							<AlertDescription>{m.mcp_auth_change_warning()}</AlertDescription>
+						</Alert>
+					)}
+					{auth === "oauth" && (
+						<Collapsible open={clientOpen} onOpenChange={setClientOpen}>
+							<CollapsibleTrigger className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+								<ChevronDownIcon
+									className={`size-4 transition-transform ${clientOpen ? "" : "-rotate-90"}`}
+								/>
+								{m.mcp_oauth_client()}
+							</CollapsibleTrigger>
+							<CollapsibleContent className="flex flex-col gap-3 pt-3">
+								<FieldDescription>{m.mcp_oauth_client_hint()}</FieldDescription>
+								<Field>
+									<FieldLabel htmlFor={fieldId("callback")}>
+										{m.mcp_oauth_callback()}
+									</FieldLabel>
+									<div className="flex gap-2">
+										<Input
+											id={fieldId("callback")}
+											readOnly
+											className="font-mono"
+											value={callbackUrl}
+										/>
+										<Button
+											type="button"
+											size="icon"
+											variant="outline"
+											aria-label={m.copy()}
+											onClick={() =>
+												navigator.clipboard
+													.writeText(callbackUrl)
+													.catch(() => {})
+											}
+										>
+											<CopyIcon />
+										</Button>
+									</div>
+								</Field>
+								<Field>
+									<FieldLabel htmlFor={fieldId("client-id")}>
+										{m.mcp_oauth_client_id()}
+									</FieldLabel>
+									<Input
+										id={fieldId("client-id")}
+										className="font-mono"
+										value={clientId}
+										onChange={(e) => setClientId(e.target.value)}
+									/>
+								</Field>
+								<Field>
+									<FieldLabel htmlFor={fieldId("client-secret")}>
+										{m.mcp_oauth_client_secret()}
+									</FieldLabel>
+									<Input
+										id={fieldId("client-secret")}
+										type="password"
+										autoComplete="off"
+										placeholder={
+											existing?.oauthClientSecret?.readable
+												? m.mcp_oauth_client_secret_set()
+												: undefined
+										}
+										value={clientSecret}
+										onChange={(e) => setClientSecret(e.target.value)}
+									/>
+								</Field>
+							</CollapsibleContent>
+						</Collapsible>
+					)}
+				</FieldSet>
+				<FieldSet className="gap-3">
 					<FieldLegend variant="label">{m.mcp_headers()}</FieldLegend>
+					{auth === "oauth" && (
+						<FieldDescription>{m.mcp_oauth_headers_hint()}</FieldDescription>
+					)}
 					{existing && (
 						<FieldDescription>{m.mcp_headers_hint()}</FieldDescription>
 					)}
@@ -328,12 +455,19 @@ function McpServerForm({
 /** The Tools a just-saved MCP Server offers, or why connecting to it failed. */
 function McpTestOutcome({ result }: { result: McpTestResult }) {
 	if (!result.ok) {
-		const message = {
-			auth: m.mcp_test_auth,
-			unreachable: m.mcp_test_unreachable,
-			timeout: m.mcp_test_timeout,
-			failed: m.mcp_test_failed,
-		}[result.reason];
+		const message = result.step
+			? {
+					resource_metadata: m.mcp_test_oauth_resource_metadata,
+					authorization_server_metadata:
+						m.mcp_test_oauth_authorization_server_metadata,
+					pkce: m.mcp_test_oauth_pkce,
+				}[result.step]
+			: {
+					auth: m.mcp_test_auth,
+					unreachable: m.mcp_test_unreachable,
+					timeout: m.mcp_test_timeout,
+					failed: m.mcp_test_failed,
+				}[result.reason];
 		return (
 			<Alert variant="destructive">
 				<TriangleAlertIcon />
@@ -343,6 +477,16 @@ function McpTestOutcome({ result }: { result: McpTestResult }) {
 			</Alert>
 		);
 	}
+	if ("authorizationServer" in result)
+		return (
+			<Alert>
+				<CheckCircle2Icon />
+				<AlertTitle>
+					{m.mcp_test_oauth_ok({ issuer: result.authorizationServer })}
+				</AlertTitle>
+				<AlertDescription>{m.mcp_test_oauth_ok_hint()}</AlertDescription>
+			</Alert>
+		);
 	return (
 		<Alert>
 			<CheckCircle2Icon />

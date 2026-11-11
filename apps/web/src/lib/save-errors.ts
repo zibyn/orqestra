@@ -18,6 +18,7 @@ const texts: {
 	header_invalid: (e) => m.mcp_header_invalid({ header: e.header }),
 	header_twice: (e) => m.mcp_header_twice({ header: e.header }),
 	header_value_missing: (e) => m.mcp_header_value_missing({ header: e.header }),
+	header_reserved: (e) => m.mcp_header_reserved({ header: e.header }),
 	default_model_not_allowed: (e) =>
 		m.save_default_model_not_allowed({ model: e.model }),
 	thinking_default_not_allowed: (e) =>

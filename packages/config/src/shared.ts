@@ -160,7 +160,11 @@ export type SaveError =
 	| { code: "skill_name_mismatch"; name: string; folder: string }
 	| { code: "invalid"; detail: string }
 	| {
-			code: "header_invalid" | "header_twice" | "header_value_missing";
+			code:
+				| "header_invalid"
+				| "header_twice"
+				| "header_value_missing"
+				| "header_reserved";
 			header: string;
 	  }
 	| { code: "default_model_not_allowed"; model: string }
