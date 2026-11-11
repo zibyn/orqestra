@@ -298,7 +298,7 @@ export async function pollMcpTask(
 	options: { fetch?: Fetch; timeoutMs: number },
 ): Promise<McpTaskState> {
 	try {
-		return await lookUp(server, reference, options);
+		return await getTaskState(server, reference, options);
 	} catch (error) {
 		if (
 			[...causes(error)].some(
@@ -340,7 +340,8 @@ export async function cancelMcpTask(
 	}
 }
 
-async function lookUp(
+/** One `tasks/get` for the task, as `pollMcpTask` reports it; throws on any error. */
+async function getTaskState(
 	server: Pick<McpServer, "url" | "headers">,
 	reference: SerializedTaskReference,
 	{ fetch, timeoutMs }: { fetch?: Fetch; timeoutMs: number },

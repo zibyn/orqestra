@@ -247,6 +247,14 @@ describe("loadConfig", () => {
 				],
 			});
 			expect(config.mcpServers).toEqual({});
+			// kept, so deleting it can still cancel its calls
+			expect(config.allMcpServers).toEqual({
+				off: {
+					name: "S",
+					url: "https://mcp.example.com/mcp",
+					headers: { "X-Token": "t" },
+				},
+			});
 		});
 
 		it("offers the Sandbox Provider with its token decrypted, on orrery's default Snapshot when none is set", async () => {

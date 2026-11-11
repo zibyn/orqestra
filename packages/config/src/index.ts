@@ -167,6 +167,8 @@ export interface OrqestraConfig {
 	tools: ToolServices["tools"];
 	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
 	mcpServers: Record<string, McpServer>;
+	/** Every MCP Server whose headers decrypt, disabled ones included, by id: what deleting one cancels its Background Calls with. */
+	allMcpServers: Record<string, McpServer>;
 	/** Enabled Skills, by name; the others are unavailable. */
 	skills: Record<string, SkillInfo>;
 	/** Undefined when none is configured or its token cannot be decrypted: every Skill is then unavailable. */
@@ -344,13 +346,15 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		tools.parse = { baseUrl: parser.url, apiKey: parser.apiKey ?? "" };
 
 	const mcpServers: OrqestraConfig["mcpServers"] = {};
+	const allMcpServers: OrqestraConfig["allMcpServers"] = {};
 	for (const { id, name, url, enabled, headers } of settings.mcpServers) {
 		const plain = headers.flatMap((h) =>
 			h.value === undefined ? [] : [[h.name, h.value]],
 		);
 		// one unreadable header: the server would reject us, so it is unavailable
-		if (enabled && plain.length === headers.length)
-			mcpServers[id] = { name, url, headers: Object.fromEntries(plain) };
+		if (plain.length !== headers.length) continue;
+		allMcpServers[id] = { name, url, headers: Object.fromEntries(plain) };
+		if (enabled) mcpServers[id] = allMcpServers[id];
 	}
 
 	const skills: OrqestraConfig["skills"] = {};
@@ -368,6 +372,7 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		defaultAgent: defaults[0],
 		tools,
 		mcpServers,
+		allMcpServers,
 		skills,
 		sandboxProvider,
 		limits: settings.limits ?? DEFAULT_LIMITS,

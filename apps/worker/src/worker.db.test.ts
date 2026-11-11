@@ -280,6 +280,7 @@ async function patch() {
 		url: "https://slow.example.com/mcp",
 		headers: {},
 	};
+	loaded.allMcpServers.slow = loaded.mcpServers.slow;
 	loaded.sandboxProvider = {
 		url: "http://orrery",
 		token: "t",
@@ -1090,6 +1091,48 @@ describe.skipIf(!url)(
 				);
 			});
 
+			it("hands the Agent a result's images as an immediate result would", async () => {
+				let woken: unknown;
+				script({
+					parent: [
+						crunch(),
+						fauxAssistantMessage("Crunching"),
+						(context) => {
+							woken = context.messages.at(-1);
+							return fauxAssistantMessage("A chart");
+						},
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "chart it",
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && v.messages.length === 4,
+				);
+				Object.assign(slow.tasks.get("task-1") ?? {}, {
+					status: "completed",
+					result: {
+						content: [
+							{ type: "text", text: "the chart" },
+							{ type: "image", data: "iVBORw0K", mimeType: "image/png" },
+						],
+					},
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.messages.at(-1)?.message.role === "assistant" && !!woken,
+				);
+				expect(woken).toMatchObject({
+					role: "user",
+					content: [
+						{ type: "text", text: expect.stringContaining("the chart") },
+						{ type: "image", data: "iVBORw0K", mimeType: "image/png" },
+					],
+				});
+			});
+
 			it("delivers a result that comes in during the Run between two steps of that Run", async () => {
 				let next: unknown;
 				script({
@@ -1446,10 +1489,10 @@ describe.skipIf(!url)(
 			});
 
 			describe("of a Subagent", () => {
-				const delegate = () =>
+				const delegate = (template = "mcp-sub") =>
 					fauxAssistantMessage(
 						fauxToolCall("subagent", {
-							tasks: [{ brief: "crunch", template: "mcp-sub" }],
+							tasks: [{ brief: "crunch", template }],
 						}),
 					);
 				/** The parent delegates to a Subagent, which puts a call in the background and ends its Run. */
@@ -1557,6 +1600,11 @@ describe.skipIf(!url)(
 						(v) => v?.subagents[0].outcome === "stopped",
 					);
 					expect(view?.backgroundCalls[0].status).toBe("cancelled");
+					// its Notification, left for whoever continues it
+					const { rows } = await db.execute(
+						sql`select message from inbox where conversation_id = ${subId} and background_call_id is not null`,
+					);
+					expect(JSON.stringify(rows)).toContain("the Subagent was stopped");
 				});
 
 				it("keeps a Firing running, with no Alert, while its Subagent is unfinished, and ends it once the Subagent has", async () => {
@@ -1598,6 +1646,121 @@ describe.skipIf(!url)(
 					expect(alert).toMatchObject({ status: "completed", url: `/c/${id}` });
 				});
 
+				it("is not done when its Run fails while its call runs, and settles once a later Run ends", async () => {
+					script({
+						parent: [
+							delegate(),
+							fauxAssistantMessage("Delegated"),
+							fauxAssistantMessage("Done"),
+						],
+						sub: [
+							crunch(),
+							() => {
+								throw new Error("provider down");
+							},
+							fauxAssistantMessage("The answer is 42"),
+						],
+					});
+					const id = await conversations.send(userId, {
+						agentId: "mcp",
+						text: "crunch it",
+					});
+					const view = await waitFor(
+						() => conversations.get(userId, id),
+						(v) =>
+							v?.status === "idle" &&
+							v.messages.length === 4 &&
+							v.backgroundCalls.length === 1,
+					);
+					const subId = view?.subagents[0].id as string;
+					await waitFor(
+						() =>
+							db.execute(
+								sql`select status from conversation where id = ${subId}`,
+							),
+						(r) => r.rows[0]?.status === "idle",
+					);
+					await new Promise((r) => setTimeout(r, 300));
+					const waiting = await conversations.get(userId, id);
+					expect(waiting?.subagents[0].outcome).toBe("running");
+					expect(waiting?.messages.length).toBe(4);
+
+					finishTask("42 it is");
+					const done = await waitFor(
+						() => conversations.get(userId, id),
+						(v) =>
+							v?.status === "idle" &&
+							v.messages.at(-1)?.message.role === "assistant" &&
+							v.messages.length === 6,
+					);
+					expect(done?.subagents[0].outcome).toBe("completed");
+					await new Promise((r) => setTimeout(r, 300));
+					const after = await conversations.get(userId, id);
+					expect(after?.messages.filter((m) => m.subagentId)).toHaveLength(1);
+				});
+
+				/** A Firing whose Run delegated to a Subagent, that `sub` scripts, and ended; returns once the Subagent is busy. */
+				const delegatedFiring = async (
+					sub: FauxResponseStep[],
+					busy: (subId: string) => Promise<boolean>,
+					template?: string,
+				) => {
+					await alerted();
+					script({
+						parent: [delegate(template), fauxAssistantMessage("Delegated")],
+						sub,
+					});
+					const taskId = await conversations.tasks.create(userId, input());
+					const firing = async () =>
+						(await conversations.tasks.get(userId, taskId))?.firings[0];
+					const started = await waitFor(firing, (f) => !!f?.conversationId);
+					const id = started?.conversationId as string;
+					const view = await waitFor(
+						() => conversations.get(userId, id),
+						(v) => v?.status === "idle" && v.messages.length === 4,
+					);
+					const subId = view?.subagents[0].id as string;
+					await waitFor(
+						() => busy(subId),
+						(b) => b,
+					);
+					expect((await firing())?.outcome).toBe("running");
+					return { id, subId, firing };
+				};
+
+				it("ends a Firing as its root's Run did, with its Alert, once the User stops the Subagent it waited for", async () => {
+					const { id, subId, firing } = await delegatedFiring(
+						[crunch(), fauxAssistantMessage("Crunching")],
+						async (subId) =>
+							(
+								await db.execute(
+									sql`select 1 from conversation c join background_call b on b.conversation_id = c.id where c.id = ${subId} and c.status = 'idle'`,
+								)
+							).rows.length > 0,
+					);
+					await conversations.stopSubagent(userId, subId);
+					await waitFor(firing, (f) => f?.outcome === "completed");
+					const [alert] = await waitFor(runAlerts, (p) => p.length === 1);
+					expect(alert).toMatchObject({ status: "completed", url: `/c/${id}` });
+				});
+
+				it("ends a Firing, with its Alert, once the User stops its Subagent that had no Background Call", async () => {
+					const execs = orrery.calls.length;
+					const { subId, firing } = await delegatedFiring(
+						[
+							fauxAssistantMessage(
+								fauxToolCall("bash", { command: "sleep 1000" }),
+							),
+						],
+						async () =>
+							orrery.calls.slice(execs).some((c) => c.endsWith(" sleep 1000")),
+						"skilled",
+					);
+					await conversations.stopSubagent(userId, subId);
+					await waitFor(firing, (f) => f?.outcome === "completed");
+					await waitFor(runAlerts, (p) => p.length === 1);
+				});
+
 				it("lets the User cancel its call through the top-level Conversation", async () => {
 					const { id, toolCallId } = await delegated([
 						fauxAssistantMessage("Done"),
@@ -1611,6 +1774,11 @@ describe.skipIf(!url)(
 					);
 					const view = await conversations.get(userId, id);
 					expect(view?.backgroundCalls[0].status).toBe("cancelled");
+					// it waited for nothing else: it sums up and settles
+					await waitFor(
+						() => conversations.get(userId, id),
+						(v) => v?.subagents[0].outcome === "completed",
+					);
 				});
 			});
 
@@ -1851,6 +2019,27 @@ describe.skipIf(!url)(
 					await conversations.deletingMcpServer("slow");
 					expect(await woken(id, "failed")).toContain("deleted");
 					expect(cancels()).toBe(1);
+				});
+
+				it("as failed, cancelling it, when an Admin deletes its MCP Server after disabling it", async () => {
+					const loaded = await config.current();
+					const saved = loaded.mcpServers.slow;
+					const id = await backgrounded();
+					// the next poll far off, so the delete comes before it
+					task().pollIntervalMs = 30_000;
+					const asked = slow.requests.length;
+					await waitFor(
+						async () => slow.requests.length,
+						(n) => n > asked,
+					);
+					delete loaded.mcpServers.slow;
+					try {
+						await conversations.deletingMcpServer("slow");
+						expect(await woken(id, "failed")).toContain("deleted");
+						expect(cancels()).toBe(1);
+					} finally {
+						loaded.mcpServers.slow = saved;
+					}
 				});
 
 				it("as cancelled when the service cancels it", async () => {

@@ -29,8 +29,8 @@ import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { alertRun } from "./alerts.ts";
 import {
 	BACKGROUND_CALLS_QUEUE,
-	cancelBackgroundCalls,
 	cancelStopped,
+	cancelStoppedCalls,
 	pollBackgroundCall,
 	requeueBackgroundCalls,
 	startBackgroundCall,
@@ -237,13 +237,13 @@ async function stopped(
 	// out of time is no stop of the User's: the parent gets what it has, the User an Alert
 	const timedOut = signal.reason instanceof RunTimedOut;
 	// one handed off while the stop was on its way: Stop cancels it too
-	if (!timedOut) await cancelBackgroundCalls(config, conv.id, "stop", fetch);
+	if (!timedOut) await cancelStoppedCalls(config, conv.id, fetch);
 	if (conv.parentId)
 		return endSubagent(conv.id, {
 			outcome: timedOut ? "partial" : "stopped",
 			result,
 		});
-	await endRun(conv.id, "idle");
+	await endRun(conv.id, "idle", undefined, !timedOut);
 	if (timedOut) await alertRun(conv.id, "partial");
 }
 

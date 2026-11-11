@@ -83,6 +83,7 @@ const config = {
 		},
 	},
 	mcpServers: {},
+	allMcpServers: {},
 	skills: {},
 	limits: DEFAULT_LIMITS,
 };
@@ -459,7 +460,10 @@ describe("runAgent", () => {
 	});
 
 	it("drafts a Scheduled Task for the User to create, refusing an invalid or too frequent schedule, and carries on, Unattended too", async () => {
-		const draft = (schedule: unknown, ends_at?: string) =>
+		const draft = (
+			schedule: Record<string, string | number>,
+			ends_at?: string,
+		) =>
 			fauxToolCall("draft_scheduled_task", {
 				name: "Build report",
 				prompt: "Report on the nightly build",

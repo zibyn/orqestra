@@ -203,10 +203,11 @@ export async function enqueue(conversationId: string) {
 /**
  * Starts a Run for a Conversation that has none, a wake input in its inbox and room to run (a Subagent waits for a free slot);
  * decided under its root's lock, so inputs arriving together start one Run. True when it started one.
+ * A top-level one that has nothing to wake it may be a Firing whose tree has just finished: that ends now (see `endIdleFiring`).
  * A Subagent whose Run cannot be queued fails, and its Notification tells the parent; a top-level Conversation's throws.
  */
 export async function ensureRun(conversationId: string) {
-	let asked = false;
+	let fired: Awaited<ReturnType<typeof endIdleFiring>>;
 	const started = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
 		const conv = await tx.query.conversation.findFirst({
@@ -226,9 +227,8 @@ export async function ensureRun(conversationId: string) {
 			)
 			.limit(1);
 		if (!wake) {
-			// what it waited on has ended, but no Run follows until the User replies: its Firing may end now
-			if (!conv.parentId && conv.awaitingReply)
-				asked = !!(await endFiring(tx, conversationId, "question"));
+			// what its Firing waited on may have ended with no Run to follow: a stopped Subagent, a cancelled call, a Question
+			if (!conv.parentId) fired = await endIdleFiring(tx, conv);
 			return undefined;
 		}
 		if (conv.parentId) {
@@ -256,7 +256,12 @@ export async function ensureRun(conversationId: string) {
 			.where(eq(conversation.id, conversationId));
 		return conv;
 	});
-	if (asked) await alertRun(conversationId, "question");
+	if (fired?.paused) await unschedule(fired.taskId);
+	if (fired)
+		await alertRun(
+			conversationId,
+			fired.paused ? "auto_paused" : fired.outcome,
+		);
 	if (!started) return false;
 	try {
 		await enqueue(conversationId);
@@ -403,18 +408,8 @@ async function lastAnswer(tx: Tx, conversationId: string) {
  * Whether one of a Conversation's own Background Calls still runs, or one of its own Subagents is queued or running
  * (or waiting for its own), or stopped but its Run not yet over.
  */
-async function busy(tx: Tx, parentId: string) {
-	const [call] = await tx
-		.select({ id: backgroundCall.id })
-		.from(backgroundCall)
-		.where(
-			and(
-				eq(backgroundCall.conversationId, parentId),
-				eq(backgroundCall.status, "running"),
-			),
-		)
-		.limit(1);
-	if (call) return true;
+export async function busy(tx: Tx, parentId: string) {
+	if (await callsRunning(tx, parentId)) return true;
 	const [row] = await tx
 		.select({ id: subagent.conversationId })
 		.from(subagent)
@@ -432,8 +427,23 @@ async function busy(tx: Tx, parentId: string) {
 	return !!row;
 }
 
+/** Whether one of a Conversation's own Background Calls still runs. */
+async function callsRunning(tx: Tx, conversationId: string) {
+	const [call] = await tx
+		.select({ id: backgroundCall.id })
+		.from(backgroundCall)
+		.where(
+			and(
+				eq(backgroundCall.conversationId, conversationId),
+				eq(backgroundCall.status, "running"),
+			),
+		)
+		.limit(1);
+	return !!call;
+}
+
 /** A Subagent whose Run ended while its own Subagents or Background Calls still work: idle, but not yet ended, it holds back its Notification. */
-async function waiting(tx: Tx, conversationId: string) {
+export async function waiting(tx: Tx, conversationId: string) {
 	const [row] = await tx
 		.select({ outcome: subagent.outcome })
 		.from(subagent)
@@ -517,20 +527,24 @@ export async function countFiring(tx: Tx, taskId: string, failed: boolean) {
 /**
  * Under the root's lock: a Run of a Firing's Conversation ended as `outcome`, which the Firing keeps once its whole tree is done:
  * no Subagent in it still queued or working (a stopped one wakes nobody, so is done) and no Background Call still running.
- * Until then it stays running, and some later Run's end, or `ensureRun` for one waiting on a Question, decides; once decided, later Runs change nothing.
+ * Until then it stays running, and some later Run's end, or `ensureRun` finding nothing to run, decides; once decided, later Runs change nothing.
+ * A Stop of the whole tree (`stopped`) decides at once: nothing in it goes on for the Firing.
  * Returns the task's id when it ended, and whether that failure auto-paused it.
  */
 async function endFiring(
 	tx: Tx,
 	conversationId: string,
 	outcome: Exclude<FiringOutcome, "running" | "skipped">,
+	stopped = false,
 ) {
-	const { rows: open } = await tx.execute(
-		sql`select 1 from ${conversation} c where c.root_id = ${conversationId} and (
+	const { rows: open } = stopped
+		? { rows: [] }
+		: await tx.execute(
+				sql`select 1 from ${conversation} c where c.root_id = ${conversationId} and (
 			exists (select 1 from ${subagent} s where s.conversation_id = c.id and s.outcome in ('queued', 'running'))
 			or exists (select 1 from ${backgroundCall} b where b.conversation_id = c.id and b.status = 'running')
 		) limit 1`,
-	);
+			);
 	if (open.length) return;
 	const [ended] = await tx
 		.update(firing)
@@ -550,24 +564,39 @@ async function endFiring(
 }
 
 /**
- * Under the root's lock (which `tx` holds): the last open work of a top-level Conversation's tree ended with no Run to end
- * its Firing (a Background Call cancelled without waking it), so the Firing ends now, as the Conversation last stood:
- * partial when the User stopped it, else failed, a Question or completed. Undefined while a Run is on, or no Firing ended.
+ * Under the root's lock (which `tx` holds), for an idle top-level Conversation: the last open work of its tree may have ended
+ * with no Run to end its Firing (a Subagent stopped or a Background Call cancelled without waking it), so the Firing ends now
+ * as the Conversation last stood: failed, a Question or completed. Undefined while its tree works, or no Firing ended.
  */
-export async function endIdleFiring(tx: Tx, rootId: string, stopped: boolean) {
-	const conv = await tx.query.conversation.findFirst({
-		where: eq(conversation.id, rootId),
-	});
-	if (!conv || conv.parentId || conv.status === "running") return undefined;
-	const outcome: "partial" | "failed" | "question" | "completed" = stopped
-		? "partial"
-		: conv.status === "failed"
-			? "failed"
+async function endIdleFiring(
+	tx: Tx,
+	conv: Pick<
+		typeof conversation.$inferSelect,
+		"id" | "status" | "awaitingReply"
+	>,
+) {
+	const outcome =
+		conv.status === "failed"
+			? ("failed" as const)
 			: conv.awaitingReply
-				? "question"
-				: "completed";
-	const ended = await endFiring(tx, rootId, outcome);
+				? ("question" as const)
+				: ("completed" as const);
+	const ended = await endFiring(tx, conv.id, outcome);
 	return ended && { ...ended, outcome };
+}
+
+/** The User stopped a top-level Conversation with no Run on: its Firing, whatever its tree still has to wind down, ends partial now. */
+export async function stopFiring(conversationId: string) {
+	await db.transaction(async (tx) => {
+		await lockRoot(tx, conversationId);
+		const conv = await tx.query.conversation.findFirst({
+			columns: { status: true },
+			where: eq(conversation.id, conversationId),
+		});
+		// a Run on ends it as it stops
+		if (conv && conv.status !== "running")
+			await endFiring(tx, conversationId, "partial", true);
+	});
 }
 
 /** A Firing's Conversation whose Run could not even be queued: the Firing failed. True when that auto-paused its task. */
@@ -584,12 +613,14 @@ export async function firingFailed(conversationId: string) {
  * Ends a top-level Run that did not drain to the end (stopped, failed or crashed) with `status`, under the root's lock.
  * After a stop, a wake input that arrived meanwhile, such as a User message sent right after Stop, starts the next Run;
  * after a failure the inbox waits for Retry, which delivers it, so the failure still shows.
- * A Firing's Run ends it (see `endFiring`) failed, or partial when stopped, by the User or out of time. True when that auto-paused its task.
+ * A Firing's Run ends it (see `endFiring`) failed, or partial when stopped, by the User or out of time; at once when the User stopped it,
+ * as its whole tree is then. True when that auto-paused its task.
  */
 export async function endRun(
 	conversationId: string,
 	status: "idle" | "failed",
 	failure: RunFailure = "error",
+	byUser = false,
 ) {
 	const paused = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
@@ -601,6 +632,7 @@ export async function endRun(
 			tx,
 			conversationId,
 			status === "failed" ? "failed" : "partial",
+			byUser,
 		);
 	});
 	if (paused?.paused) await unschedule(paused.taskId);
@@ -609,10 +641,24 @@ export async function endRun(
 	return !!paused?.paused;
 }
 
-/** Ends a Subagent's Run that did not drain to the end (stopped, failed, crashed or never queued); see `settle`. */
+/**
+ * Ends a Subagent's Run that did not drain to the end (stopped, failed, crashed or never queued); see `settle`.
+ * A failure leaves its Background Calls running: it waits for them idle, as one whose Run finished does, and settles on a later Run's end.
+ */
 export async function endSubagent(conversationId: string, ended: Ended) {
 	const parentId = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
+		if (
+			ended.outcome === "failed" &&
+			(await callsRunning(tx, conversationId))
+		) {
+			const [conv] = await tx
+				.update(conversation)
+				.set({ status: "idle" })
+				.where(eq(conversation.id, conversationId))
+				.returning({ parentId: conversation.parentId });
+			return conv?.parentId ?? undefined;
+		}
 		return settle(tx, conversationId, ended);
 	});
 	if (parentId) await wakeAfter(parentId);
@@ -717,7 +763,7 @@ export async function drain(
  * Those without a Run end at once, one waiting for its own Subagents with its last answer; running ones are marked stopped,
  * which their Run sees when it starts or the stop request reaches it, and keep their slot until it ends.
  * Their Notifications wake nobody, except a parent waiting for its Subagents, which sums up once the last has ended, stopped ones' Runs included.
- * `cancelCalls` then cancels each stopped one's Background Calls, so none wakes it: `cancelBackgroundCalls` with "stop".
+ * `cancelCalls` then cancels each stopped one's Background Calls, so none wakes it: `cancelStoppedCalls`.
  * Returns the numbers of the parent's own it stopped.
  */
 export async function stopSubagents(

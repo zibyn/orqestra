@@ -549,7 +549,7 @@ describe.skipIf(!url)(
 			const sub = view?.subagents[0].id as string;
 			expect(
 				(await conversations.subagentTranscript(userId, sub))?.map(
-					(m) => m.role,
+					(m) => m.message.role,
 				),
 			).toEqual(["user", "assistant"]);
 			expect(await conversations.subagentTranscript("u2", sub)).toBeUndefined();
@@ -1191,7 +1191,7 @@ describe.skipIf(!url)(
 				expect(summarized).toContain("task-notification");
 				expect(
 					(await conversations.subagentTranscript(userId, lead.id))?.map(
-						(m) => m.role,
+						(m) => m.message.role,
 					),
 				).toEqual([
 					"user",

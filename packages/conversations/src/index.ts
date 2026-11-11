@@ -33,11 +33,12 @@ import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import { alerts } from "./alerts.ts";
 import {
-	type CancelledCall,
-	cancelBackgroundCalls,
+	askToCancel,
+	cancelBackgroundCall,
 	cancelStopped,
-	cancelTasks,
+	cancelStoppedCalls,
 	endBackgroundCallsOf,
+	runningCalls,
 } from "./background-calls.ts";
 import { MEMORY_CHANGES, undoChange } from "./memories.ts";
 import {
@@ -51,6 +52,7 @@ import {
 	requestStop,
 	runQueue,
 	saved,
+	stopFiring,
 	stopSubagents,
 } from "./runs.ts";
 import { ensureSandbox } from "./sandbox.ts";
@@ -391,7 +393,8 @@ export function createConversations({
 				/** The tree's Background Calls, with the name of their MCP Server (its id once it is gone). */
 				backgroundCalls: calls.map((c) => ({
 					...c,
-					mcpServerName: cfg.mcpServers[c.mcpServerId]?.name ?? c.mcpServerId,
+					mcpServerName:
+						cfg.allMcpServers[c.mcpServerId]?.name ?? c.mcpServerId,
 				})),
 			};
 		},
@@ -650,19 +653,13 @@ export function createConversations({
 						"nothing_to_retry",
 					);
 				// the Background Calls it made go with it, cancelled once it is gone
-				const calls: CancelledCall[] = await tx
-					.select({
-						mcpServerId: backgroundCall.mcpServerId,
-						reference: backgroundCall.reference,
-					})
-					.from(backgroundCall)
-					.where(
-						and(
-							eq(backgroundCall.conversationId, id),
-							eq(backgroundCall.status, "running"),
-							sql`${backgroundCall.messageId} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
-						),
-					);
+				const calls = await runningCalls(
+					tx,
+					and(
+						eq(backgroundCall.conversationId, id),
+						sql`${backgroundCall.messageId} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
+					),
+				);
 				// the files it attached go with it; the User's message, with its uploads, stays
 				const attached = await tx.execute<{ key: string }>(
 					sql`delete from ${attachment} where ${attachment.conversationId} = ${id} and ${attachment.messageId} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user') returning ${attachment.key}`,
@@ -677,8 +674,9 @@ export function createConversations({
 							union all
 							select c.id from conversation c join dropped on c.parent_id = dropped.id
 						)`;
-				const theirs = await tx.execute<CancelledCall>(
-					sql`${dropped} select mcp_server_id as "mcpServerId", reference from ${backgroundCall} where status = 'running' and conversation_id in (select id from dropped)`,
+				const theirs = await runningCalls(
+					tx,
+					sql`${backgroundCall.conversationId} in (${dropped} select id from dropped)`,
 				);
 				const subagents = await tx.execute<{
 					id: string;
@@ -689,12 +687,12 @@ export function createConversations({
 				return {
 					subagents: subagents.rows,
 					keys: attached.rows.map((a) => a.key),
-					calls: [...calls, ...theirs.rows],
+					calls: [...calls, ...theirs],
 				};
 			});
 			// their Runs stop; with their Conversation gone they save nothing more
 			await requestStop(dropped.subagents.map((d) => d.id));
-			await cancelTasks(config, dropped.calls, fetch);
+			await askToCancel(config, dropped.calls, fetch);
 			await deleteSandboxes(dropped.subagents.map((d) => d.sandboxId));
 			await deleteObjects(store, [
 				...dropped.keys,
@@ -713,7 +711,7 @@ export function createConversations({
 			const conv = await owned(userId, id);
 			if (!conv) return false;
 			await cancelTimer(id);
-			await cancelBackgroundCalls(config, id, "stop", fetch);
+			await cancelStoppedCalls(config, id, fetch);
 			const job =
 				conv.status === "running" && conv.jobId
 					? await runQueue(AGENT_RUNS_QUEUE).getJob(conv.jobId)
@@ -741,6 +739,8 @@ export function createConversations({
 						.where(eq(conversation.id, id));
 				await requestStop([id]);
 			}
+			// before its Subagents' ends, so none decides it as though the User had stopped only them
+			await stopFiring(id);
 			await stopSubagents(id, cancelStopped(config, fetch));
 			return true;
 		},
@@ -762,9 +762,7 @@ export function createConversations({
 		 */
 		async cancelBackgroundCall(userId: string, id: string, toolCallId: string) {
 			if (!(await owned(userId, id))) return false;
-			return (
-				(await cancelBackgroundCalls(config, id, { toolCallId }, fetch)) > 0
-			);
+			return cancelBackgroundCall(config, id, toolCallId, fetch);
 		},
 
 		/** The User opened the Conversation: it is no longer Unread. False when it is not the user's. */
@@ -797,27 +795,19 @@ export function createConversations({
 			// its Run and its Subagents' stop first, then they go; a Run that outlives its Conversation saves nothing more
 			await requestStop(tree.map((c) => c.id));
 			// their Background Calls go with them, unannounced, and are cancelled once they are gone
-			const calls: CancelledCall[] = await db
-				.select({
-					mcpServerId: backgroundCall.mcpServerId,
-					reference: backgroundCall.reference,
-				})
-				.from(backgroundCall)
-				.where(
-					and(
-						eq(backgroundCall.status, "running"),
-						inArray(
-							backgroundCall.conversationId,
-							tree.map((c) => c.id),
-						),
-					),
-				);
+			const calls = await runningCalls(
+				db,
+				inArray(
+					backgroundCall.conversationId,
+					tree.map((c) => c.id),
+				),
+			);
 			// its Subagents' rows too, so the Sandbox ids are those last stored: a Run claims one under the row's lock
 			const deleted = await db
 				.delete(conversation)
 				.where(eq(conversation.rootId, id))
 				.returning({ sandboxId: conversation.sandboxId });
-			await cancelTasks(config, calls, fetch);
+			await askToCancel(config, calls, fetch);
 			await deleteSandboxes(deleted.map((d) => d.sandboxId));
 			// its Attachments, its Subagents' too, are kept under its id
 			if (deleted.length) await deleteObjects(store, [`${id}/`]);
@@ -911,15 +901,22 @@ export function createConversations({
 			return {};
 		},
 
-		/** A Subagent's transcript, loaded when its panel opens; undefined when it is not the user's. */
+		/**
+		 * A Subagent's transcript, loaded when its panel opens, each message with the Subagent or Background Call
+		 * whose Notification it is; undefined when it is not the user's.
+		 */
 		async subagentTranscript(userId: string, id: string) {
 			if (!(await ownedSubagent(userId, id))) return undefined;
 			const rows = await db
-				.select({ message: message.message })
+				.select({
+					message: message.message,
+					subagentId: message.subagentId,
+					backgroundCallId: message.backgroundCallId,
+				})
 				.from(message)
 				.where(eq(message.conversationId, id))
 				.orderBy(asc(message.id));
-			return rows.map((r) => r.message as Message);
+			return rows.map((r) => ({ ...r, message: r.message as Message }));
 		},
 
 		/** Stops one Subagent at the User's request; like the Agent's subagent_stop, it does not wake the parent. False when it is not the user's. */

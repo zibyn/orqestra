@@ -268,6 +268,13 @@ export const timer = pgTable("timer", {
 	thinkingLevel: text("thinking_level").notNull(),
 });
 
+/** How a Background Call stands: running until it ends one of the other ways. */
+export type BackgroundCallStatus =
+	| "running"
+	| "completed"
+	| "failed"
+	| "cancelled";
+
 // A Tool call its MCP Server put in the background: polled until it ends, when its outcome comes to the Conversation as a Notification
 export const backgroundCall = pgTable(
 	"background_call",
@@ -286,7 +293,7 @@ export const backgroundCall = pgTable(
 		// ext-tasks' SerializedTaskReference, to resume the task by
 		reference: jsonb("reference").notNull(),
 		status: text("status")
-			.$type<"running" | "completed" | "failed" | "cancelled">()
+			.$type<BackgroundCallStatus>()
 			.default("running")
 			.notNull(),
 		// the BullMQ job id of its next poll, so queueing that poll twice adds one job

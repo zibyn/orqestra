@@ -1,9 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { catalogProviders } from "@orqestra/config";
 import { config } from "@orqestra/config/live";
-import type { Conversations } from "@orqestra/conversations";
+import {
+	type Conversations,
+	createConversations,
+} from "@orqestra/conversations";
 import { db } from "@orqestra/db";
-import { sql } from "drizzle-orm";
+import { backgroundCall, conversation, message } from "@orqestra/db/schema";
+import { fakeMcpServer, memoryStore } from "@orqestra/tools/testing";
+import { eq, sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 
 // Through the api against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
@@ -202,6 +207,77 @@ describe.skipIf(!url)("the console through the api", () => {
 		expect((await call("GET", "/mcp-servers")).body).toMatchObject([
 			{ id: "docs", enabled: false },
 		]);
+	});
+
+	it("deletes a disabled MCP Server, cancelling its Background Calls and ending them failed", async () => {
+		const fake = fakeMcpServer({ era: "modern" });
+		const withCalls = createApp({
+			session: async () => ({
+				user: { id: "a1", name: "Ada", admin: true },
+				cookies: [],
+			}),
+			auth: () => new Response(null, { status: 404 }),
+			conversations: createConversations({
+				store: memoryStore().store,
+				config: config.current,
+				skillFiles: async () => [],
+				fetch: fake.fetch,
+			}),
+		});
+		const url = "http://127.0.0.1:9/mcp";
+		await call("POST", "/mcp-servers", {
+			id: "docs",
+			create: true,
+			name: "Docs",
+			url,
+			enabled: true,
+			headers: [],
+		});
+		await call("PUT", "/mcp-servers/enabled", { id: "docs", enabled: false });
+		const [conv] = await db
+			.insert(conversation)
+			.values({ userId: "a1" })
+			.returning();
+		try {
+			const [said] = await db
+				.insert(message)
+				.values({
+					conversationId: conv.id,
+					message: { role: "user", content: "crunch", timestamp: 0 },
+					model: "faux/faux-1",
+					thinkingLevel: "off",
+				})
+				.returning();
+			await db.insert(backgroundCall).values({
+				conversationId: conv.id,
+				toolCallId: "t1",
+				mcpServerId: "docs",
+				toolName: "crunch",
+				reference: {
+					endpointId: url,
+					generation: "v2",
+					taskId: "task-1",
+					originalOperation: "tools/call",
+				},
+				jobId: "j1",
+				messageId: said.id,
+			});
+			const response = await withCalls.handle(
+				new Request("http://localhost/api/mcp-servers/docs", {
+					method: "DELETE",
+				}),
+			);
+			expect(response.status).toBe(200);
+			const [ended] = await db
+				.select({ status: backgroundCall.status })
+				.from(backgroundCall)
+				.where(eq(backgroundCall.conversationId, conv.id));
+			expect(ended.status).toBe("failed");
+			expect(fake.requests.map((r) => r.method)).toContain("tasks/cancel");
+			expect((await call("GET", "/mcp-servers")).body).toEqual([]);
+		} finally {
+			await db.delete(conversation).where(eq(conversation.id, conv.id));
+		}
 	});
 
 	it("saves the Sandbox Provider and deletes it", async () => {
