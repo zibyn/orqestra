@@ -102,6 +102,7 @@ export {
 	RunTimedOut,
 	type StreamEvent,
 	TemplateOffline,
+	type TraceCarrier,
 	type Transcript,
 	type TranscriptMessage,
 	type Turn,

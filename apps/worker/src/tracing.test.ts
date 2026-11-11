@@ -42,6 +42,48 @@ describe("tracing", () => {
 	});
 });
 
+describe("otelTelemetry pi spans", () => {
+	// as pi's observeModelRequest reports a failed request or poll
+	const failed = async (name: string, message: string) => {
+		const exporter = new InMemorySpanExporter();
+		const provider = new TracerProvider({
+			spanProcessors: [new SimpleSpanProcessor({ exporter })],
+		});
+		await otelTelemetry(provider.getTracer("test")).startSpan(
+			{ name, attributes: { provider: "p", model: "m", api: "x" } },
+			(span) => {
+				span.setAttributes({ stop: "error", "cost.total": 0.5 });
+				span.setStatus({
+					status: "error",
+					error: { name: "provider_error", message },
+				});
+			},
+		);
+		return exporter.getFinishedSpans()[0];
+	};
+
+	it("takes an HTTP status code only from status-shaped error text", async () => {
+		const code = async (message: string) =>
+			(await failed("pi.ai.request", message))?.attributes[
+				"http.response.status_code"
+			];
+		expect(await code("429 Too Many Requests")).toBe(429);
+		expect(await code("Request failed with status 503")).toBe(503);
+		expect(await code("HTTP 401: bad key")).toBe(401);
+		expect(await code("prompt is 400 tokens over the limit")).toBeUndefined();
+		expect(await code("you said: call me at 555 0100")).toBeUndefined();
+	});
+
+	it("maps a poll as a request: no cost, no error text", async () => {
+		const poll = await failed("pi.ai.poll", "500 secret prompt echoed");
+		expect(poll?.attributes["cost.total"]).toBeUndefined();
+		expect(poll?.attributes.api).toBeUndefined();
+		expect(poll?.attributes["gen_ai.request.model"]).toBe("m");
+		expect(poll?.attributes["error.type"]).toBe("server_error");
+		expect(poll?.status.message ?? "").not.toMatch(/secret/);
+	});
+});
+
 // pi-telemetry's own checks of an adapter, against the OTel spans it ends
 const traceparent = (c: SpanContext) => ({
 	traceparent: `00-${c.traceId}-${c.spanId}-01`,

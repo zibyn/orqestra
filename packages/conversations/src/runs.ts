@@ -30,6 +30,7 @@ import {
 	sql,
 } from "drizzle-orm";
 import { alertRun } from "./alerts.ts";
+import type { TraceCarrier } from "./serve.ts";
 
 /** Locks the row of a Conversation's root, the top-level Conversation of its tree: every Run start and finish in the tree decides under it. */
 export const lockRoot = (tx: Tx, conversationId: string) =>
@@ -327,6 +328,10 @@ export const notificationFrame = (
 		body.replaceAll("</task-notification", "<\\/task-notification")
 	}\n</task-notification>`;
 
+/** A Notification's trace context: a link to the Tool call that set its work going, when it was kept. */
+export const linkTo = (trace: TraceCarrier | null) =>
+	trace ? { link: trace } : undefined;
+
 const notification = (number: number, { outcome, result }: Ended) =>
 	notificationFrame({ subagent: String(number), status: outcome }, result);
 
@@ -384,7 +389,7 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 		thinkingLevel: last?.thinkingLevel ?? "off",
 		subagentId: conversationId,
 		wake,
-		trace: row.trace ? { link: row.trace } : undefined,
+		trace: linkTo(row.trace),
 	});
 	return parentId;
 }

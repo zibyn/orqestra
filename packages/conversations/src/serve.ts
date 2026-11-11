@@ -345,7 +345,7 @@ async function execute(
 				})
 			: conv;
 		const unattended = !!root?.unattended;
-		const fired =
+		const rootFiring =
 			root?.scheduledTaskId &&
 			(await db.query.firing.findFirst({
 				where: eq(firing.conversationId, root.id),
@@ -366,7 +366,7 @@ async function execute(
 				incognito: !!root?.incognito,
 				unattended,
 				scheduledTaskId: root?.scheduledTaskId ?? null,
-				firingId: fired ? fired.id : undefined,
+				firingId: rootFiring ? rootFiring.id : undefined,
 			},
 			stop.signal,
 			emit,

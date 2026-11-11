@@ -1587,6 +1587,40 @@ describe("runAgent traces", () => {
 		).not.toMatch(/secret|down/);
 	});
 
+	it("marks a Tool call that timed out or never reached its service as such", async () => {
+		const failures = [
+			[new DOMException("The operation timed out.", "TimeoutError"), "timeout"],
+			[new TypeError("fetch failed"), "unavailable"],
+		] as const;
+		for (const [thrown, type] of failures) {
+			script([
+				fauxAssistantMessage(fauxToolCall("search", { query: "x" }), {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage("done"),
+			]);
+			const t = traced();
+			const m = memoryRun({
+				transcript: transcript(user("try")),
+				turn: turn(),
+				titled: true,
+			});
+			await runAgent(m.run, {
+				...deps(),
+				openToolbox: ((services, allowed, options) =>
+					openToolbox(services, allowed, {
+						...options,
+						fetch: (async () => {
+							throw thrown;
+						}) as unknown as typeof fetch,
+					})) as typeof openToolbox,
+				telemetry: t.telemetry,
+			});
+			const [search] = named(t.spans(), "execute_tool search");
+			expect(search?.attributes["error.type"]).toBe(type);
+		}
+	});
+
 	it("traces compaction as a request of its own", async () => {
 		const old = fauxAssistantMessage("b".repeat(2000));
 		old.usage.totalTokens = 1500;
@@ -1814,5 +1848,72 @@ describe("runAgent traces", () => {
 			"orqestra.scheduled_task.id": "task-1",
 			"orqestra.firing.id": 7,
 		});
+	});
+
+	it("marks no error on a Run stopped, or timed out, during a Tool call, nor on that call", async () => {
+		for (const end of ["stop", "timeOut"] as const) {
+			script([
+				fauxAssistantMessage(fauxToolCall("search", { query: "slow" }), {
+					stopReason: "toolUse",
+				}),
+			]);
+			const t = traced();
+			const m = memoryRun({
+				transcript: transcript(user("look it up")),
+				turn: turn(),
+				titled: true,
+				unattended: end === "timeOut",
+			});
+			let searching = false;
+			// Search hangs until the call is cancelled
+			const ran = runAgent(m.run, {
+				...deps(),
+				openToolbox: ((services, allowed, options) =>
+					openToolbox(services, allowed, {
+						...options,
+						fetch: ((_input: string | URL, init?: RequestInit) => {
+							searching = true;
+							return new Promise((_, reject) =>
+								init?.signal?.addEventListener("abort", () =>
+									reject(init.signal?.reason),
+								),
+							);
+						}) as typeof fetch,
+					})) as typeof openToolbox,
+				telemetry: t.telemetry,
+			});
+			while (!searching) await new Promise((r) => setTimeout(r, 1));
+			m[end]();
+			await ran.catch(() => {});
+
+			const [tool] = named(t.spans(), "execute_tool search");
+			const [run] = named(t.spans(), "invoke_agent");
+			expect(tool?.status.code).not.toBe(SpanStatusCode.ERROR);
+			expect(run?.status.code).not.toBe(SpanStatusCode.ERROR);
+			expect(run?.attributes["orqestra.run.outcome"]).toBe(
+				end === "stop" ? "stopped" : "partial",
+			);
+		}
+	});
+
+	it("marks no error on a Run stopped, or timed out, before its reply began", async () => {
+		for (const end of ["stop", "timeOut"] as const) {
+			const t = traced();
+			const m = memoryRun({
+				transcript: transcript(user("hi")),
+				turn: turn(),
+				titled: true,
+			});
+			m[end]();
+			await runAgent(m.run, { ...deps(), telemetry: t.telemetry }).catch(
+				() => {},
+			);
+
+			const [run] = named(t.spans(), "invoke_agent");
+			expect(run?.status.code).not.toBe(SpanStatusCode.ERROR);
+			expect(run?.attributes["orqestra.run.outcome"]).toBe(
+				end === "stop" ? "stopped" : "partial",
+			);
+		}
 	});
 });

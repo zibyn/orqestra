@@ -14,6 +14,7 @@ import {
 	TaskError,
 	TemplateOffline,
 	TimerLimitReached,
+	type TraceCarrier,
 } from "@orqestra/conversations";
 
 /** Model requests a Subagent may make; the last one, without Tools, is for its final answer. */
@@ -220,8 +221,7 @@ export function subagentTools(
 	config: Pick<OrqestraConfig, "agents">,
 	subagents: NonNullable<RunHandle["subagents"]>,
 	/** The trace context of the Tool call's span, by call id. */
-	trace: (toolCallId: string) => Record<string, string> | undefined = () =>
-		undefined,
+	trace: (toolCallId: string) => TraceCarrier | undefined = () => undefined,
 ) {
 	const templates = config.agents
 		.map((a) => `- ${a.id} (${a.name}): ${a.description}`)

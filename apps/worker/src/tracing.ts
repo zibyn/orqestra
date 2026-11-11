@@ -77,7 +77,7 @@ export function tracing(env: Record<string, string | undefined>) {
 const contexts = new WeakMap<TelemetryContext, SpanContext>();
 
 /**
- * pi's telemetry contract on an OTel tracer, its `pi.ai.request` spans renamed and mapped to the GenAI conventions;
+ * pi's telemetry contract on an OTel tracer, its `pi.ai.request` spans renamed and each pi span mapped to the GenAI conventions;
  * a failed request keeps its error text only with `captureContent`.
  */
 export function otelTelemetry(
@@ -109,7 +109,7 @@ export function otelTelemetry(
 			const remote = found && isSpanContextValid(found) ? found : undefined;
 			const context: TelemetryContext = {
 				propagation,
-				startSpan: starter(
+				startSpan: spansUnder(
 					tracer,
 					remote && trace.wrapSpanContext(remote),
 					propagation,
@@ -123,7 +123,7 @@ export function otelTelemetry(
 	};
 	return {
 		propagation,
-		startSpan: starter(tracer, undefined, propagation, captureContent),
+		startSpan: spansUnder(tracer, undefined, propagation, captureContent),
 	};
 }
 
@@ -141,7 +141,7 @@ const links = (list: readonly SpanLink[] = []) =>
 	});
 
 /** Starts children of `parent` (roots when undefined); `null` makes inert ones, the children of a settled span. */
-function starter(
+function spansUnder(
 	tracer: Tracer,
 	parent: Span | undefined | null,
 	propagation: TelemetryPropagation,
@@ -151,12 +151,15 @@ function starter(
 		options: SpanOptions,
 		callback: (span: TelemetrySpan) => T | Promise<T>,
 	): Promise<T> => {
-		const request = options.name === "pi.ai.request";
+		// pi's spans (a request, a poll) carry cost and error text: each goes through the GenAI mapping
+		const request = options.name.startsWith("pi.");
 		const otel =
 			parent === null
 				? null
 				: tracer.startSpan(
-						request ? `chat ${options.attributes?.model}` : options.name,
+						options.name === "pi.ai.request"
+							? `chat ${options.attributes?.model}`
+							: options.name,
 						{
 							attributes: clean(
 								request ? requestStart(options.attributes) : options.attributes,
@@ -170,7 +173,7 @@ function starter(
 		const span: TelemetrySpan = {
 			propagation,
 			startSpan: (o, cb) =>
-				starter(
+				spansUnder(
 					tracer,
 					settled ? null : otel,
 					propagation,
@@ -267,9 +270,15 @@ function requestEnd(a: SpanAttributes): SpanAttributes {
 	};
 }
 
-/** A failed Model request's category, from the error text pi gives, with the HTTP status code in it; the text goes unless captured. */
+/**
+ * A failed Model request's category, from the error text pi gives (no structured status), with the HTTP status code
+ * when the text leads with one or names it ("status 429", "HTTP 429"); the text goes unless captured.
+ */
 function requestError(text: string, captureContent: boolean) {
-	const code = Number(text.match(/\b([45]\d\d)\b/)?.[1]) || undefined;
+	const m = text.match(
+		/^\s*([45]\d\d)\b|\b(?:status(?: code)?|HTTP)[\s:]+([45]\d\d)\b/i,
+	);
+	const code = Number(m?.[1] ?? m?.[2]) || undefined;
 	const type =
 		code === 401 || code === 403 || /unauthori[sz]ed|api key/i.test(text)
 			? "authentication"

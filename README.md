@@ -61,6 +61,8 @@ Compose 启动八个服务：`postgres`、`rustfs`（存放 Attachment 的对象
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | 否 | Web Push 发送 Alert 用的 VAPID 密钥（`npx web-push generate-vapid-keys` 生成）和联系方式（`mailto:` 或 `https://`）；三项都填才启用，需要 HTTPS。不填时用户菜单里没有「在此浏览器接收 Alert」开关 |
 | `WORKER_CONCURRENCY` / `SUBAGENT_CONCURRENCY` / `PROVIDER_CONCURRENCY` | 否 | worker 并发度（正整数） |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | 否 | Run 追踪的 OTLP 后端，见[输出 Run 追踪](#输出-run-追踪)；都不填时不输出 |
+| `OTEL_EXPORTER_OTLP_HEADERS` | 否 | 发往 OTLP 后端时带的请求头，如 `Authorization=Basic%20...` |
+| `OTEL_SERVICE_NAME` | 否 | 追踪里的服务名，默认 `orqestra-worker` |
 | `OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT` | 否 | 设为 `true`、`SPAN_ONLY` 或 `SPAN_AND_EVENT` 时追踪带上消息、Memory、Tool 参数与结果和错误原文，见[输出 Run 追踪](#输出-run-追踪)；默认不带 |
 
 ## 本地开发

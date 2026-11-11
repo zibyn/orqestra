@@ -3,7 +3,6 @@ import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import {
 	NOOP_TELEMETRY_CONTEXT,
 	type SpanAttributes,
-	type TelemetryCarrier,
 	type TelemetryContext,
 	type TelemetrySpan,
 } from "@earendil-works/pi-telemetry";
@@ -12,8 +11,11 @@ import {
 	type RunHandle,
 	RunTimedOut,
 	SpendingLimitReached,
+	type TraceCarrier,
 } from "@orqestra/conversations";
 import {
+	failureReason,
+	type McpTool,
 	type ObjectStore,
 	type openToolbox,
 	orrery as orreryClient,
@@ -88,19 +90,20 @@ const withAttributes = (
 
 /**
  * `tool`, each call a span of its own under `span`: the Tool's name, its call id and whether it failed, its
- * arguments, result and error text only with `captureContent`. A thrown error is `_OTHER` (the adapter's default);
- * a result that is an error, MCP's `isError` included, is `tool_error`. While a call runs, `carriers` holds its span's
- * trace context by call id, for the work it sets going.
+ * arguments, result and error text only with `captureContent`. A throw is `timeout`, `authentication`, `unavailable`
+ * (the service never answered) or `_OTHER`; a result that is an error, MCP's `isError` included, is `tool_error`; a call
+ * cancelled with its Run is no error. While a call runs, `carriers` holds its span's trace context by call id, for the
+ * work it sets going.
  */
-const traced =
+const traceToolCalls =
 	(
 		span: TelemetrySpan,
 		captureContent: boolean,
-		carriers: Map<string, TelemetryCarrier>,
+		carriers: Map<string, TraceCarrier>,
 	) =>
-	(tool: AgentTool & { mcpServerId?: string }): AgentTool => ({
+	(tool: AgentTool | McpTool): AgentTool => ({
 		...tool,
-		execute: (toolCallId, params, ...rest) =>
+		execute: (toolCallId, params, signal, ...rest) =>
 			span.startSpan(
 				{
 					name: `execute_tool ${tool.name}`,
@@ -108,7 +111,8 @@ const traced =
 						"gen_ai.operation.name": "execute_tool",
 						"gen_ai.tool.name": tool.name,
 						"gen_ai.tool.call.id": toolCallId,
-						"orqestra.mcp_server.id": tool.mcpServerId,
+						"orqestra.mcp_server.id":
+							"mcpServerId" in tool ? tool.mcpServerId : undefined,
 					},
 				},
 				async (toolSpan) => {
@@ -119,18 +123,20 @@ const traced =
 					const carrier = toolSpan.propagation?.inject(toolSpan);
 					if (carrier) carriers.set(toolCallId, carrier);
 					const result = await tool
-						.execute(toolCallId, params, ...rest)
+						.execute(toolCallId, params, signal, ...rest)
 						.finally(() => carriers.delete(toolCallId))
 						.catch((error) => {
-							if (captureContent)
-								toolSpan.setStatus({
-									status: "error",
-									error: {
-										name: "_OTHER",
-										message:
-											error instanceof Error ? error.message : String(error),
-									},
-								});
+							toolSpan.setStatus(
+								signal?.aborted
+									? { status: "ok" }
+									: {
+											status: "error",
+											error: {
+												name: TOOL_FAILURES[failureReason(error)],
+												message: captureContent ? errorText(error) : "",
+											},
+										},
+							);
 							throw error;
 						});
 					if (captureContent)
@@ -146,6 +152,16 @@ const traced =
 				},
 			),
 	});
+
+const TOOL_FAILURES = {
+	timeout: "timeout",
+	auth: "authentication",
+	unreachable: "unavailable",
+	failed: "_OTHER",
+} as const;
+
+const errorText = (error: unknown) =>
+	error instanceof Error ? error.message : String(error);
 
 /** What a Run is for, on its span and its Tool calls'. */
 const runPurpose = (run: RunHandle) =>
@@ -163,7 +179,10 @@ export function runAgent(
 		...deps
 	}: RuntimeDeps,
 ) {
-	const attributes = runAttributes(run);
+	const attributes = {
+		...runAttributes(run),
+		"orqestra.purpose": runPurpose(run),
+	};
 	const { propagation } = telemetry;
 	// a Subagent's first Run goes under the Tool call that started it; a woken one is a root, linked to what woke it
 	const parent =
@@ -175,7 +194,6 @@ export function runAgent(
 			name: "invoke_agent",
 			attributes: {
 				...attributes,
-				"orqestra.purpose": runPurpose(run),
 				"orqestra.run.unattended": run.unattended,
 				"orqestra.run.subagent": run.isSubagent,
 			},
@@ -187,6 +205,7 @@ export function runAgent(
 			reply(run, {
 				...deps,
 				span,
+				attributes,
 				captureContent,
 				// every Model request of the Run is a child of its span, saying what it is for
 				streamSimple: (purpose) => {
@@ -233,8 +252,13 @@ async function reply(
 		orrery = orreryClient,
 		store,
 		span,
+		attributes,
 		captureContent = false,
-	}: Omit<RuntimeDeps, "telemetry"> & { span: TelemetrySpan },
+	}: Omit<RuntimeDeps, "telemetry"> & {
+		span: TelemetrySpan;
+		/** Whose the Run is and what for, on each of its Tool calls too. */
+		attributes: SpanAttributes;
+	},
 ) {
 	const { conversationId, turn, signal } = run;
 	const sub = run.isSubagent;
@@ -245,7 +269,7 @@ async function reply(
 	const last = rows.at(-1) as (typeof rows)[number];
 	const provider = config.sandboxProvider;
 	// the trace context of each Tool call under way, handed to the Subagents it starts or continues
-	const carriers = new Map<string, TelemetryCarrier>();
+	const carriers = new Map<string, TraceCarrier>();
 	// MCP Servers are connected for this Run only, so changes on the server side show up in the next one
 	const background = run.backgroundCalls;
 	const toolbox = await openToolbox(config, turn.agent.tools, {
@@ -330,11 +354,8 @@ async function reply(
 					...(sub ? [] : [question.tool, draftTool(config.limits)]),
 					...(run.timer ? timerTools(run.timer) : []),
 				].map(
-					traced(
-						withAttributes(span, {
-							...runAttributes(run),
-							"orqestra.purpose": runPurpose(run),
-						}),
+					traceToolCalls(
+						withAttributes(span, attributes),
 						captureContent,
 						carriers,
 					),
@@ -442,13 +463,14 @@ async function reply(
 						console.error("title generation failed", error);
 				});
 	} catch (error) {
-		// a stopped or timed-out Run is no error
-		if (signal.aborted)
+		// a stopped or timed-out Run is no error, though it throws
+		if (signal.aborted) {
 			span.setAttributes({
 				"orqestra.run.outcome":
 					signal.reason instanceof RunTimedOut ? "partial" : "stopped",
 			});
-		else {
+			span.setStatus({ status: "ok" });
+		} else {
 			span.setAttributes({ "orqestra.run.outcome": "failed" });
 			span.setStatus({
 				status: "error",
@@ -457,11 +479,7 @@ async function reply(
 						error instanceof SpendingLimitReached
 							? "spending_limit_reached"
 							: failure,
-					message: captureContent
-						? error instanceof Error
-							? error.message
-							: String(error)
-						: "",
+					message: captureContent ? errorText(error) : "",
 				},
 			});
 		}

@@ -5,6 +5,7 @@ import { type TSchema, Type } from "@earendil-works/pi-ai";
 import { cut } from "./cut.ts";
 import {
 	type McpConnection,
+	type McpTool,
 	mcpTools,
 	type StartBackgroundCall,
 } from "./mcp.ts";
@@ -157,7 +158,7 @@ export async function openToolbox(
 	},
 ): Promise<{
 	/** An MCP Server's Tools say which server they are from. */
-	tools: (AgentTool & { mcpServerId?: string })[];
+	tools: (AgentTool | McpTool)[];
 	close: () => Promise<unknown>;
 }> {
 	const {
@@ -202,9 +203,11 @@ export async function openToolbox(
 export {
 	type BackgroundCallStart,
 	cancelMcpTask,
+	failureReason,
 	INPUT_REQUIRED,
 	type McpTaskState,
 	type McpTestResult,
+	type McpTool,
 	pollMcpTask,
 	type StartBackgroundCall,
 	testMcpServer,

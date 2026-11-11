@@ -484,16 +484,27 @@ function explain(
 			reason: "failed",
 			detail: `服务器只支持 MCP ${supported.join(", ")}`,
 		};
+	if (signal.aborted) return { reason: "timeout", detail };
+	const reason = failureReason(error);
+	return {
+		reason,
+		detail:
+			reason === "unreachable" ? (networkFailure(error) ?? detail) : detail,
+	};
+}
+
+/** Why a request failed, from its error alone: it timed out, was refused the identity, or never reached the server. */
+export function failureReason(
+	error: unknown,
+): "auth" | "unreachable" | "timeout" | "failed" {
 	if (
-		signal.aborted ||
-		(error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout)
+		(error instanceof SdkError && error.code === SdkErrorCode.RequestTimeout) ||
+		(error instanceof Error && error.name === "TimeoutError")
 	)
-		return { reason: "timeout", detail };
+		return "timeout";
 	const status = httpStatus(error);
-	if (status === 401 || status === 403) return { reason: "auth", detail };
-	const network = networkFailure(error);
-	if (network) return { reason: "unreachable", detail: network };
-	return { reason: "failed", detail };
+	if (status === 401 || status === 403) return "auth";
+	return networkFailure(error) ? "unreachable" : "failed";
 }
 
 /** Follows an error's causes, outermost first. */

@@ -22,6 +22,7 @@ import {
 	busy,
 	ensureRun,
 	lastModel,
+	linkTo,
 	lockRoot,
 	notificationFrame,
 	rootOf,
@@ -30,6 +31,7 @@ import {
 	spend,
 	waiting,
 } from "./runs.ts";
+import type { TraceCarrier } from "./serve.ts";
 
 // A Background Call is its `background_call` row: polled by delayed jobs that carry only its id, one at a time,
 // until it ends; a job that finds it gone, ended or polled by a later job does nothing.
@@ -66,7 +68,7 @@ const schedule = (id: string, jobId: string, delay: number) =>
 export async function startBackgroundCall(
 	conversationId: string,
 	call: BackgroundCallStart,
-	trace?: Record<string, string>,
+	trace?: TraceCarrier,
 ) {
 	const rootId = await rootOf(conversationId);
 	const row = await db.transaction(async (tx) => {
@@ -271,7 +273,7 @@ async function insertNotification(
 		model: last?.model ?? "",
 		thinkingLevel: last?.thinkingLevel ?? "off",
 		backgroundCallId: row.id,
-		trace: row.trace ? { link: row.trace } : undefined,
+		trace: linkTo(row.trace),
 		wake,
 	});
 }
