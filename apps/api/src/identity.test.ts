@@ -37,4 +37,9 @@ describe("signed-in User", () => {
 		);
 		expect(toUser({ sub: "s1" }, []).name).toBe("s1");
 	});
+
+	it("carries the email, when Polaris sends one", () => {
+		expect(toUser({ sub: "s1", email: "m@x.io" }, []).email).toBe("m@x.io");
+		expect(toUser({ sub: "s1", email: "" }, []).email).toBeUndefined();
+	});
 });

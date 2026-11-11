@@ -319,6 +319,18 @@ export const memory = pgTable(
 	(table) => [unique().on(table.userId, table.path)],
 );
 
+// A User who has used Orqestra (ADR 0008), written when a signed-in request reads the session; kept when Polaris removes them.
+// Roles and Entitlements stay in Polaris: whether a User is an Admin is read from the access token on every request
+export const user = pgTable("user", {
+	// their Polaris `sub`
+	id: text("id").primaryKey(),
+	// from the token's claims, rewritten only when they change
+	name: text("name").notNull(),
+	email: text("email"),
+	// moved at most hourly
+	lastActiveAt: timestamp("last_active_at", { withTimezone: true }).notNull(),
+});
+
 // A browser that receives the User's Alerts by Web Push: one row per browser
 export const pushSubscription = pgTable(
 	"push_subscription",
