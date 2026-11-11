@@ -10,6 +10,7 @@ import {
 	BookOpenIcon,
 	BotIcon,
 	BoxesIcon,
+	ChartColumnIcon,
 	ContainerIcon,
 	FileTextIcon,
 	GaugeIcon,
@@ -66,7 +67,8 @@ type NavItem = {
 		| "/console/sandbox"
 		| "/console/parse"
 		| "/console/limits"
-		| "/console/users";
+		| "/console/users"
+		| "/console/usage";
 	label: () => string;
 	icon: LucideIcon;
 };
@@ -100,7 +102,10 @@ const nav: { label: () => string; items: NavItem[] }[] = [
 	},
 	{
 		label: m.users,
-		items: [{ to: "/console/users", label: m.users, icon: UsersIcon }],
+		items: [
+			{ to: "/console/users", label: m.users, icon: UsersIcon },
+			{ to: "/console/usage", label: m.console_usage, icon: ChartColumnIcon },
+		],
 	},
 ];
 

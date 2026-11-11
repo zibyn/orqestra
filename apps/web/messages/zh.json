@@ -358,5 +358,10 @@
   "usage_none": "这段时间没有用量。",
   "usage_general_worker": "通用 Worker",
   "usage_deleted": "已删除",
-  "usage_disabled": "已停用"
+  "usage_disabled": "已停用",
+  "console_usage": "用量",
+  "console_usage_hint": "所有 User 在 Model 上的用量，成本以美元计。点一行可以继续细分。",
+  "usage_by_user": "按 User",
+  "usage_user": "User",
+  "usage_remove_filter": "移除筛选"
 }

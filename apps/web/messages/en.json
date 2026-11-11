@@ -358,5 +358,10 @@
   "usage_none": "No usage in this period.",
   "usage_general_worker": "General Worker",
   "usage_deleted": "Deleted",
-  "usage_disabled": "Disabled"
+  "usage_disabled": "Disabled",
+  "console_usage": "Usage",
+  "console_usage_hint": "What every User has used of Models, and its cost in US dollars. Click a row to break it down further.",
+  "usage_by_user": "By User",
+  "usage_user": "User",
+  "usage_remove_filter": "Remove filter"
 }

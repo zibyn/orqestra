@@ -1,6 +1,6 @@
 import { catalogProviders, modelRef } from "@orqestra/config";
 import { db } from "@orqestra/db";
-import { agent, enabledModel, usage } from "@orqestra/db/schema";
+import { agent, enabledModel, usage, user } from "@orqestra/db/schema";
 import {
 	and,
 	count,
@@ -15,7 +15,7 @@ import {
 } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { signedInOnly } from "./admin.ts";
+import { adminOnly, signedInOnly } from "./admin.ts";
 import type { SignedIn } from "./app.ts";
 
 const instant = z.iso.datetime({ offset: true }).transform((s) => new Date(s));
@@ -33,7 +33,13 @@ export const usageQuery = z.object({
 	model: z.string().optional(),
 });
 
-export type UsageQuery = z.infer<typeof usageQuery> & { user?: string };
+/** An Admin's Usage query: also by User, and filterable by a User's id. */
+export const adminUsageQuery = usageQuery.extend({
+	group: z.enum(["user", "agent", "model"]),
+	user: z.string().optional(),
+});
+
+export type UsageQuery = z.infer<typeof adminUsageQuery>;
 
 const totals = {
 	requests: count(),
@@ -45,7 +51,8 @@ const totals = {
 };
 
 /**
- * Usage in a range, one row per group, costliest first, with what to show for it. An Agent: its
+ * Usage in a range, one row per group, costliest first, with what to show for it. A User: their
+ * current name from the local record. An Agent: its
  * name when last used, `deleted` once its Agent Definition is gone; the general worker's key and
  * name are null. A Model: its Catalog name, `disabled` once it is no longer enabled.
  */
@@ -64,6 +71,20 @@ export async function summarizeUsage(q: UsageQuery) {
 			: sql`${usage.provider} || '/' || ${usage.modelId} = ${q.model}`,
 	];
 	const where = and(...filters);
+
+	if (q.group === "user")
+		return db
+			.select({
+				key: usage.userId,
+				// a User without a local record shows their id
+				name: sql<string>`coalesce(max(${user.name}), ${usage.userId})`,
+				...totals,
+			})
+			.from(usage)
+			.leftJoin(user, eq(user.id, usage.userId))
+			.where(where)
+			.groupBy(usage.userId)
+			.orderBy(desc(totals.cost));
 
 	if (q.group === "agent")
 		return db
@@ -102,15 +123,30 @@ export async function summarizeUsage(q: UsageQuery) {
 	});
 }
 
-/** /api/usage/mine: the signed-in User's own Usage, nobody else's, Admins included. */
+/** /api/usage/mine: the signed-in User's own Usage, nobody else's, Admins included. /api/usage: everyone's, for Admins. */
 export const usageRoutes = (signedIn: SignedIn) =>
 	new Elysia({ prefix: "/usage" })
-		.use(signedIn)
-		.derive(signedInOnly)
-		.get(
-			"/mine",
-			async ({ user, query }) => ({
-				rows: await summarizeUsage({ ...query, user: user.id }),
-			}),
-			{ query: usageQuery },
+		.use(
+			new Elysia()
+				.use(signedIn)
+				.derive(signedInOnly)
+				.get(
+					"/mine",
+					async ({ user, query }) => ({
+						rows: await summarizeUsage({ ...query, user: user.id }),
+					}),
+					{ query: usageQuery },
+				),
+		)
+		.use(
+			new Elysia()
+				.use(signedIn)
+				.derive(adminOnly)
+				.get(
+					"/",
+					async ({ query }) => ({ rows: await summarizeUsage(query) }),
+					{
+						query: adminUsageQuery,
+					},
+				),
 		);

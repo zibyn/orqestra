@@ -3,7 +3,7 @@ import { catalogProviders } from "@orqestra/config";
 import { config } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
-import { usage } from "@orqestra/db/schema";
+import { usage, user } from "@orqestra/db/schema";
 import { sql } from "drizzle-orm";
 import { createApp, type User } from "./app.ts";
 
@@ -12,6 +12,7 @@ const url = process.env.TEST_DATABASE_URL;
 
 const ada: User = { id: "ada", name: "Ada", admin: false };
 const bob: User = { id: "bob", name: "Bob", admin: false };
+const root: User = { id: "root", name: "Root", admin: true };
 
 async function call(user: User | null, path: string) {
 	const api = createApp({
@@ -221,5 +222,110 @@ describe.skipIf(!url)("/api/usage/mine", () => {
 		expect(
 			(await call(ada, "/usage/mine?from=yesterday&to=now&group=model")).status,
 		).toBe(422);
+	});
+});
+
+describe.skipIf(!url)("/api/usage", () => {
+	const reset = async () => {
+		await db.execute(
+			sql`truncate usage, provider, enabled_model, agent, "user" cascade`,
+		);
+	};
+	beforeEach(reset);
+	afterAll(reset);
+
+	it("sums every User's Usage, each by their current name", async () => {
+		await db.insert(user).values([
+			{ id: "ada", name: "Ada Lovelace", lastActiveAt: new Date() },
+			{ id: "bob", name: "Bob", lastActiveAt: new Date() },
+		]);
+		await used("ada", "2026-01-05T00:00:00Z");
+		await used("ada", "2026-01-06T00:00:00Z", { cost: 0.25 });
+		await used("bob", "2026-01-06T00:00:00Z", { cost: 9 });
+		const { status, body } = await call(root, `/usage?${january}&group=user`);
+		expect(status).toBe(200);
+		expect(body.rows).toEqual([
+			{
+				key: "bob",
+				name: "Bob",
+				requests: 1,
+				inputTokens: 10,
+				outputTokens: 20,
+				cacheReadTokens: 1,
+				cacheWriteTokens: 2,
+				cost: 9,
+			},
+			{
+				key: "ada",
+				name: "Ada Lovelace",
+				requests: 2,
+				inputTokens: 20,
+				outputTokens: 40,
+				cacheReadTokens: 2,
+				cacheWriteTokens: 4,
+				cost: 0.75,
+			},
+		]);
+	});
+
+	it("drills down: a User by Agent or Model, an Agent or Model by User", async () => {
+		await used("ada", "2026-01-05T00:00:00Z", { cost: 4 });
+		await used("ada", "2026-01-05T00:00:00Z", {
+			agentId: null,
+			agentName: null,
+			modelId: m2?.id,
+			cost: 2,
+		});
+		await used("bob", "2026-01-05T00:00:00Z", {
+			agentId: "gone",
+			agentName: "Gone",
+			cost: 1,
+		});
+		const rows = async (q: string) =>
+			(await call(root, `/usage?${january}&${q}`)).body.rows;
+
+		expect(await rows("group=agent&user=ada")).toMatchObject([
+			{ key: "general", deleted: true, cost: 4 },
+			{ key: null, name: null, deleted: false, cost: 2 },
+		]);
+		expect(await rows("group=model&user=ada")).toMatchObject([
+			{ key: `${catalog?.id}/${m1?.id}`, disabled: true, cost: 4 },
+			{ key: `${catalog?.id}/${m2?.id}`, disabled: true, cost: 2 },
+		]);
+		expect(await rows("group=agent")).toMatchObject([
+			{ key: "general", cost: 4 },
+			{ key: null, cost: 2 },
+			{ key: "gone", name: "Gone", deleted: true, cost: 1 },
+		]);
+		expect(await rows("group=user&agent=")).toMatchObject([
+			{ key: "ada", name: "ada", cost: 2 },
+		]);
+		const model = encodeURIComponent(`${catalog?.id}/${m1?.id}`);
+		expect(await rows(`group=user&model=${model}`)).toMatchObject([
+			{ key: "ada", cost: 4 },
+			{ key: "bob", cost: 1 },
+		]);
+		expect(
+			await rows(`group=model&user=ada&agent=general&model=${model}`),
+		).toMatchObject([{ requests: 1, cost: 4 }]);
+	});
+
+	it("counts a range from its start up to, not including, its end", async () => {
+		const day = range("2026-01-05T00:00:00+08:00", "2026-01-06T00:00:00+08:00");
+		await used("ada", "2026-01-04T15:59:59.999Z", { cost: 1 });
+		await used("bob", "2026-01-04T16:00:00Z", { cost: 2 });
+		await used("ada", "2026-01-05T15:59:59.999Z", { cost: 4 });
+		await used("bob", "2026-01-05T16:00:00Z", { cost: 8 });
+		expect(
+			(await call(root, `/usage?${day}&group=user`)).body.rows,
+		).toMatchObject([
+			{ key: "ada", cost: 4 },
+			{ key: "bob", cost: 2 },
+		]);
+	});
+
+	it("is for Admins only", async () => {
+		expect((await call(ada, `/usage?${january}&group=user`)).status).toBe(403);
+		expect((await call(null, `/usage?${january}&group=user`)).status).toBe(401);
 	});
 });
