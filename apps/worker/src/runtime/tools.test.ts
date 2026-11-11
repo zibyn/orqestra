@@ -19,7 +19,7 @@ describe("subagentTools", () => {
 		await expect(
 			spawn.execute("call", { tasks: [{ brief: "b" }, { brief: "c" }] }),
 		).rejects.toThrow(
-			"Since the user's last message at most 16 subagents may be started or continued, and 15 have been: do the rest of the work yourself.",
+			"Since the user's last message at most 16 subagents and background calls may be started, or subagents continued, and 15 have been: do the rest of the work yourself.",
 		);
 	});
 

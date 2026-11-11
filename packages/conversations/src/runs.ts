@@ -3,6 +3,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import { messageText } from "@orqestra/config";
 import { db, type Tx } from "@orqestra/db";
 import {
+	backgroundCall,
 	conversation,
 	type FiringOutcome,
 	firing,
@@ -28,12 +29,43 @@ import {
 	or,
 	sql,
 } from "drizzle-orm";
+import { alertRun } from "./alerts.ts";
 
 /** Locks the row of a Conversation's root, the top-level Conversation of its tree: every Run start and finish in the tree decides under it. */
 export const lockRoot = (tx: Tx, conversationId: string) =>
 	tx.execute(
 		sql`select 1 from ${conversation} where ${conversation.id} = (select ${conversation.rootId} from ${conversation} where ${conversation.id} = ${conversationId}) for update`,
 	);
+
+/** Subagents and Background Calls a tree's Agents may start, or Subagents continue, in all since the User's last message to its root, so Notifications cannot keep them delegating forever. */
+export const MAX_SUBAGENTS_PER_USER_MESSAGE = 16;
+
+/** Starting or continuing these Subagents, or starting a Background Call, would spend more than the budget since the User's last message; `used` were already. */
+export class BudgetExceeded extends Error {
+	override name = "BudgetExceeded";
+	constructor(
+		readonly used: number,
+		readonly max = MAX_SUBAGENTS_PER_USER_MESSAGE,
+	) {
+		super(`${used} of ${max} subagents used since the user's last message`);
+	}
+}
+
+/**
+ * Under the root's lock: spends `more` of the tree's budget of Subagents started or continued once finished and of Background Calls started, since the User's last message.
+ * Throws, spending nothing, when it would run out.
+ */
+export async function spend(tx: Tx, rootId: string, more: number) {
+	const [{ used }] = await tx
+		.update(conversation)
+		.set({
+			subagentsSinceUser: sql`${conversation.subagentsSinceUser} + ${more}`,
+		})
+		.where(eq(conversation.id, rootId))
+		.returning({ used: conversation.subagentsSinceUser });
+	if (used > MAX_SUBAGENTS_PER_USER_MESSAGE)
+		throw new BudgetExceeded(used - more);
+}
 
 /** The root of a Conversation's tree, whose page shows the whole tree; undefined when it is gone. */
 export const rootOf = async (conversationId: string) =>
@@ -174,6 +206,7 @@ export async function enqueue(conversationId: string) {
  * A Subagent whose Run cannot be queued fails, and its Notification tells the parent; a top-level Conversation's throws.
  */
 export async function ensureRun(conversationId: string) {
+	let asked = false;
 	const started = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
 		const conv = await tx.query.conversation.findFirst({
@@ -192,7 +225,12 @@ export async function ensureRun(conversationId: string) {
 				),
 			)
 			.limit(1);
-		if (!wake) return undefined;
+		if (!wake) {
+			// what it waited on has ended, but no Run follows until the User replies: its Firing may end now
+			if (!conv.parentId && conv.awaitingReply)
+				asked = !!(await endFiring(tx, conversationId, "question"));
+			return undefined;
+		}
 		if (conv.parentId) {
 			// counted by Run, not outcome, across the tree: a stopped Subagent holds its slot until its Run has ended,
 			// and one waiting idle for its own Subagents holds none
@@ -218,6 +256,7 @@ export async function ensureRun(conversationId: string) {
 			.where(eq(conversation.id, conversationId));
 		return conv;
 	});
+	if (asked) await alertRun(conversationId, "question");
 	if (!started) return false;
 	try {
 		await enqueue(conversationId);
@@ -462,14 +501,23 @@ export async function countFiring(tx: Tx, taskId: string, failed: boolean) {
 }
 
 /**
- * Under the root's lock: the first Run of a Firing's Conversation ended as `outcome`, which the Firing keeps; later Runs change nothing.
- * Returns the task's id when that failure auto-paused it.
+ * Under the root's lock: a Run of a Firing's Conversation ended as `outcome`, which the Firing keeps once its whole tree is done:
+ * no Subagent in it still queued or working (a stopped one wakes nobody, so is done) and no Background Call still running.
+ * Until then it stays running, and some later Run's end, or `ensureRun` for one waiting on a Question, decides; once decided, later Runs change nothing.
+ * Returns the task's id when it ended, and whether that failure auto-paused it.
  */
 async function endFiring(
 	tx: Tx,
 	conversationId: string,
 	outcome: Exclude<FiringOutcome, "running" | "skipped">,
 ) {
+	const { rows: open } = await tx.execute(
+		sql`select 1 from ${conversation} c where c.root_id = ${conversationId} and (
+			exists (select 1 from ${subagent} s where s.conversation_id = c.id and s.outcome in ('queued', 'running'))
+			or exists (select 1 from ${backgroundCall} b where b.conversation_id = c.id and b.status = 'running')
+		) limit 1`,
+	);
+	if (open.length) return;
 	const [ended] = await tx
 		.update(firing)
 		.set({ outcome })
@@ -480,8 +528,11 @@ async function endFiring(
 			),
 		)
 		.returning({ taskId: firing.taskId });
-	if (ended && (await countFiring(tx, ended.taskId, outcome === "failed")))
-		return ended.taskId;
+	if (ended)
+		return {
+			taskId: ended.taskId,
+			paused: await countFiring(tx, ended.taskId, outcome === "failed"),
+		};
 }
 
 /** A Firing's Conversation whose Run could not even be queued: the Firing failed. True when that auto-paused its task. */
@@ -490,15 +541,15 @@ export async function firingFailed(conversationId: string) {
 		await lockRoot(tx, conversationId);
 		return endFiring(tx, conversationId, "failed");
 	});
-	if (paused) await unschedule(paused);
-	return !!paused;
+	if (paused?.paused) await unschedule(paused.taskId);
+	return !!paused?.paused;
 }
 
 /**
  * Ends a top-level Run that did not drain to the end (stopped, failed or crashed) with `status`, under the root's lock.
  * After a stop, a wake input that arrived meanwhile, such as a User message sent right after Stop, starts the next Run;
  * after a failure the inbox waits for Retry, which delivers it, so the failure still shows.
- * A Firing's first Run ends it failed, or partial when stopped, by the User or out of time. True when that auto-paused its task.
+ * A Firing's Run ends it (see `endFiring`) failed, or partial when stopped, by the User or out of time. True when that auto-paused its task.
  */
 export async function endRun(
 	conversationId: string,
@@ -517,10 +568,10 @@ export async function endRun(
 			status === "failed" ? "failed" : "partial",
 		);
 	});
-	if (paused) await unschedule(paused);
+	if (paused?.paused) await unschedule(paused.taskId);
 	await saved(conversationId);
 	if (status === "idle") await ensureRun(conversationId);
-	return !!paused;
+	return !!paused?.paused;
 }
 
 /** Ends a Subagent's Run that did not drain to the end (stopped, failed, crashed or never queued); see `settle`. */
@@ -536,7 +587,7 @@ export async function endSubagent(conversationId: string, ended: Ended) {
  * Delivers a Conversation's inbox into `message`, in arrival order, under its root's lock; returns what it delivered.
  * With `finish`, an inbox without a wake input ends the Run instead: the Conversation goes idle and Unread, and a Subagent's settles with how it `finish`ed.
  * A `"question"` finish waits for the User: only their message goes on, and it ends awaiting their reply, its Timer cancelled.
- * A top-level Run ends completed, or `"partial"` at an Unattended Run's step cap; a Firing's first Run records how.
+ * A top-level Run ends completed, or `"partial"` at an Unattended Run's step cap; a Firing's Run records how (see `endFiring`).
  * That is checked under the same lock a sender starts a Run under, so no input is left behind.
  */
 export async function drain(

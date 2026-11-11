@@ -5,6 +5,7 @@ import {
 	describe,
 	expect,
 	it,
+	mock,
 } from "bun:test";
 import {
 	type Api,
@@ -28,15 +29,34 @@ import {
 	memoryStore,
 } from "@orqestra/tools/testing";
 
+// the push service, as web-push reaches it from @orqestra/conversations: each Alert recorded
+const pushed: { status: string; url: string }[] = [];
+mock.module(
+	require.resolve("web-push", {
+		paths: [require.resolve("@orqestra/conversations")],
+	}),
+	() => ({
+		default: {
+			sendNotification: async (_: unknown, payload: string) => {
+				pushed.push(JSON.parse(payload));
+			},
+		},
+	}),
+);
+
 // Smoke tests of the assembled worker: the runtime replying through the real @orqestra/conversations
 // (lifecycle scenarios are tested there, runtime ones in src/runtime): needs TEST_DATABASE_URL, which src/test-env.ts sets up
 const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
 const { asc, eq, sql } = await import("drizzle-orm");
-const { limits, usage, user } = await import("@orqestra/db/schema");
+const { limits, pushSubscription, usage, user } = await import(
+	"@orqestra/db/schema"
+);
 const { config, skillFiles } = await import("@orqestra/config/live");
 const { DEFAULT_LIMITS } = await import("@orqestra/config");
-const { createConversations } = await import("@orqestra/conversations");
+const { createConversations, MAX_SUBAGENTS_PER_USER_MESSAGE } = await import(
+	"@orqestra/conversations"
+);
 const { startAgentWorker } = await import("./worker.ts");
 const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
@@ -305,7 +325,7 @@ describe.skipIf(!url)(
 				sql`select pg_notify('conversation_stop', id::text) from conversation where status = 'running'`,
 			);
 			await db.execute(
-				sql`truncate conversation, scheduled_task, usage, limits, "user" cascade`,
+				sql`truncate conversation, scheduled_task, usage, limits, push_subscription, "user" cascade`,
 			);
 		});
 
@@ -1143,6 +1163,170 @@ describe.skipIf(!url)(
 						notifications(v).length === 1,
 				);
 				expect(JSON.stringify(answered)).toContain("while asking");
+			});
+
+			/** Alerts reach the push service from now on; the input of a task due right away. */
+			const alerted = async () => {
+				Object.assign(process.env, {
+					VAPID_PUBLIC_KEY: "public",
+					VAPID_PRIVATE_KEY: "private",
+					VAPID_SUBJECT: "mailto:admin@example.com",
+				});
+				pushed.length = 0;
+				await db.insert(pushSubscription).values({
+					userId,
+					endpoint: "https://push.example/u1",
+					keys: { p256dh: "p", auth: "a" },
+				});
+			};
+			const input = () => ({
+				name: "Crunch",
+				prompt: "crunch it",
+				agentId: "mcp",
+				model: "faux/faux-1",
+				thinking: "off" as const,
+				schedule: {
+					kind: "once" as const,
+					at: new Date(Date.now() + 300).toISOString(),
+				},
+				endsAt: null,
+				timeZone: "UTC",
+				incognito: false,
+				alertOnComplete: true,
+				enabled: true,
+			});
+			// a one-time task also tells it has finished, at its Firing
+			const runAlerts = async () =>
+				pushed.filter((p) => p.status !== "finished");
+
+			it("ends a Firing, with its Alert, only once its Background Calls have ended; one due meanwhile is skipped", async () => {
+				await alerted();
+				script({
+					parent: [
+						crunch(),
+						fauxAssistantMessage("Crunching"),
+						fauxAssistantMessage("The answer is 42"),
+					],
+				});
+				const taskId = await conversations.tasks.create(userId, input());
+				const firings = async () =>
+					(await conversations.tasks.get(userId, taskId))?.firings ?? [];
+				const [first] = await waitFor(firings, (f) => !!f[0]?.conversationId);
+				const id = first.conversationId as string;
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && v.messages.length === 4,
+				);
+				expect((await firings())[0].outcome).toBe("running");
+				expect(await runAlerts()).toEqual([]);
+
+				// due again while the first has no outcome yet
+				await conversations.tasks.update(userId, taskId, input());
+				const skipped = await waitFor(firings, (f) => f.length === 2);
+				expect(skipped[0]).toMatchObject({
+					outcome: "skipped",
+					reason: "previous_running",
+				});
+				expect(skipped[1].outcome).toBe("running");
+
+				finishTask("42 it is");
+				const ended = await waitFor(
+					firings,
+					(f) => f[1].outcome === "completed",
+				);
+				expect(ended[1].conversationId).toBe(id);
+				const [alert] = await waitFor(runAlerts, (p) => p.length === 1);
+				expect(alert).toMatchObject({
+					status: "completed",
+					url: `/c/${id}`,
+				});
+			});
+
+			it("ends a Firing waiting on its Question as a Question once its Background Call ends", async () => {
+				await alerted();
+				script({
+					parent: [
+						fauxAssistantMessage([
+							fauxToolCall("slow__crunch", {}),
+							fauxToolCall("ask_user", { question: "Which one?" }),
+						]),
+					],
+				});
+				const taskId = await conversations.tasks.create(userId, input());
+				const firing = async () =>
+					(await conversations.tasks.get(userId, taskId))?.firings[0];
+				const asked = await waitFor(firing, (f) => !!f?.conversationId);
+				const id = asked?.conversationId as string;
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && !!v.awaitingReply,
+				);
+				expect((await firing())?.outcome).toBe("running");
+				expect(await runAlerts()).toEqual([]);
+
+				finishTask("while asking");
+				await waitFor(firing, (f) => f?.outcome === "question");
+				const [alert] = await waitFor(runAlerts, (p) => p.length === 1);
+				expect(alert).toMatchObject({ status: "question", url: `/c/${id}` });
+			});
+
+			it(`cancels a call put in the background once the tree's budget of ${MAX_SUBAGENTS_PER_USER_MESSAGE} is spent, until the User writes again`, async () => {
+				let refused: unknown;
+				let renewed: unknown;
+				script({
+					parent: [
+						fauxAssistantMessage(
+							Array.from({ length: MAX_SUBAGENTS_PER_USER_MESSAGE + 1 }, () =>
+								fauxToolCall("slow__crunch", {}),
+							),
+						),
+						(context) => {
+							refused = context.messages;
+							return fauxAssistantMessage("Out of budget");
+						},
+						crunch(),
+						(context) => {
+							renewed = context.messages.at(-1);
+							return fauxAssistantMessage("Crunching again");
+						},
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "crunch it all",
+				});
+				const spent = await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				expect(spent?.backgroundCalls.length).toBe(
+					MAX_SUBAGENTS_PER_USER_MESSAGE,
+				);
+				expect(
+					slow.requests.filter((r) => r.method === "tasks/cancel").length,
+				).toBe(1);
+				expect(JSON.stringify(refused)).toContain(
+					`at most ${MAX_SUBAGENTS_PER_USER_MESSAGE} subagents and background calls`,
+				);
+
+				await conversations.send(userId, {
+					conversationId: id,
+					text: "once more",
+				});
+				const again = await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant" &&
+						v.backgroundCalls.length === MAX_SUBAGENTS_PER_USER_MESSAGE + 1,
+				);
+				expect(again?.backgroundCalls.length).toBe(
+					MAX_SUBAGENTS_PER_USER_MESSAGE + 1,
+				);
+				expect(JSON.stringify(renewed)).toContain("background");
+				expect(JSON.stringify(renewed)).not.toContain("at most");
 			});
 
 			it("keeps tracking a call across a worker restart", async () => {

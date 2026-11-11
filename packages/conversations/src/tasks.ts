@@ -247,15 +247,15 @@ export async function fire(
 			return { stop: await finish(), task, alert: "finished" as const };
 		const record = (values: Omit<typeof firing.$inferInsert, "taskId">) =>
 			tx.insert(firing).values({ taskId, firedAt: now, ...values });
-		// a Conversation waiting on a Question is idle, so not running
+		// one whose Conversation is gone never gets its outcome, so does not count
 		const [previous] = await tx
-			.select({ status: conversation.status })
+			.select({ outcome: firing.outcome })
 			.from(firing)
 			.innerJoin(conversation, eq(conversation.id, firing.conversationId))
 			.where(and(eq(firing.taskId, taskId), isNotNull(firing.conversationId)))
 			.orderBy(desc(firing.id))
 			.limit(1);
-		if (previous?.status === "running") {
+		if (previous?.outcome === "running") {
 			await record({ outcome: "skipped", reason: "previous_running" });
 			return {};
 		}
