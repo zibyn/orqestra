@@ -7,7 +7,7 @@ A self-hosted platform where signed-in users talk to an AI agent, with identity 
 ### People and access
 
 **User**:
-A person in Polaris' User pool who may use Orqestra, identified by their Polaris `sub`. Orqestra keeps no user records of its own: who may sign in, and with which role, is decided in Polaris. Every User is either an Admin or a Member.
+A person in Polaris' User pool who may use Orqestra, identified by their Polaris `sub`. Who may sign in, and with which role, is decided in Polaris; Orqestra remembers every User who has signed in, with the name and email they last signed in with, and the settings it keeps for them, such as their Spending Limit. A User removed in Polaris is still remembered, along with their Usage. Every User is either an Admin or a Member.
 _Avoid_: Account, customer
 
 **Admin**:
@@ -65,7 +65,7 @@ A Scheduled Task an Agent proposes in a Conversation, shown to the User as a car
 _Avoid_: Proposal, suggestion, template
 
 **Firing**:
-One time a Scheduled Task comes due: it starts a new Conversation, with its own Sandbox, whose first message is the task's prompt, sent as the User's message but marked as sent by the task. A Firing whose previous Conversation is still running is skipped and recorded; one whose Agent can no longer be picked, or whose Model is disabled, fails.
+One time a Scheduled Task comes due: it starts a new Conversation, with its own Sandbox, whose first message is the task's prompt, sent as the User's message but marked as sent by the task. A Firing whose previous Conversation is still running, or whose User has used up their Spending Limit, is skipped and recorded; one whose Agent can no longer be picked, or whose Model is disabled, fails.
 _Avoid_: Trigger, occurrence, scheduled run, execution
 
 **Inbox**:
@@ -143,6 +143,10 @@ _Avoid_: Preset, registry, template
 **Usage**:
 The tokens one Model request consumed and their cost at the Model's price at the time, counted against the User, the Agent that made it and the Model. Every request counts, whether for a Turn's step, compaction or a title, in a Subagent, an Incognito Conversation or a Firing's Conversation, and even when it failed, was stopped or its reply was withdrawn by a retry. Usage outlives the Conversation that caused it and is kept indefinitely. A User sees their own Usage, cost included; an Admin sees every User's.
 _Avoid_: Billing, cost record, token log
+
+**Spending Limit**:
+The most a User may spend on Model requests in a calendar month, reset at the start of each month in the time zone the Admin sets. An Admin sets one default for every User, or none, and may give a single User their own instead, or none. Each request first checks what the User has spent this month; once it is used up, the request is not sent and its Run fails, Subagents included, titles are left for later, and the User cannot send until it resets or is raised. A change applies from the next request. A Background Call already going carries on, and the Run its result wakes fails the same way.
+_Avoid_: Quota, budget, balance, credit
 
 **Conversation**:
 An ordered series of messages between one User and the Agent, owned by and visible only to that User. A Subagent's Conversation is nested under the one that started it and is seen only through it; one started by a Firing records which Scheduled Task started it, and otherwise is like any other.
