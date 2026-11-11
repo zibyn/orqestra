@@ -26,6 +26,9 @@ import type { Fetch, McpServer } from "./index.ts";
 /** Who Orqestra is to an MCP Server: for now the shared request headers its Admin set. */
 export type McpIdentity = { headers: Record<string, string> };
 
+/** An MCP Server's Tool, saying which server it is from. */
+export type McpTool = AgentTool & { mcpServerId: string };
+
 /** A negotiated connection to one MCP Server: the client, and its Tasks extension session. */
 export type McpConnection = {
 	client: Client;
@@ -144,7 +147,7 @@ export async function mcpTools(
 		/** Without it, no Tool call declares the Tasks extension. */
 		backgroundCall?: StartBackgroundCall;
 	},
-): Promise<AgentTool[]> {
+): Promise<McpTool[]> {
 	const connected = await Promise.all(
 		ids.map(async (id) => {
 			try {
@@ -161,7 +164,8 @@ export async function mcpTools(
 					timeout: timeoutMs,
 				});
 				return listed.map(
-					(t): AgentTool => ({
+					(t): McpTool => ({
+						mcpServerId: id,
 						// Providers allow at most 64 characters of [A-Za-z0-9_-]
 						name: `${id}__${t.name}`
 							.replace(/[^A-Za-z0-9_-]/g, "_")

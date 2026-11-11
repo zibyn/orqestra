@@ -155,7 +155,11 @@ export async function openToolbox(
 		/** Starts a Background Call for an MCP Tool call its server puts in the background; without it, no call declares the Tasks extension. */
 		backgroundCall?: StartBackgroundCall;
 	},
-): Promise<{ tools: AgentTool[]; close: () => Promise<unknown> }> {
+): Promise<{
+	/** An MCP Server's Tools say which server they are from. */
+	tools: (AgentTool & { mcpServerId?: string })[];
+	close: () => Promise<unknown>;
+}> {
 	const {
 		signal,
 		fetch,

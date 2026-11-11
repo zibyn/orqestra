@@ -1,4 +1,4 @@
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import {
 	NOOP_TELEMETRY_CONTEXT,
@@ -83,6 +83,42 @@ const withAttributes = (
 });
 
 /**
+ * `tool`, each call a span of its own under `span`: the Tool's name, its call id and whether it failed, never its
+ * arguments or result. A thrown error is `_OTHER` (the adapter's default); a result that is an error, MCP's `isError`
+ * included, is `tool_error`.
+ */
+const traced =
+	(span: TelemetrySpan) =>
+	(tool: AgentTool & { mcpServerId?: string }): AgentTool => ({
+		...tool,
+		execute: (toolCallId, ...rest) =>
+			span.startSpan(
+				{
+					name: `execute_tool ${tool.name}`,
+					attributes: {
+						"gen_ai.operation.name": "execute_tool",
+						"gen_ai.tool.name": tool.name,
+						"gen_ai.tool.call.id": toolCallId,
+						"orqestra.mcp_server.id": tool.mcpServerId,
+					},
+				},
+				async (toolSpan) => {
+					const result = await tool.execute(toolCallId, ...rest);
+					if (result.isError)
+						toolSpan.setStatus({
+							status: "error",
+							error: { name: "tool_error", message: "" },
+						});
+					return result;
+				},
+			),
+	});
+
+/** What a Run is for, on its span and its Tool calls'. */
+const runPurpose = (run: RunHandle) =>
+	run.isSubagent ? "subagent" : run.firingId === undefined ? "turn" : "firing";
+
+/**
  * Replies to one Run, step by step, until no input is left: the Agent loop, compaction and the title.
  * A failed reply throws, and the Run fails.
  */
@@ -96,11 +132,7 @@ export function runAgent(
 			name: "invoke_agent",
 			attributes: {
 				...attributes,
-				"orqestra.purpose": run.isSubagent
-					? "subagent"
-					: run.firingId === undefined
-						? "turn"
-						: "firing",
+				"orqestra.purpose": runPurpose(run),
 				"orqestra.run.unattended": run.unattended,
 				"orqestra.run.subagent": run.isSubagent,
 			},
@@ -212,6 +244,7 @@ async function reply(
 					turn.agent.instructions + skillsPrompt(skills) + memoryBlock,
 				model: turn.model,
 				thinkingLevel: turn.thinking,
+				// every Tool call is a child of the Run's span
 				tools: [
 					...toolbox.tools,
 					...sandbox,
@@ -221,7 +254,14 @@ async function reply(
 					...(run.subagents ? subagentTools(config, run.subagents) : []),
 					...(sub ? [] : [question.tool, draftTool(config.limits)]),
 					...(run.timer ? timerTools(run.timer) : []),
-				],
+				].map(
+					traced(
+						withAttributes(span, {
+							...runAttributes(run),
+							"orqestra.purpose": runPurpose(run),
+						}),
+					),
+				),
 				messages,
 			},
 			streamFn: async (...request) => {

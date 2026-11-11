@@ -1381,6 +1381,115 @@ describe("runAgent traces", () => {
 		}
 	});
 
+	it("traces each Tool call under the Run, with its name and call id but no arguments or result", async () => {
+		script([
+			fauxAssistantMessage(
+				fauxToolCall("search", { query: "secret words" }, { id: "call-1" }),
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+		const t = traced();
+		const m = memoryRun({
+			transcript: transcript(user("look it up")),
+			turn: turn(),
+			titled: true,
+		});
+		await runAgent(m.run, {
+			...deps([{ title: "Result page", content: "hidden result" }]),
+			telemetry: t.telemetry,
+		});
+
+		const [root] = named(t.spans(), "invoke_agent");
+		const tools = named(t.spans(), "execute_tool search");
+		expect(tools).toHaveLength(1);
+		expect(tools[0]?.parentSpanContext?.spanId).toBe(
+			root?.spanContext().spanId as string,
+		);
+		expect(tools[0]?.status.code).not.toBe(SpanStatusCode.ERROR);
+		expect(tools[0]?.attributes).toMatchObject({
+			"gen_ai.operation.name": "execute_tool",
+			"gen_ai.tool.name": "search",
+			"gen_ai.tool.call.id": "call-1",
+			"user.id": "memory-user",
+			"gen_ai.agent.id": "faux",
+			"gen_ai.conversation.id": "memory",
+			"orqestra.conversation.root_id": "memory",
+			"orqestra.purpose": "turn",
+		});
+		expect(tools[0]?.attributes["orqestra.mcp_server.id"]).toBeUndefined();
+		expect(
+			JSON.stringify([tools[0]?.attributes, tools[0]?.events]),
+		).not.toMatch(/secret words|hidden result|Result page/);
+	});
+
+	it("marks a failed Tool call with a category: tool_error for an MCP Tool's isError, _OTHER for a throw", async () => {
+		const fake = fakeMcpServer({
+			tools: [
+				{
+					name: "fail",
+					inputSchema: { type: "object" as const },
+					call: () => ({
+						content: [{ type: "text" as const, text: "it broke: secret" }],
+						isError: true,
+					}),
+				},
+			],
+		});
+		const mcpConfig = {
+			...config,
+			agents: [agent({ id: "mcp", tools: ["search", "mcp:s"] })],
+			mcpServers: {
+				s: { name: "S", url: "https://s.example.com/mcp", headers: {} },
+			},
+		};
+		script([
+			fauxAssistantMessage(
+				[
+					fauxToolCall("s__fail", {}, { id: "call-mcp" }),
+					fauxToolCall("search", { query: "x" }, { id: "call-search" }),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("done"),
+		]);
+		const t = traced();
+		const m = memoryRun({
+			transcript: transcript(user("try")),
+			turn: resolveTurn(mcpConfig, "mcp") as Turn,
+			titled: true,
+		});
+		await runAgent(m.run, {
+			config: mcpConfig,
+			streamSimple,
+			skillFiles: noSkillFiles,
+			// Search's provider is down; the MCP Server answers
+			openToolbox: ((services, allowed, options) =>
+				openToolbox(services, allowed, {
+					...options,
+					fetch: (async (input: string | URL, init?: RequestInit) =>
+						String(input).includes("tavily")
+							? new Response("down", { status: 500 })
+							: fake.fetch(input, init)) as typeof fetch,
+				})) as typeof openToolbox,
+			telemetry: t.telemetry,
+		});
+
+		const [mcp] = named(t.spans(), "execute_tool s__fail");
+		expect(mcp?.status.code).toBe(SpanStatusCode.ERROR);
+		expect(mcp?.attributes).toMatchObject({
+			"error.type": "tool_error",
+			"orqestra.mcp_server.id": "s",
+			"gen_ai.tool.call.id": "call-mcp",
+		});
+		const [search] = named(t.spans(), "execute_tool search");
+		expect(search?.status.code).toBe(SpanStatusCode.ERROR);
+		expect(search?.attributes["error.type"]).toBe("_OTHER");
+		expect(
+			JSON.stringify(t.spans().map((s) => [s.status, s.attributes, s.events])),
+		).not.toMatch(/secret|down/);
+	});
+
 	it("traces compaction as a request of its own", async () => {
 		const old = fauxAssistantMessage("b".repeat(2000));
 		old.usage.totalTokens = 1500;
