@@ -12,7 +12,7 @@ import {
 	PENDING_TTL_MS,
 	type PendingAuthorization,
 } from "@orqestra/tools";
-import { and, eq, lt, or } from "drizzle-orm";
+import { and, eq, lt, or, sql } from "drizzle-orm";
 import { mcpToolRef, type OrqestraConfig } from "./index.ts";
 import { decryptSecret, encryptSecret } from "./secret.ts";
 
@@ -22,16 +22,43 @@ const opened = <T>(stored: string): T | undefined => {
 	return plain === undefined ? undefined : JSON.parse(plain);
 };
 
+const theirs = (userId: string, serverId: string) =>
+	and(
+		eq(mcpConnection.userId, userId),
+		eq(mcpConnection.mcpServerId, serverId),
+	);
+
 export const connectionStore: ConnectionStore = {
 	async connection(userId, serverId) {
 		const row = await db.query.mcpConnection.findFirst({
-			where: and(
-				eq(mcpConnection.userId, userId),
-				eq(mcpConnection.mcpServerId, serverId),
-			),
+			where: theirs(userId, serverId),
 		});
 		return row && { ...row, tokens: opened(row.tokens) };
 	},
+
+	lockConnection: (userId, serverId, fn) =>
+		db.transaction(async (tx) => {
+			await tx.execute(
+				sql`select pg_advisory_xact_lock(hashtext(${`mcp_connection:${userId}:${serverId}`}))`,
+			);
+			// read committed: this sees what the lock's last holder wrote
+			const row = await tx.query.mcpConnection.findFirst({
+				where: theirs(userId, serverId),
+			});
+			return fn(
+				row && { ...row, tokens: opened(row.tokens) },
+				async (change) => {
+					await tx
+						.update(mcpConnection)
+						.set(
+							"tokens" in change
+								? { tokens: sealed(change.tokens), scope: change.scope ?? null }
+								: change,
+						)
+						.where(theirs(userId, serverId));
+				},
+			);
+		}),
 
 	async saveConnection(userId, serverId, { tokens, issuer, scope }) {
 		const values = {
@@ -116,6 +143,12 @@ export const connectionStore: ConnectionStore = {
 				target: mcpRegisteredClient.mcpServerId,
 				set: values,
 			});
+	},
+
+	async deleteRegisteredClient(serverId) {
+		await db
+			.delete(mcpRegisteredClient)
+			.where(eq(mcpRegisteredClient.mcpServerId, serverId));
 	},
 };
 

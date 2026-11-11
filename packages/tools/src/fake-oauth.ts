@@ -4,7 +4,9 @@
  * `resource`'s origin serves its Protected Resource Metadata naming `issuer` as its authorization server; every other origin is an
  * authorization server whose issuer is that origin, so moving `issuer` moves the server. `cimd` and `registration` say whether it
  * supports Client ID Metadata Documents and dynamic registration. `authorize` plays the User approving an authorization URL.
- * `registered` lists the client_ids it handed out.
+ * `registered` lists the client_ids it handed out. Refresh tokens rotate, each used once; `accessTokens` and `refreshTokens` hold the
+ * live ones (clear them to expire or revoke), `refreshed` counts refreshes, and `rejectClients` answers them `invalid_client`.
+ * `guard(fetch)` puts the MCP Server reached through `fetch` behind it: 401 without a live access token.
  */
 export function fakeAuthorizationServer({
 	resource = "https://mcp.example.com/mcp",
@@ -18,12 +20,39 @@ export function fakeAuthorizationServer({
 		{ challenge: string; clientId: string; redirectUri: string }
 	>();
 	let n = 0;
+	const issue = (clientId: string) => {
+		const tokens = {
+			access_token: `access-${++n}`,
+			token_type: "Bearer",
+			refresh_token: `refresh-${n}`,
+			expires_in: 3600,
+			scope: "repo",
+		};
+		as.accessTokens.add(tokens.access_token);
+		as.refreshTokens.set(tokens.refresh_token, clientId);
+		return Response.json(tokens);
+	};
 	const as = {
 		resource,
 		issuer,
 		cimd: false,
 		registration: true,
 		registered: [] as string[],
+		accessTokens: new Set<string>(),
+		/** By the client_id they were issued to. */
+		refreshTokens: new Map<string, string>(),
+		refreshed: 0,
+		rejectClients: false,
+		guard:
+			(mcp: (input: string | URL, init?: RequestInit) => Promise<Response>) =>
+			(input: string | URL, init?: RequestInit) => {
+				const token = new Headers(init?.headers)
+					.get("authorization")
+					?.replace(/^Bearer /, "");
+				return token && as.accessTokens.has(token)
+					? mcp(input, init)
+					: as.fetch(input, init);
+			},
 		/** The redirect's query after the User approves `url`: `code`, `state`, and `iss` as RFC 9207 has it. */
 		authorize(url: string) {
 			const q = new URL(url).searchParams;
@@ -77,11 +106,23 @@ export function fakeAuthorizationServer({
 			}
 			if (pathname === "/token") {
 				const form = new URLSearchParams(String(init?.body));
-				const issued = codes.get(form.get("code") ?? "");
 				const basic = new Headers(init?.headers).get("authorization");
-				const clientId =
+				const clientId = decodeURIComponent(
 					form.get("client_id") ??
-					(basic && atob(basic.replace(/^Basic /, "")).split(":")[0]);
+						(basic && atob(basic.replace(/^Basic /, "")).split(":")[0]) ??
+						"",
+				);
+				if (form.get("grant_type") === "refresh_token") {
+					if (as.rejectClients)
+						return Response.json({ error: "invalid_client" }, { status: 401 });
+					const refresh = form.get("refresh_token") ?? "";
+					if (as.refreshTokens.get(refresh) !== clientId)
+						return Response.json({ error: "invalid_grant" }, { status: 400 });
+					as.refreshTokens.delete(refresh);
+					as.refreshed++;
+					return issue(clientId);
+				}
+				const issued = codes.get(form.get("code") ?? "");
 				const challenge = Buffer.from(
 					await crypto.subtle.digest(
 						"SHA-256",
@@ -91,18 +132,12 @@ export function fakeAuthorizationServer({
 				if (
 					!issued ||
 					issued.challenge !== challenge ||
-					decodeURIComponent(clientId ?? "") !== issued.clientId ||
+					clientId !== issued.clientId ||
 					form.get("redirect_uri") !== issued.redirectUri
 				)
 					return Response.json({ error: "invalid_grant" }, { status: 400 });
 				codes.delete(form.get("code") ?? "");
-				return Response.json({
-					access_token: `access-${++n}`,
-					token_type: "Bearer",
-					refresh_token: `refresh-${n}`,
-					expires_in: 3600,
-					scope: "repo",
-				});
+				return issue(clientId);
 			}
 			return new Response(null, { status: 404 });
 		},

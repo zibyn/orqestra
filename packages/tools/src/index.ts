@@ -190,7 +190,10 @@ export async function openToolbox(
 			.filter((id) => services.mcpServers[id].auth === "oauth")
 			.map(async (id) => {
 				if (!userId || !store) return;
-				const provider = await connectionAuth(store, userId, id).catch(
+				const provider = await connectionAuth(store, userId, id, {
+					server: services.mcpServers[id],
+					fetch,
+				}).catch(
 					(error) =>
 						void console.error(
 							`Reading the Connection of ${userId} to MCP Server "${id}" failed`,

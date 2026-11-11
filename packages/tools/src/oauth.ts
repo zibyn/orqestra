@@ -9,8 +9,11 @@ import {
 	type OAuthClientMetadata,
 	type OAuthClientProvider,
 	type OAuthDiscoveryState,
+	OAuthError,
 	type OAuthTokens,
+	refreshAuthorization,
 	type StoredOAuthClientInformation,
+	UnauthorizedError,
 	validateAuthorizationResponseIssuer,
 } from "@modelcontextprotocol/client";
 import type { Fetch, McpServer } from "./index.ts";
@@ -21,8 +24,30 @@ export type OAuthDiscoveryStep =
 	| "authorization_server_metadata"
 	| "pkce";
 
-/** A Connection's tokens, with when the access token expires (ms since the epoch) worked out when they came. */
-export type ConnectionTokens = OAuthTokens & { expires_at?: number };
+/**
+ * A Connection's tokens, with when the access token expires (ms since the epoch) worked out when they came, and the client_id of the
+ * Client they were issued to, which refreshes them.
+ */
+export type ConnectionTokens = OAuthTokens & {
+	expires_at?: number;
+	client_id?: string;
+};
+
+const withExpiry = (
+	tokens: OAuthTokens,
+	client_id: string,
+): ConnectionTokens => ({
+	...tokens,
+	client_id,
+	...(tokens.expires_in !== undefined && {
+		expires_at: Date.now() + tokens.expires_in * 1000,
+	}),
+});
+
+/** What a refresh changes of a Connection: new tokens, or that it needs reconnecting. */
+export type ConnectionChange =
+	| { tokens: ConnectionTokens; scope?: string }
+	| { status: "needs_reconnect" };
 
 /** A User's Connection to an MCP Server, as stored; `tokens` is undefined when they no longer decrypt. */
 export interface StoredConnection {
@@ -62,6 +87,18 @@ export interface ConnectionStore {
 		serverId: string,
 		connection: { tokens: ConnectionTokens; issuer: string; scope?: string },
 	): Promise<void>;
+	/**
+	 * Runs `fn` holding the lock of the User's Connection, so processes refresh it one at a time, with the Connection as stored once the
+	 * lock is held; `change` writes it before the lock is let go.
+	 */
+	lockConnection<T>(
+		userId: string,
+		serverId: string,
+		fn: (
+			connection: StoredConnection | undefined,
+			change: (change: ConnectionChange) => Promise<void>,
+		) => Promise<T>,
+	): Promise<T>;
 	/** Adds it, voiding the User's earlier ones for the same server (and any older than PENDING_TTL_MS). */
 	addPending(pending: PendingAuthorization): Promise<void>;
 	/** Removes and returns the one with this state; undefined when there is none. */
@@ -75,24 +112,109 @@ export interface ConnectionStore {
 		serverId: string,
 		client: StoredOAuthClientInformation & { issuer: string },
 	): Promise<void>;
+	/** Forgets it, for its authorization server no longer knows it. */
+	deleteRegisteredClient(serverId: string): Promise<void>;
 }
 
 /**
  * How a Run sends the User's own token to a per-User OAuth MCP Server, read once as the Run starts; undefined when the User has no
- * Connection to it, it needs reconnecting, or its tokens no longer decrypt.
+ * Connection to it, it needs reconnecting, or its tokens no longer decrypt. A 401 refreshes the tokens, holding the Connection's lock;
+ * when another process refreshed them meanwhile, theirs are used. A refresh the authorization server refuses (or no refresh token)
+ * fails the call and leaves the Connection needing reconnecting.
  */
 export async function connectionAuth(
 	store: ConnectionStore,
 	userId: string,
 	serverId: string,
+	{
+		server,
+		fetch = globalThis.fetch,
+	}: {
+		server: Pick<McpServer, "url" | "headers" | "oauthClient">;
+		fetch?: Fetch;
+	},
 ): Promise<AuthProvider | undefined> {
 	const connection = await store.connection(userId, serverId);
-	const token =
+	let token =
 		connection?.status === "connected"
 			? connection.tokens?.access_token
 			: undefined;
-	// no onUnauthorized yet: a 401 fails the connection (refreshing comes with #119)
-	return token === undefined ? undefined : { token: async () => token };
+	if (token === undefined) return undefined;
+	// read outside the lock: a Run waiting for it holds a database connection, the holder must not need another
+	const registered = await store.registeredClient(serverId);
+	// the refresh runs holding the lock, so it may not hang
+	const timed: Fetch = (input, init) =>
+		fetch(input, {
+			...init,
+			signal: AbortSignal.any([
+				AbortSignal.timeout(30_000),
+				...(init?.signal ? [init.signal] : []),
+			]),
+		});
+	return {
+		token: async () => token,
+		async onUnauthorized() {
+			const sent = token;
+			let forgetClient = false;
+			token = await store.lockConnection(
+				userId,
+				serverId,
+				async (current, change) => {
+					const tokens =
+						current?.status === "connected" ? current.tokens : undefined;
+					if (!tokens) return undefined;
+					if (tokens.access_token !== sent) return tokens.access_token;
+					const reconnect = async () => {
+						await change({ status: "needs_reconnect" });
+						return undefined;
+					};
+					const { refresh_token, client_id = "" } = tokens;
+					if (!refresh_token) return reconnect();
+					const discovery = await discoverAuthorization(server, timed);
+					const metadata = discovery.authorizationServerMetadata;
+					// tokens of an authorization server the server no longer names
+					if (
+						(metadata?.issuer ?? discovery.authorizationServerUrl) !==
+						current?.issuer
+					)
+						return reconnect();
+					const client = [server.oauthClient, registered].find(
+						(c) => c?.client_id === client_id,
+					);
+					try {
+						const refreshed = withExpiry(
+							await refreshAuthorization(discovery.authorizationServerUrl, {
+								metadata,
+								// the Client ID Metadata Document is a public Client: its client_id is all there is
+								clientInformation: client ?? { client_id },
+								refreshToken: refresh_token,
+								resource: discovery.resourceMetadata?.resource,
+								fetchFn: timed,
+							}),
+							client_id,
+						);
+						await change({ tokens: refreshed, scope: refreshed.scope });
+						return refreshed.access_token;
+					} catch (error) {
+						if (!(error instanceof OAuthError)) throw error;
+						if (
+							error.code === "invalid_client" ||
+							error.code === "unauthorized_client"
+						)
+							// only the one Orqestra registered: a pre-registered Client is the Admin's, the Metadata Document Orqestra's own
+							forgetClient = client !== undefined && client === registered;
+						else if (error.code !== "invalid_grant") throw error;
+						return reconnect();
+					}
+				},
+			);
+			if (forgetClient) await store.deleteRegisteredClient(serverId);
+			if (token === undefined)
+				throw new UnauthorizedError(
+					`The Connection to MCP Server "${serverId}" needs reconnecting`,
+				);
+		},
+	};
 }
 
 /** How long a User has to come back from the authorization server. */
@@ -236,12 +358,7 @@ function connectionProvider(
 		tokens: () => undefined,
 		async saveTokens({ issuer, ...tokens }, ctx) {
 			await store.saveConnection(userId, serverId, {
-				tokens: {
-					...tokens,
-					...(tokens.expires_in !== undefined && {
-						expires_at: Date.now() + tokens.expires_in * 1000,
-					}),
-				},
+				tokens: withExpiry(tokens, pending.client.client_id),
 				issuer: issuer ?? ctx?.issuer ?? "",
 				scope: tokens.scope,
 			});

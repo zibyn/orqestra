@@ -2,8 +2,10 @@ import type { SerializedTaskReference } from "@modelcontextprotocol/ext-tasks/cl
 import { describe, expect, it, vi } from "vitest";
 import { openToolbox, type ToolServices } from "./index.ts";
 import { connectMcpServer, pollMcpTask } from "./mcp.ts";
+import { finishConnection, startConnection } from "./oauth.ts";
 import {
 	type FakeTool,
+	fakeAuthorizationServer,
 	fakeMcpServer,
 	type McpEra,
 	memoryConnections,
@@ -355,6 +357,113 @@ describe("openToolbox with MCP Servers", () => {
 		const calls = tools.map((t) => t.execute("1", {}, never));
 		await close();
 		for (const call of calls) await expect(call).rejects.toThrow();
+	});
+});
+
+describe("a Connection's tokens as a Run uses them", () => {
+	const github = {
+		...server("github"),
+		auth: "oauth" as const,
+	};
+	/** Ada connected to github through its authorization server; `answer` may answer an MCP request before the server does. */
+	async function connected(
+		answer: (init?: RequestInit) => Response | undefined = () => undefined,
+	) {
+		const as = fakeAuthorizationServer({ resource: github.url });
+		const mcp = as.guard(fakeServer([echo]).fetch);
+		const fetch = async (input: string | URL, init?: RequestInit) =>
+			new URL(input).hostname === "github.example.com"
+				? (answer(init) ?? mcp(input, init))
+				: as.fetch(input, init);
+		const connections = memoryConnections();
+		const context = {
+			userId: "ada",
+			serverId: "github",
+			server: github,
+			store: connections,
+			orqestraUrl: "http://localhost:3000",
+			fetch,
+		};
+		const started = await startConnection(context);
+		if (!("url" in started)) throw new Error(started.detail);
+		await finishConnection(
+			{ ...context, server: async () => github },
+			as.authorize(started.url),
+		);
+		const open = () =>
+			openToolbox(
+				{ tools: {}, mcpServers: { github } } as ToolServices,
+				["mcp:github"],
+				{ signal: never, fetch, userId: "ada", connections },
+			);
+		const status = async () =>
+			(await connections.connection("ada", "github"))?.status;
+		return { as, connections, open, status };
+	}
+
+	it("refreshes an expired token after the 401 and keeps the new one; the call goes through", async () => {
+		const { as, connections, open } = await connected();
+		const { tools, close } = await open();
+		as.accessTokens.clear();
+		const result = await tools[0].execute("1", { text: "hi" }, never);
+		expect(result.content).toEqual([{ type: "text", text: "hi" }]);
+		expect(as.refreshed).toBe(1);
+		const saved = await connections.connection("ada", "github");
+		expect(saved?.status).toBe("connected");
+		expect(as.accessTokens.has(saved?.tokens?.access_token ?? "")).toBe(true);
+		await close();
+	});
+
+	it("fails the call when the refresh token is refused, and the Connection needs reconnecting: the next Run goes without it", async () => {
+		const { as, open, status } = await connected();
+		const { tools, close } = await open();
+		as.accessTokens.clear();
+		as.refreshTokens.clear();
+		await expect(
+			tools[0].execute("1", { text: "hi" }, never),
+		).rejects.toThrow();
+		expect(await status()).toBe("needs_reconnect");
+		await close();
+		const next = await open();
+		expect(next.tools).toEqual([]);
+		await next.close();
+	});
+
+	it("drops the Client it registered when the authorization server no longer knows it", async () => {
+		const { as, connections, open, status } = await connected();
+		expect(await connections.registeredClient("github")).toBeDefined();
+		const { tools, close } = await open();
+		as.accessTokens.clear();
+		as.rejectClients = true;
+		await expect(
+			tools[0].execute("1", { text: "hi" }, never),
+		).rejects.toThrow();
+		expect(await status()).toBe("needs_reconnect");
+		expect(await connections.registeredClient("github")).toBeUndefined();
+		await close();
+	});
+
+	it("fails only the call when the server wants a wider scope, the Connection stays connected", async () => {
+		let stepUp = false;
+		const { as, open, status } = await connected((init) =>
+			stepUp && String(init?.body).includes('"tools/call"')
+				? new Response(null, {
+						status: 403,
+						headers: {
+							"www-authenticate":
+								'Bearer error="insufficient_scope", scope="repo admin"',
+						},
+					})
+				: undefined,
+		);
+		const { tools, close } = await open();
+		stepUp = true;
+		await expect(
+			tools[0].execute("1", { text: "hi" }, never),
+		).rejects.toThrow();
+		expect(await status()).toBe("connected");
+		expect(as.refreshed).toBe(0);
+		await close();
 	});
 });
 
