@@ -335,6 +335,7 @@
   "firing_previous_running": "The previous Firing's Conversation was still running",
   "firing_agent_unavailable": "The Agent can no longer be picked",
   "firing_model_disabled": "The Model was disabled",
+  "firing_spending_limit": "This month's Spending Limit was used up",
   "task_error_agent_not_pickable": "This Agent cannot be picked.",
   "task_error_model_unavailable": "This Agent does not offer this Model.",
   "task_error_thinking_unavailable": "This Model does not offer this thinking level.",

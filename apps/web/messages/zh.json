@@ -335,6 +335,7 @@
   "firing_previous_running": "上一次的 Conversation 仍在运行",
   "firing_agent_unavailable": "Agent 已不可选",
   "firing_model_disabled": "Model 已被停用",
+  "firing_spending_limit": "本月的 Spending Limit 已用完",
   "task_error_agent_not_pickable": "这个 Agent 不可选。",
   "task_error_model_unavailable": "这个 Agent 不提供这个 Model。",
   "task_error_thinking_unavailable": "这个 Model 不支持这个 thinking 级别。",
