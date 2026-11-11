@@ -4,6 +4,7 @@ import {
 	mcpServerEnabledInput,
 	mcpServerInput,
 } from "@orqestra/config/live";
+import type { Conversations } from "@orqestra/conversations";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { adminOnly } from "./admin.ts";
@@ -11,7 +12,10 @@ import type { SignedIn } from "./app.ts";
 import { saved } from "./saved.ts";
 
 // MCP Servers, edited by Admins in /console/mcp. Header values only go in.
-export const mcpServers = (signedIn: SignedIn) =>
+export const mcpServers = (
+	signedIn: SignedIn,
+	conversations: Pick<Conversations, "deletingMcpServer">,
+) =>
 	new Elysia({ prefix: "/mcp-servers" })
 		.use(signedIn)
 		.derive(adminOnly)
@@ -27,10 +31,11 @@ export const mcpServers = (signedIn: SignedIn) =>
 			},
 			{ body: mcpServerEnabledInput },
 		)
-		// Also removes it from every Agent Definition
+		// Also removes it from every Agent Definition, and cancels its Background Calls first, while it can still be asked
 		.delete(
 			"/:id",
 			async ({ params }) => {
+				await conversations.deletingMcpServer(params.id);
 				await config.mcpServers.delete(params.id);
 			},
 			{ params: z.object({ id: mcpServerId }) },

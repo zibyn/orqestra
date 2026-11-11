@@ -292,6 +292,7 @@
   "limit_unattended_max_steps": "Steps of an Unattended Run",
   "limit_unattended_max_duration": "Duration of an Unattended Run (minutes)",
   "limit_max_subagent_depth": "Subagent nesting depth (1–3)",
+  "limit_background_call_max_duration": "How long a Background Call is tracked (minutes, up to 30 days)",
   "limit_spending_limit": "Default Spending Limit per User",
   "limit_spending_unlimited": "Unlimited",
   "limit_spending_limited": "Limited",

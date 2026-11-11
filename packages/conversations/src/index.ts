@@ -36,6 +36,7 @@ import {
 	type CancelledCall,
 	cancelBackgroundCalls,
 	cancelTasks,
+	endBackgroundCallsOf,
 } from "./background-calls.ts";
 import { MEMORY_CHANGES, undoChange } from "./memories.ts";
 import {
@@ -172,7 +173,7 @@ export function createConversations({
 	orrery?: typeof orreryClient;
 	/** Object storage, where Attachments are kept; tests pass `memoryStore()`. */
 	store: ObjectStore;
-	/** The `fetch` Background Calls are cancelled with; tests stand in for the MCP Servers. */
+	/** What MCP requests go through, such as cancelling a Background Call; tests pass a fake server's. */
 	fetch?: Fetch;
 }) {
 	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
@@ -742,6 +743,10 @@ export function createConversations({
 			await stopSubagents(id);
 			return true;
 		},
+
+		/** Before an Admin deletes an MCP Server: its Background Calls are cancelled and end failed. */
+		deletingMcpServer: (mcpServerId: string) =>
+			endBackgroundCallsOf(config, mcpServerId, fetch),
 
 		/** Cancels the Conversation's Timer at the User's request. False when the Conversation is not the user's. */
 		async cancelTimer(userId: string, id: string) {

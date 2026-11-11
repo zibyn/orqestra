@@ -66,7 +66,6 @@ const conversations = createConversations({
 	store,
 	config: config.current,
 	skillFiles,
-	// the api cancels Background Calls with the fake MCP Server too
 	fetch: (input, init) => fetchFake(input, init),
 });
 const faux = fauxProvider({
@@ -1550,6 +1549,151 @@ describe.skipIf(!url)(
 				expect(JSON.stringify(notifications(view)[0].message)).toContain(
 					"after the restart",
 				);
+			});
+
+			describe("ends", () => {
+				const cancels = () =>
+					slow.requests.filter((r) => r.method === "tasks/cancel").length;
+				const task = () => slow.tasks.get("task-1") ?? { status: "working" };
+				/** Starts a Background Call and waits until the Run that made it has ended. */
+				const backgrounded = async () => {
+					script({
+						parent: [
+							crunch(),
+							fauxAssistantMessage("Crunching"),
+							fauxAssistantMessage("Told"),
+						],
+					});
+					const id = await conversations.send(userId, {
+						agentId: "mcp",
+						text: "crunch it",
+					});
+					await waitFor(
+						() => conversations.get(userId, id),
+						(v) => v?.status === "idle" && v.messages.length === 4,
+					);
+					return id;
+				};
+				/** Waits for the Notification and the reply it woke; returns the Notification's text. */
+				const woken = async (
+					id: string,
+					status: "completed" | "failed" | "cancelled",
+				) => {
+					const view = await waitFor(
+						() => conversations.get(userId, id),
+						(v) =>
+							v?.status === "idle" &&
+							v.messages.at(-1)?.message.role === "assistant" &&
+							notifications(v).length === 1,
+					);
+					expect(view?.backgroundCalls[0].status).toBe(status);
+					const frame = JSON.stringify(notifications(view)[0].message.content);
+					expect(frame).toContain(`status=\\"${status}\\"`);
+					return frame;
+				};
+
+				it("as failed, with the service's message, when the service reports it failed", async () => {
+					const id = await backgrounded();
+					Object.assign(task(), {
+						status: "failed",
+						error: { code: -1, message: "disk full" },
+					});
+					expect(await woken(id, "failed")).toContain("disk full");
+					expect(cancels()).toBe(0);
+				});
+
+				it("as failed, cancelling it, when the service asks for more input", async () => {
+					const id = await backgrounded();
+					task().status = "input_required";
+					expect(await woken(id, "failed")).toContain("more input");
+					expect(cancels()).toBe(1);
+				});
+
+				it("as failed at once when the service no longer knows the task", async () => {
+					const id = await backgrounded();
+					slow.tasks.delete("task-1");
+					expect(await woken(id, "failed")).toContain("no longer knows");
+				});
+
+				it("as failed at once when the service refuses the shared request headers", async () => {
+					const id = await backgrounded();
+					slow.status = 401;
+					expect(await woken(id, "failed")).toContain("refused");
+				});
+
+				it("as failed once the service could not be asked for five minutes, asking again until then", async () => {
+					const id = await backgrounded();
+					slow.down = true;
+					const asked = slow.requests.length;
+					await waitFor(
+						async () => slow.requests.length,
+						(n) => n > asked,
+					);
+					expect(
+						(await conversations.get(userId, id))?.backgroundCalls[0].status,
+					).toBe("running");
+					// as if five minutes had passed since the last poll that got an answer
+					await db.execute(
+						sql`update background_call set polled_at = now() - interval '5 minutes'`,
+					);
+					expect(await woken(id, "failed")).toContain("5 minutes");
+				});
+
+				it("as failed, cancelling it, once tracked longer than the Limits allow", async () => {
+					const loaded = await config.current();
+					const saved = loaded.limits;
+					loaded.limits = { ...saved, backgroundCallMaxDuration: 1 };
+					try {
+						const id = await backgrounded();
+						expect(await woken(id, "failed")).toContain("1 seconds");
+						expect(cancels()).toBe(1);
+					} finally {
+						loaded.limits = saved;
+					}
+				});
+
+				it("as failed when its MCP Server is disabled", async () => {
+					const loaded = await config.current();
+					const saved = loaded.mcpServers.slow;
+					const id = await backgrounded();
+					delete loaded.mcpServers.slow;
+					try {
+						expect(await woken(id, "failed")).toContain("disabled");
+					} finally {
+						loaded.mcpServers.slow = saved;
+					}
+				});
+
+				it("as failed, cancelling it, when an Admin deletes its MCP Server", async () => {
+					const id = await backgrounded();
+					await conversations.deletingMcpServer("slow");
+					expect(await woken(id, "failed")).toContain("deleted");
+					expect(cancels()).toBe(1);
+				});
+
+				it("as cancelled when the service cancels it", async () => {
+					const id = await backgrounded();
+					task().status = "cancelled";
+					await woken(id, "cancelled");
+				});
+
+				it("keeps tracking with the new request headers when an Admin edits its MCP Server", async () => {
+					const loaded = await config.current();
+					const saved = loaded.mcpServers.slow;
+					const id = await backgrounded();
+					loaded.mcpServers.slow = { ...saved, headers: { "x-key": "new" } };
+					try {
+						const asked = slow.requests.length;
+						await waitFor(
+							async () => slow.requests.slice(asked),
+							(r) => r.some((q) => q.headers.get("x-key") === "new"),
+						);
+						finishTask("still here");
+						expect(await woken(id, "completed")).toContain("still here");
+					} finally {
+						loaded.mcpServers.slow = saved;
+					}
+				});
 			});
 		});
 	},

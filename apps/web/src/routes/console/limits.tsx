@@ -55,6 +55,12 @@ const fields: {
 		minutes: true,
 	},
 	{ key: "maxSubagentDepth", label: m.limit_max_subagent_depth, max: 3 },
+	{
+		key: "backgroundCallMaxDuration",
+		label: m.limit_background_call_max_duration,
+		minutes: true,
+		max: 30 * 24 * 60,
+	},
 ];
 
 /** The instance's Limits, read by the next Run. */

@@ -131,6 +131,8 @@ export interface Limits {
 	spendingLimit: SpendingLimit;
 	/** The IANA time zone whose calendar months Spending Limits cover. */
 	resetTimeZone: string;
+	/** How long a Background Call is tracked before it is cancelled and ends failed. */
+	backgroundCallMaxDuration: number;
 }
 
 /** The Limits until an Admin saves them. */
@@ -143,6 +145,7 @@ export const DEFAULT_LIMITS: Limits = {
 	maxSubagentDepth: 2,
 	spendingLimit: { mode: "unlimited" },
 	resetTimeZone: "UTC",
+	backgroundCallMaxDuration: 24 * 60 * 60,
 };
 
 /** A Skill Runs can use; read its files with `skillFiles(versionId)`. */
