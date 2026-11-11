@@ -1,6 +1,7 @@
 import { db } from "@orqestra/db";
 import {
 	conversation,
+	firing,
 	pushSubscription,
 	scheduledTask,
 } from "@orqestra/db/schema";
@@ -67,7 +68,7 @@ export const taskUrl = (taskId: string) => `/tasks?task=${taskId}`;
 
 /**
  * A top-level Conversation's Run ended as `status`: Alerts its User, unless the Conversation is a Firing's
- * whose task has Alerts off and it ended completed or partial.
+ * whose task has Alerts off and it ended completed or partial, or whose Firing has not ended yet: its Alert comes with the Run that ends it.
  */
 export async function alertRun(conversationId: string, status: AlertStatus) {
 	const [conv] = await db
@@ -76,11 +77,13 @@ export async function alertRun(conversationId: string, status: AlertStatus) {
 			title: conversation.title,
 			taskName: scheduledTask.name,
 			alertOnComplete: scheduledTask.alertOnComplete,
+			firing: firing.outcome,
 		})
 		.from(conversation)
 		.leftJoin(scheduledTask, eq(scheduledTask.id, conversation.scheduledTaskId))
+		.leftJoin(firing, eq(firing.conversationId, conversation.id))
 		.where(eq(conversation.id, conversationId));
-	if (!conv) return;
+	if (!conv || conv.firing === "running") return;
 	if (
 		conv.alertOnComplete === false &&
 		(status === "completed" || status === "partial")

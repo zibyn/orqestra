@@ -153,7 +153,7 @@ export const firing = pgTable(
 			.notNull()
 			.references(() => scheduledTask.id, { onDelete: "cascade" }),
 		firedAt: timestamp("fired_at").defaultNow().notNull(),
-		// running until the first Run of its Conversation ends, then how that Run ended
+		// running until its Conversation's Run ends with its whole tree done (every Subagent and Background Call), then how that Run ended
 		outcome: text("outcome").$type<FiringOutcome>().notNull(),
 		// why it was skipped or failed before starting a Conversation: previous_running, spending_limit, agent_unavailable or model_disabled
 		reason: text("reason"),
