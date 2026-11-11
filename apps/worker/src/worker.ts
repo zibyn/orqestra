@@ -1,6 +1,10 @@
 import type { OrqestraConfig } from "@orqestra/config";
 import { skillFiles } from "@orqestra/config/live";
-import { createConversations, type RunHandle } from "@orqestra/conversations";
+import {
+	createConversations,
+	type RunHandle,
+	SpendingLimitReached,
+} from "@orqestra/conversations";
 import { type ObjectStore, openToolbox } from "@orqestra/tools";
 import { type RuntimeDeps, runAgent } from "./runtime/index.ts";
 
@@ -59,7 +63,8 @@ export function providerLimiter(max: number) {
 }
 
 /**
- * Wraps a streamSimple so each Model request of `run` is recorded as Usage, for the purpose its caller names, once its stream ends,
+ * Wraps a streamSimple so each Model request of `run` is first checked against its User's Spending Limit, throwing
+ * SpendingLimitReached unsent once it is used up, then recorded as Usage, for the purpose its caller names, once its stream ends,
  * whether it finished, failed or was stopped.
  */
 export const metered =
@@ -68,6 +73,7 @@ export const metered =
 		purpose: Parameters<RunHandle["recordUsage"]>[0],
 	): OrqestraConfig["streamSimple"] =>
 	async (model, context, options) => {
+		if (await run.spendingLimitReached()) throw new SpendingLimitReached();
 		const stream = await streamSimple(model, context, options);
 		// not awaited: the reply goes on while it is written
 		stream

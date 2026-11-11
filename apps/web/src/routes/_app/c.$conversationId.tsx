@@ -150,6 +150,8 @@ function useLiveReplies(conversationId: string) {
 			Promise.all([
 				router.invalidate(),
 				queryClient.invalidateQueries({ queryKey: ["subagent"] }),
+				// a Run may have used up the Spending Limit, or failed on it
+				queryClient.invalidateQueries({ queryKey: ["spending-limit"] }),
 			]);
 		const source = new EventSource(
 			`/api/conversations/${conversationId}/events`,
@@ -368,7 +370,9 @@ function ConversationView() {
 							messageId="failed"
 							className="flex items-center gap-2 text-sm text-destructive"
 						>
-							{m.run_failed()}
+							{conversation.failure === "spending_limit"
+								? m.run_failed_spending_limit()
+								: m.run_failed()}
 							<RetryButton conversationId={conversation.id} />
 						</MessageScrollerItem>
 					)}

@@ -1,7 +1,11 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 import { messageText, type OrqestraConfig, turnSkills } from "@orqestra/config";
-import { type RunHandle, RunTimedOut } from "@orqestra/conversations";
+import {
+	type RunHandle,
+	RunTimedOut,
+	SpendingLimitReached,
+} from "@orqestra/conversations";
 import {
 	type ObjectStore,
 	type openToolbox,
@@ -110,6 +114,9 @@ export async function runAgent(
 				? config.limits.unattendedMaxSteps
 				: Number.POSITIVE_INFINITY;
 		let steps = 0;
+		// what a step's request threw, such as SpendingLimitReached, which pi turns into a failed reply
+		const step = streamSimple("step");
+		let refused: unknown;
 		// only the top-level Agent asks the User; the step that asked ends the Run
 		const question = questionTool();
 		const agent = new Agent({
@@ -130,7 +137,14 @@ export async function runAgent(
 				],
 				messages,
 			},
-			streamFn: streamSimple("step"),
+			streamFn: async (...request) => {
+				try {
+					return await step(...request);
+				} catch (error) {
+					refused = error;
+					throw error;
+				}
+			},
 			sessionId: conversationId,
 			finishTurn: () =>
 				++steps >= maxSteps || question.asked ? { action: "end" } : undefined,
@@ -190,7 +204,7 @@ export async function runAgent(
 			const answer = agent.state.messages.at(-1) as AssistantMessage;
 			// fails the job so the reason (e.g. an unreadable API key) is logged; the Run is then marked failed
 			if (answer.stopReason === "error")
-				throw new Error(answer.errorMessage ?? "The reply failed");
+				throw refused ?? new Error(answer.errorMessage ?? "The reply failed");
 			next = await run.finish(sub || run.unattended ? ended() : undefined, {
 				question: question.asked,
 			});
@@ -203,9 +217,8 @@ export async function runAgent(
 			.filter((m): m is AssistantMessage => m.role === "assistant")
 			.at(-1) as AssistantMessage;
 
-		// titled after the first turn that produced a reply, stopped ones included
-		const first = !rows.some((r) => r.message.role === "assistant");
-		if (first && !run.renamed)
+		// titled after any Turn while it has no title, stopped ones included, so one the Spending Limit put off comes later
+		if (!run.titled)
 			await generateTitle(
 				last.message,
 				answer,
@@ -215,7 +228,11 @@ export async function runAgent(
 				.then(async (title) => {
 					if (title) await run.setTitle(title);
 				})
-				.catch((error) => console.error("title generation failed", error));
+				.catch((error) => {
+					// skipped this time: the next Turn tries again
+					if (!(error instanceof SpendingLimitReached))
+						console.error("title generation failed", error);
+				});
 	} finally {
 		await toolbox.close();
 	}

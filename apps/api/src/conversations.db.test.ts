@@ -278,3 +278,85 @@ describe.skipIf(!url)("Conversations through the api", () => {
 		expect((await conversations.get(bob.id, id))?.title).toBeNull();
 	});
 });
+
+describe.skipIf(!url)("The Spending Limit through the api", () => {
+	let stopWorker: () => Promise<void>;
+	beforeAll(async () => {
+		stopWorker = await conversations.serveRuns(async () => {});
+	});
+	beforeEach(async () => {
+		await db.$client.query("truncate conversation, usage, limits cascade");
+	});
+	afterAll(() => stopWorker?.());
+
+	/** The default limit, reset in `zone`. */
+	const limitTo = (usd: number, zone = "UTC") =>
+		db.$client.query(
+			`insert into limits (id, max_scheduled_tasks_per_user, min_firing_interval, timer_rings_per_user_message, unattended_max_steps, unattended_max_duration, max_subagent_depth, spending_limit, reset_time_zone)
+			values (1, 10, 3600, 10, 50, 1800, 2, $1, $2)`,
+			[JSON.stringify({ mode: "limited", usd }), zone],
+		);
+	/** Ada's request at `at`, costing `cost`. */
+	const spend = (cost: number, at: Date) =>
+		db.$client.query(
+			`insert into usage (user_id, provider, model_id, conversation_id, purpose, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost, created_at)
+			values ($1, 'faux', 'faux-1', gen_random_uuid(), 'step', 1, 1, 0, 0, $2, $3)`,
+			[ada.id, cost, at.toISOString().replace("Z", "")],
+		);
+	/** Midnight on the 1st, `months` from this month, in Shanghai: eight hours ahead of UTC all year. */
+	const shanghaiFirst = (months: number) => {
+		const [y, m] = new Intl.DateTimeFormat("en-CA", {
+			timeZone: "Asia/Shanghai",
+			year: "numeric",
+			month: "2-digit",
+		})
+			.format(new Date())
+			.split("-")
+			.map(Number);
+		return new Date(Date.UTC(y, m - 1 + months, 1) - 8 * 3600_000);
+	};
+
+	it("refuses a new message once the User's limit is used up, starting no Run", async () => {
+		await limitTo(5);
+		await spend(5, new Date());
+		const { status, body } = await app(ada)("POST", "/api/messages", {
+			agentId: "faux",
+			text: "hi",
+		});
+		expect(status).toBe(422);
+		expect(body).toEqual({
+			errors: { text: { code: "spending_limit_reached" } },
+		});
+		expect(await conversations.list(ada.id)).toEqual([]);
+		// Ada's spending is not Bob's
+		expect(
+			(await app(bob)("POST", "/api/messages", { agentId: "faux", text: "hi" }))
+				.status,
+		).toBe(200);
+	});
+
+	it("tells the User where they stand this month in the reset time zone, and nothing without a limit", async () => {
+		expect((await app(ada)("GET", "/api/spending-limit")).body).toEqual({
+			status: null,
+		});
+		await limitTo(5, "Asia/Shanghai");
+		const start = shanghaiFirst(0);
+		// either side of this month's start in Shanghai, both in last month by UTC
+		await spend(10, new Date(start.getTime() - 60_000));
+		await spend(2, new Date(start.getTime() + 60_000));
+		const { status, body } = await app(ada)("GET", "/api/spending-limit");
+		expect(status).toBe(200);
+		expect(body).toEqual({
+			status: {
+				spent: 2,
+				usd: 5,
+				reached: false,
+				resetsAt: shanghaiFirst(1).toISOString(),
+			},
+		});
+		await spend(3, new Date());
+		expect((await app(ada)("GET", "/api/spending-limit")).body.status).toEqual(
+			expect.objectContaining({ spent: 5, reached: true }),
+		);
+	});
+});

@@ -31,6 +31,23 @@ export const thinkingLevel = z.enum([
 	"max",
 ]);
 
+/** A Spending Limit: none, or so many dollars a calendar month; $0 lets nothing be spent. */
+export const spendingLimit = z.discriminatedUnion("mode", [
+	z.object({ mode: z.literal("unlimited") }),
+	z.object({ mode: z.literal("limited"), usd: z.number().nonnegative() }),
+]);
+export type SpendingLimit = z.infer<typeof spendingLimit>;
+
+/** An IANA time zone name this runtime knows. */
+export const timeZone = z.string().refine((zone) => {
+	try {
+		new Intl.DateTimeFormat("en", { timeZone: zone });
+		return true;
+	} catch {
+		return false;
+	}
+}, "not a time zone");
+
 /** The largest attachment a User can upload into a Sandbox. */
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 

@@ -9,6 +9,7 @@ import {
 	type InputOrigin,
 	inbox,
 	message,
+	type RunFailure,
 	scheduledTask,
 	subagent,
 	timer,
@@ -154,7 +155,7 @@ export async function enqueue(conversationId: string) {
 	} catch (error) {
 		await db
 			.update(conversation)
-			.set({ status: "failed" })
+			.set({ status: "failed", failure: "error" })
 			.where(eq(conversation.id, conversationId));
 		throw error;
 	}
@@ -478,12 +479,13 @@ export async function firingFailed(conversationId: string) {
 export async function endRun(
 	conversationId: string,
 	status: "idle" | "failed",
+	failure: RunFailure = "error",
 ) {
 	const paused = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
 		await tx
 			.update(conversation)
-			.set({ status })
+			.set({ status, failure: status === "failed" ? failure : null })
 			.where(eq(conversation.id, conversationId));
 		return endFiring(
 			tx,

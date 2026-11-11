@@ -160,14 +160,14 @@ describe("runAgent", () => {
 		expect(m.titles).toEqual(["A greeting"]);
 	});
 
-	it("titles only the first Turn that produced a reply, and not a renamed Conversation", async () => {
+	it("titles a later Turn of a Conversation still without a title, and not one titled or renamed", async () => {
 		script([fauxAssistantMessage("again")]);
 		const later = memoryRun({
 			transcript: transcript(user("hi"), fauxAssistantMessage("yo"), user("x")),
 			turn: turn(),
 		});
 		await runAgent(later.run, deps());
-		expect(later.titles).toEqual([]);
+		expect(later.titles).toEqual(["T"]);
 
 		let asked = false;
 		faux.setResponses([
@@ -177,12 +177,12 @@ describe("runAgent", () => {
 				return fauxAssistantMessage("T");
 			},
 		]);
-		const renamed = memoryRun({
+		const titled = memoryRun({
 			transcript: transcript(user("hi")),
 			turn: turn(),
-			renamed: true,
+			titled: true,
 		});
-		await runAgent(renamed.run, deps());
+		await runAgent(titled.run, deps());
 		expect(asked).toBe(false);
 	});
 

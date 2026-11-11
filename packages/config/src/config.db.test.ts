@@ -615,6 +615,8 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 			unattendedMaxSteps: 50,
 			unattendedMaxDuration: 1800,
 			maxSubagentDepth: 2,
+			spendingLimit: { mode: "unlimited" as const },
+			resetTimeZone: "UTC",
 		};
 
 		it("are the defaults until an Admin saves them, and Runs read the saved ones at once", async () => {
@@ -639,6 +641,26 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 				limitsInput.safeParse({ ...defaults, unattendedMaxSteps: 0 }).success,
 			).toBe(false);
 			expect(limitsInput.safeParse(defaults).success).toBe(true);
+		});
+
+		it("keep a default Spending Limit of so many dollars, $0 included, refusing one without an amount or below 0, and a reset time zone", async () => {
+			const valid = (spendingLimit: unknown) =>
+				limitsInput.safeParse({ ...defaults, spendingLimit }).success;
+			expect(valid({ mode: "limited" })).toBe(false);
+			expect(valid({ mode: "limited", usd: -1 })).toBe(false);
+			expect(valid({ mode: "limited", usd: 0 })).toBe(true);
+			expect(
+				limitsInput.safeParse({ ...defaults, resetTimeZone: "Mars/Base" })
+					.success,
+			).toBe(false);
+			const changed = {
+				...defaults,
+				spendingLimit: { mode: "limited" as const, usd: 0 },
+				resetTimeZone: "Asia/Shanghai",
+			};
+			await config.limits.save(changed);
+			expect(await config.limits.get()).toEqual(changed);
+			expect((await config.current()).limits).toEqual(changed);
 		});
 	});
 

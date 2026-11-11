@@ -2,6 +2,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { CheckCircle2Icon, Loader2Icon } from "lucide-react";
 import { useState } from "react";
 import { ConsolePage } from "#/components/ConsolePage";
+import { Picker } from "#/components/Picker";
 import { Alert, AlertDescription } from "#/components/ui/alert";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent } from "#/components/ui/card";
@@ -12,6 +13,7 @@ import {
 	FieldLabel,
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { api, ok } from "#/lib/api";
 import { errorText, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
@@ -27,7 +29,7 @@ type Limits = Awaited<ReturnType<typeof load>>;
 
 // durations are stored in seconds and edited in minutes
 const fields: {
-	key: keyof Limits;
+	key: Exclude<keyof Limits, "spendingLimit" | "resetTimeZone">;
 	label: () => string;
 	minutes?: boolean;
 	max?: number;
@@ -66,6 +68,18 @@ function LimitsPage() {
 			]),
 		),
 	);
+	const [limited, setLimited] = useState(
+		stored.spendingLimit.mode === "limited",
+	);
+	const [usd, setUsd] = useState(
+		stored.spendingLimit.mode === "limited"
+			? String(stored.spendingLimit.usd)
+			: "",
+	);
+	const [zone, setZone] = useState(stored.resetTimeZone);
+	const zones = [
+		...new Set([zone, "UTC", ...Intl.supportedValuesOf("timeZone")]),
+	];
 	const [busy, setBusy] = useState(false);
 	const [done, setDone] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
@@ -74,12 +88,19 @@ function LimitsPage() {
 		setBusy(true);
 		setDone(false);
 		try {
-			const limits = Object.fromEntries(
-				fields.map((f) => [
-					f.key,
-					Math.round(Number(values[f.key]) * (f.minutes ? 60 : 1)),
-				]),
-			) as unknown as Limits;
+			const limits = {
+				...Object.fromEntries(
+					fields.map((f) => [
+						f.key,
+						Math.round(Number(values[f.key]) * (f.minutes ? 60 : 1)),
+					]),
+				),
+				// an empty amount goes as none, for the api to refuse rather than read as $0
+				spendingLimit: limited
+					? { mode: "limited", usd: usd.trim() ? Number(usd) : undefined }
+					: { mode: "unlimited" },
+				resetTimeZone: zone,
+			} as unknown as Limits;
 			const result = await saved(api().api.limits.put(limits));
 			setErrors(saveErrorTexts(result.errors));
 			setDone(!Object.keys(result.errors).length);
@@ -90,6 +111,8 @@ function LimitsPage() {
 			setBusy(false);
 		}
 	}
+
+	const spendingError = errors.spendingLimit || errors["spendingLimit.usd"];
 
 	return (
 		<ConsolePage title={m.limits()} description={m.limits_hint()}>
@@ -127,6 +150,52 @@ function LimitsPage() {
 										<FieldError>{errors[f.key]}</FieldError>
 									</Field>
 								))}
+							</div>
+							<div className="grid gap-5 md:grid-cols-2">
+								<Field data-invalid={!!spendingError || undefined}>
+									<FieldLabel id="limit-spending">
+										{m.limit_spending_limit()}
+									</FieldLabel>
+									<ToggleGroup
+										aria-labelledby="limit-spending"
+										variant="outline"
+										spacing={0}
+										className="w-full"
+										value={[limited ? "limited" : "unlimited"]}
+										// a pressed mode stays pressed: there is always one
+										onValueChange={([mode]) =>
+											mode && setLimited(mode === "limited")
+										}
+									>
+										<ToggleGroupItem value="unlimited" className="flex-1">
+											{m.limit_spending_unlimited()}
+										</ToggleGroupItem>
+										<ToggleGroupItem value="limited" className="flex-1">
+											{m.limit_spending_limited()}
+										</ToggleGroupItem>
+									</ToggleGroup>
+									{limited && (
+										<Input
+											type="number"
+											aria-label={m.limit_spending_usd()}
+											placeholder={m.limit_spending_usd()}
+											required
+											min={0}
+											step="any"
+											aria-invalid={!!spendingError || undefined}
+											value={usd}
+											onChange={(e) => setUsd(e.target.value)}
+										/>
+									)}
+									<FieldError>{spendingError}</FieldError>
+								</Field>
+								<Picker
+									label={m.limit_reset_time_zone()}
+									error={errors.resetTimeZone}
+									value={zone}
+									onChange={setZone}
+									items={zones.map((z) => ({ value: z, label: z }))}
+								/>
 							</div>
 							<Button type="submit" className="self-start" disabled={busy}>
 								{busy && (

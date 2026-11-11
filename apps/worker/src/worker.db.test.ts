@@ -25,8 +25,9 @@ import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
 const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
 const { asc, eq, sql } = await import("drizzle-orm");
-const { usage } = await import("@orqestra/db/schema");
+const { limits, usage } = await import("@orqestra/db/schema");
 const { config, skillFiles } = await import("@orqestra/config/live");
+const { DEFAULT_LIMITS } = await import("@orqestra/config");
 const { createConversations } = await import("@orqestra/conversations");
 const { startAgentWorker } = await import("./worker.ts");
 const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
@@ -241,7 +242,7 @@ describe.skipIf(!url)(
 				sql`select pg_notify('conversation_stop', id::text) from conversation where status = 'running'`,
 			);
 			await db.execute(
-				sql`truncate conversation, scheduled_task, usage cascade`,
+				sql`truncate conversation, scheduled_task, usage, limits cascade`,
 			);
 		});
 
@@ -616,6 +617,141 @@ describe.skipIf(!url)(
 			expect(row.purpose).toBe("step");
 			expect(row.outputTokens).toBeGreaterThan(0);
 			expect(await usageOf(unreached)).toEqual([]);
+		});
+
+		describe("Spending Limit", () => {
+			// straight into the table: saving through config would reload it, dropping the faux Agents; each request reads it afresh anyway
+			const limitTo = async (usd: number | null) => {
+				const saved = {
+					...DEFAULT_LIMITS,
+					spendingLimit:
+						usd === null
+							? { mode: "unlimited" as const }
+							: { mode: "limited" as const, usd },
+				};
+				await db
+					.insert(limits)
+					.values({ id: 1, ...saved })
+					.onConflictDoUpdate({ target: limits.id, set: saved });
+			};
+
+			it("fails a Run whose User has used up their limit, sending no request, and a retry once it is raised succeeds", async () => {
+				await limitTo(0);
+				faux.setResponses([fauxAssistantMessage("Hello")]);
+				const id = await conversations.send(userId, {
+					agentId: "faux",
+					text: "hi",
+				});
+				const view = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "failed",
+				);
+				expect(view?.failure).toBe("spending_limit");
+				expect(faux.getPendingResponseCount()).toBe(1);
+				expect(await usageOf(id)).toEqual([]);
+
+				await limitTo(1);
+				faux.setResponses([
+					fauxAssistantMessage("Hello"),
+					fauxAssistantMessage("T"),
+				]);
+				await conversations.retry(userId, id);
+				const retried = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && !!v.title,
+				);
+				expect(retried?.messages.at(-1)?.message.role).toBe("assistant");
+				expect(retried?.failure).toBeNull();
+			});
+
+			it("leaves the title for a Turn that ends once the limit allows, without failing the Run", async () => {
+				faux.setResponses([
+					async () => {
+						// used up by the time the title is asked for
+						await limitTo(0);
+						return fauxAssistantMessage("Hello");
+					},
+				]);
+				const id = await conversations.send(userId, {
+					agentId: "faux",
+					text: "hi",
+				});
+				const view = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && v.messages.length === 2,
+				);
+				expect(view?.title).toBeNull();
+
+				await limitTo(null);
+				faux.setResponses([
+					fauxAssistantMessage("Hello again"),
+					fauxAssistantMessage("Greetings"),
+				]);
+				await conversations.send(userId, { conversationId: id, text: "hi" });
+				const titled = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => !!v?.title,
+				);
+				expect(titled?.title).toBe("Greetings");
+			});
+
+			it("fails a Subagent once the limit is used up, and its Notification still wakes the parent, whose Run fails", async () => {
+				let release!: () => void;
+				const gate = new Promise<void>((r) => {
+					release = r;
+				});
+				script({
+					parent: [
+						fauxAssistantMessage(
+							fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }),
+						),
+						fauxAssistantMessage("Digging"),
+					],
+					sub: [
+						async () => {
+							await gate;
+							return fauxAssistantMessage(
+								fauxToolCall("search", { query: "more" }),
+							);
+						},
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "faux",
+					text: "dig",
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && !!v.title,
+				);
+				await limitTo(0);
+				release();
+				const view = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "failed",
+				);
+				expect(view?.subagents[0].outcome).toBe("failed");
+				expect(view?.failure).toBe("spending_limit");
+				// the Notification reached the parent, waiting for a retry
+				expect(view?.messages.at(-1)?.subagentId).toBeTruthy();
+			});
+
+			it("tells another failure from a used-up limit", async () => {
+				faux.setResponses([
+					() => {
+						throw new Error("connection refused");
+					},
+				]);
+				const id = await conversations.send(userId, {
+					agentId: "faux",
+					text: "hi",
+				});
+				const view = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "failed",
+				);
+				expect(view?.failure).toBe("error");
+			});
 		});
 
 		it("records a stopped request with the usage the Provider reported", async () => {

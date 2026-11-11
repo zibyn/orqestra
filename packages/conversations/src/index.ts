@@ -88,6 +88,7 @@ export {
 	type TranscriptMessage,
 	type Turn,
 } from "./serve.ts";
+export { SpendingLimitReached, spendingLimitStatus } from "./spending.ts";
 export {
 	checkSchedule,
 	nextFirings,
@@ -327,6 +328,8 @@ export function createConversations({
 				agentId: conv.agentId,
 				title: conv.title,
 				status: conv.status,
+				/** Why the last Run failed, while it stands failed; null otherwise. */
+				failure: conv.status === "failed" ? (conv.failure ?? "error") : null,
 				incognito: conv.incognito,
 				unread: conv.unread,
 				awaitingReply: conv.awaitingReply,

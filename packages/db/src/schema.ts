@@ -24,6 +24,9 @@ const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
 	toDriver: (value) => Buffer.from(value),
 });
 
+/** Why a Run failed: the User's Spending Limit was used up, or anything else. */
+export type RunFailure = "spending_limit" | "error";
+
 // Visible only to its owner: every query filters on userId, Admins included
 export const conversation = pgTable(
 	"conversation",
@@ -52,6 +55,8 @@ export const conversation = pgTable(
 			.$type<"idle" | "running" | "failed">()
 			.default("idle")
 			.notNull(),
+		// why the last Run failed, for the UI's text; meaningful only while status is "failed"
+		failure: text("failure").$type<RunFailure>(),
 		// the BullMQ job id of the latest Run, so queueing that Run twice adds one job
 		jobId: text("job_id"),
 		// the job of a Run the User stopped: one a worker took before it heard the Stop learns of it here
@@ -354,6 +359,11 @@ export const memorySetting = pgTable("memory_setting", {
 	enabled: boolean("enabled").notNull(),
 });
 
+/** None, or so many dollars a calendar month. */
+export type SpendingLimit =
+	| { mode: "unlimited" }
+	| { mode: "limited"; usd: number };
+
 // The Limits an Admin set in /console/limits; at most one row, id 1; no row: @orqestra/config's defaults. Durations in seconds
 export const limits = pgTable(
 	"limits",
@@ -365,6 +375,11 @@ export const limits = pgTable(
 		unattendedMaxSteps: integer("unattended_max_steps").notNull(),
 		unattendedMaxDuration: integer("unattended_max_duration").notNull(),
 		maxSubagentDepth: integer("max_subagent_depth").notNull(),
+		spendingLimit: jsonb("spending_limit")
+			.$type<SpendingLimit>()
+			.default({ mode: "unlimited" })
+			.notNull(),
+		resetTimeZone: text("reset_time_zone").default("UTC").notNull(),
 	},
 	(table) => [
 		check("limits_single_row", sql`${table.id} = 1`),

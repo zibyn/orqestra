@@ -43,7 +43,7 @@ export function memoryRun({
 	isSubagent = false,
 	unattended = false,
 	incognito = false,
-	renamed = false,
+	titled = false,
 	// a Subagent at the deepest level, as one is with the depth limit of 1, has none
 	subagents = isSubagent
 		? undefined
@@ -62,7 +62,8 @@ export function memoryRun({
 	unattended?: boolean;
 	/** The Run's top-level Conversation is Incognito: the Run gets no Memories. */
 	incognito?: boolean;
-	renamed?: boolean;
+	/** The Conversation has a title, generated or the User's. */
+	titled?: boolean;
 	subagents?: RunHandle["subagents"];
 	/** Timers that may still be set before TimerLimitReached. */
 	timerRings?: number;
@@ -102,7 +103,7 @@ export function memoryRun({
 		scheduledTaskId: null,
 		turn,
 		transcript,
-		renamed,
+		titled,
 		signal: stopper.signal,
 		deliver: async () => pending.splice(0),
 		save: async (message) => {
@@ -128,8 +129,9 @@ export function memoryRun({
 		},
 		// Usage is the assembled worker's: its wrapper around streamSimple records it
 		recordUsage: async () => {},
+		spendingLimitReached: async () => false,
 		setTitle: async (title) => {
-			if (!renamed) titles.push(title);
+			titles.push(title);
 		},
 		sandbox: (client, provider) =>
 			readySandbox(

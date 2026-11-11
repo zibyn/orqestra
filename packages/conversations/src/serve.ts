@@ -48,6 +48,7 @@ import {
 	subagentOf,
 } from "./runs.ts";
 import { ensureSandbox } from "./sandbox.ts";
+import { SpendingLimitReached, spendingLimitStatus } from "./spending.ts";
 import { fire } from "./tasks.ts";
 import { cancelTimer, ring, setTimer, TIMERS_QUEUE } from "./timers.ts";
 import { storeAttachment, sweepUnsentAttachments } from "./uploads.ts";
@@ -129,8 +130,8 @@ export type RunHandle = {
 	/** The Agent, Model and thinking level replying; a Subagent without instructions of its own gets the general worker's. */
 	turn: Turn;
 	transcript: Transcript;
-	/** The User renamed the Conversation: it is not to be titled. */
-	renamed: boolean;
+	/** The Conversation has a title, generated or the User's: it is not to be titled again. */
+	titled: boolean;
 	/** Aborts when the Run is stopped, with RunTimedOut when an Unattended Run ran out of time. */
 	signal: AbortSignal;
 	/** Inputs that arrived since, in order, now part of the transcript; empty when none did. */
@@ -167,6 +168,8 @@ export type RunHandle = {
 		model: Model<Api>,
 		reported: Usage,
 	): Promise<void>;
+	/** Whether the Run's User has used up this month's Spending Limit, as it stands now; checked before each Model request. */
+	spendingLimitReached(): Promise<boolean>;
 	/** Names the Conversation, unless the User renamed it meanwhile. */
 	setTitle(title: string): Promise<void>;
 	/** The Conversation's Sandbox, ready to use: created the first time, started if stopped (`woke`); see `ensureSandbox`. */
@@ -267,7 +270,11 @@ async function failed(conversationId: string, error: Error) {
 	if (!conv) return;
 	if (!conv.parentId) {
 		// one Alert: a failure that auto-paused the Firing's task says so
-		const paused = await endRun(conversationId, "failed");
+		const paused = await endRun(
+			conversationId,
+			"failed",
+			error instanceof SpendingLimitReached ? "spending_limit" : "error",
+		);
 		return alertRun(conversationId, paused ? "auto_paused" : "failed");
 	}
 	// the Subagents under it would report to nobody
@@ -433,7 +440,7 @@ async function open(
 				createdAt: previous.createdAt,
 			},
 		},
-		renamed: conv.titleEdited,
+		titled: conv.title !== null || conv.titleEdited,
 		signal,
 		async deliver() {
 			const messages = (await drain(conversationId)) as Message[];
@@ -539,6 +546,8 @@ async function open(
 					.total,
 			});
 		},
+		spendingLimitReached: async () =>
+			!!(await spendingLimitStatus(conv.userId))?.reached,
 		async setTitle(title) {
 			await db
 				.update(conversation)

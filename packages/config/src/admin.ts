@@ -42,7 +42,9 @@ import {
 	searchProviders as searchProviderCatalog,
 	searchProviderId,
 	searchToolName,
+	spendingLimit,
 	testConnection,
+	timeZone,
 	turnSkills,
 } from "./index.ts";
 import { decryptSecret, sealSecret, secretReadable } from "./secret.ts";
@@ -159,6 +161,10 @@ export const limitsInput = z.object({
 	/** Seconds. */
 	unattendedMaxDuration: count,
 	maxSubagentDepth: z.number().int().min(1).max(3),
+	/** Every User's, unless the User has their own. */
+	spendingLimit,
+	/** Where a calendar month of Spending Limits begins and ends. */
+	resetTimeZone: timeZone,
 });
 export const agentInput = z.object({
 	id: agentId,

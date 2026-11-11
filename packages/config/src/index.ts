@@ -21,6 +21,7 @@ import {
 	definitionIssues,
 	type SearchProviderId,
 	type SearchToolName,
+	type SpendingLimit,
 	searchProviders,
 	searchToolNames,
 	type ToolRef,
@@ -124,6 +125,10 @@ export interface Limits {
 	unattendedMaxDuration: number;
 	/** 1 to 3. */
 	maxSubagentDepth: number;
+	/** The default Spending Limit, every User's unless they have their own. */
+	spendingLimit: SpendingLimit;
+	/** The IANA time zone whose calendar months Spending Limits cover. */
+	resetTimeZone: string;
 }
 
 /** The Limits until an Admin saves them. */
@@ -134,6 +139,8 @@ export const DEFAULT_LIMITS: Limits = {
 	unattendedMaxSteps: 50,
 	unattendedMaxDuration: 30 * 60,
 	maxSubagentDepth: 2,
+	spendingLimit: { mode: "unlimited" },
+	resetTimeZone: "UTC",
 };
 
 /** A Skill Runs can use; read its files with `skillFiles(versionId)`. */

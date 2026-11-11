@@ -1,4 +1,5 @@
 import { invokedSkill, MAX_UPLOAD_BYTES } from "@orqestra/config/shared";
+import { useQuery } from "@tanstack/react-query";
 import { FileIcon, PlusIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import {
@@ -9,6 +10,7 @@ import {
 	PromptInputSubmit,
 	PromptInputTextarea,
 } from "#/components/ai-elements/prompt-input";
+import { Alert, AlertDescription } from "#/components/ui/alert";
 import {
 	Attachment,
 	AttachmentAction,
@@ -18,9 +20,10 @@ import {
 	AttachmentTitle,
 } from "#/components/ui/attachment";
 import { InputGroupButton } from "#/components/ui/input-group";
-import type { Api } from "#/lib/api";
+import { type Api, api, ok } from "#/lib/api";
 import { tooLarge, UploadError } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
+import { getLocale } from "#/paraglide/runtime";
 
 export type AgentOption = NonNullable<
 	Awaited<ReturnType<Api["api"]["agent-options"]["get"]>>["data"]
@@ -68,6 +71,14 @@ export function Composer({
 	const [picked, setPicked] = useState<Choice>(initial ?? {});
 	const [error, setError] = useState("");
 	const [sending, setSending] = useState(false);
+	// the api refuses to send once it is used up; this only says so beforehand
+	const spending = useQuery({
+		queryKey: ["spending-limit"],
+		queryFn: () => ok(api().api["spending-limit"].get()),
+	});
+	const usedUp = spending.data?.status?.reached
+		? spending.data.status
+		: undefined;
 	const agent = agents.find((a) => a.id === agentId) ?? agents[0];
 	const model =
 		agent.models.find((x) => x.ref === picked.model) ??
@@ -89,11 +100,23 @@ export function Composer({
 
 	return (
 		<div className="mx-auto w-full max-w-3xl px-4 pb-4">
+			{usedUp && (
+				<Alert variant="destructive" className="mb-2">
+					<AlertDescription>
+						{m.spending_limit_reached_banner({
+							date: new Date(usedUp.resetsAt).toLocaleDateString(getLocale(), {
+								month: "long",
+								day: "numeric",
+							}),
+						})}
+					</AlertDescription>
+				</Alert>
+			)}
 			<PromptInput
 				onSubmit={async (e) => {
 					e.preventDefault();
 					// sent while running, it waits in the inbox for the next step boundary
-					if (!text.trim() || sending) return;
+					if (!text.trim() || sending || usedUp) return;
 					// pi would refuse it as sent; say why here instead
 					const skill = invokedSkill(text);
 					if (skill && !agent.skills.some((s) => s.name === skill.name)) {
@@ -108,6 +131,8 @@ export function Composer({
 						setFiles([]);
 					} catch (e) {
 						setError(e instanceof UploadError ? e.message : m.request_failed());
+						// refused maybe for the limit, used up since it was last read
+						void spending.refetch();
 					} finally {
 						setSending(false);
 					}
@@ -260,7 +285,7 @@ export function Composer({
 						<PromptInputSubmit
 							running={running}
 							onStop={onStop}
-							disabled={!text.trim()}
+							disabled={!text.trim() || !!usedUp}
 							busy={sending}
 						/>
 					</div>

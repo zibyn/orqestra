@@ -1,5 +1,9 @@
 import { thinkingLevel } from "@orqestra/config/shared";
-import { ConversationError, type Conversations } from "@orqestra/conversations";
+import {
+	ConversationError,
+	type Conversations,
+	spendingLimitStatus,
+} from "@orqestra/conversations";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { signedInOnly } from "./admin.ts";
@@ -61,12 +65,25 @@ export const conversationRoutes = (
 			},
 			{ params: idParams },
 		)
-		/** Puts a message in the Conversation's Inbox, starting one when there is no conversationId; returns its id. */
+		/** This month's Spending Limit of the User, for the banner that disables sending once it is used up; null without one. */
+		.get("/spending-limit", async ({ user }) => ({
+			status: await spendingLimitStatus(user.id),
+		}))
+		/**
+		 * Puts a message in the Conversation's Inbox, starting one when there is no conversationId; returns its id.
+		 * Refused once the User's Spending Limit is used up, whatever the composer shows.
+		 */
 		.post(
 			"/messages",
-			async ({ user, body }) => ({
-				conversationId: await conversations.send(user.id, body),
-			}),
+			async ({ user, body }) => {
+				if ((await spendingLimitStatus(user.id))?.reached)
+					throw new ConversationError(
+						"This month's Spending Limit is used up",
+						"text",
+						"spending_limit_reached",
+					);
+				return { conversationId: await conversations.send(user.id, body) };
+			},
 			{
 				body: z.object({
 					conversationId: z.uuid().optional(),
