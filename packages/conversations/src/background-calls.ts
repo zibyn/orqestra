@@ -304,6 +304,11 @@ export async function cancelTasks(
 	}
 }
 
+/** What `stopSubagents` cancels each stopped Subagent's Background Calls with. */
+export const cancelStopped =
+	(config: () => Promise<OrqestraConfig>, fetch?: Fetch) => (id: string) =>
+		cancelBackgroundCalls(config, id, "stop", fetch);
+
 /**
  * Under the root's lock: stops tracking running Background Calls as cancelled, each with a Notification that wakes nobody
  * and goes with the next input, then cancels their tasks. By the User: the call `toolCallId` in the tree of the top-level

@@ -30,6 +30,7 @@ import { alertRun } from "./alerts.ts";
 import {
 	BACKGROUND_CALLS_QUEUE,
 	cancelBackgroundCalls,
+	cancelStopped,
 	pollBackgroundCall,
 	requeueBackgroundCalls,
 	startBackgroundCall,
@@ -232,7 +233,7 @@ async function stopped(
 	config: () => Promise<OrqestraConfig>,
 	fetch?: Fetch,
 ) {
-	await stopSubagents(conv.id);
+	await stopSubagents(conv.id, cancelStopped(config, fetch));
 	// out of time is no stop of the User's: the parent gets what it has, the User an Alert
 	const timedOut = signal.reason instanceof RunTimedOut;
 	// one handed off while the stop was on its way: Stop cancels it too
@@ -247,7 +248,12 @@ async function stopped(
 }
 
 /** A failed or crashed Run: a top-level Conversation is marked failed; a Subagent fails, and its Notification wakes the parent. */
-async function failed(conversationId: string, error: Error) {
+async function failed(
+	conversationId: string,
+	error: Error,
+	config: () => Promise<OrqestraConfig>,
+	fetch?: Fetch,
+) {
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
@@ -262,7 +268,7 @@ async function failed(conversationId: string, error: Error) {
 		return alertRun(conversationId, paused ? "auto_paused" : "failed");
 	}
 	// the Subagents under it would report to nobody
-	await stopSubagents(conversationId);
+	await stopSubagents(conversationId, cancelStopped(config, fetch));
 	await endSubagent(conversationId, {
 		outcome: "failed",
 		result: `[The subagent failed, or the worker running it crashed: ${error.message}]`,
@@ -591,7 +597,7 @@ async function open(
 		},
 		subagents:
 			conv.depth < cfg.limits.maxSubagentDepth
-				? subagentsOf(cfg, conv, turn, saved)
+				? subagentsOf(cfg, conv, turn, saved, fetch)
 				: undefined,
 	};
 }
@@ -605,6 +611,7 @@ function subagentsOf(
 	conv: typeof conversation.$inferSelect,
 	parent: Turn,
 	saved: () => Promise<unknown>,
+	fetch?: Fetch,
 ): RunHandle["subagents"] {
 	const parentId = conv.id;
 	const find = async (tx: Tx, number: number) => {
@@ -709,7 +716,11 @@ function subagentsOf(
 			await db.transaction(async (tx) => {
 				for (const n of numbers) await find(tx, n);
 			});
-			return stopSubagents(parentId, numbers);
+			return stopSubagents(
+				parentId,
+				cancelStopped(async () => cfg, fetch),
+				numbers,
+			);
 		},
 	};
 }
@@ -759,8 +770,9 @@ export async function serveRuns(
 		worker.on("failed", (job, err) => {
 			console.error(`job ${job?.id} failed`, err);
 			if (job)
-				void failed(job.data.conversationId, err).catch((error) =>
-					console.error(`could not mark job ${job.id}'s Run failed`, error),
+				void failed(job.data.conversationId, err, config, fetch).catch(
+					(error) =>
+						console.error(`could not mark job ${job.id}'s Run failed`, error),
 				);
 		});
 		worker.on("error", (err) => console.error("worker error", err));

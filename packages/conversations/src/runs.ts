@@ -399,8 +399,22 @@ async function lastAnswer(tx: Tx, conversationId: string) {
 	return last ? messageText(last.message as Message) : "";
 }
 
-/** Whether any of a Conversation's own Subagents is queued or running (or waiting for its own), or stopped but its Run not yet over. */
+/**
+ * Whether one of a Conversation's own Background Calls still runs, or one of its own Subagents is queued or running
+ * (or waiting for its own), or stopped but its Run not yet over.
+ */
 async function busy(tx: Tx, parentId: string) {
+	const [call] = await tx
+		.select({ id: backgroundCall.id })
+		.from(backgroundCall)
+		.where(
+			and(
+				eq(backgroundCall.conversationId, parentId),
+				eq(backgroundCall.status, "running"),
+			),
+		)
+		.limit(1);
+	if (call) return true;
 	const [row] = await tx
 		.select({ id: subagent.conversationId })
 		.from(subagent)
@@ -418,7 +432,7 @@ async function busy(tx: Tx, parentId: string) {
 	return !!row;
 }
 
-/** A Subagent whose Run ended while its own Subagents still work: idle, but not yet ended, it holds back its Notification. */
+/** A Subagent whose Run ended while its own Subagents or Background Calls still work: idle, but not yet ended, it holds back its Notification. */
 async function waiting(tx: Tx, conversationId: string) {
 	const [row] = await tx
 		.select({ outcome: subagent.outcome })
@@ -653,7 +667,7 @@ export async function drain(
 				})),
 			);
 		else if (typeof finish === "function") {
-			// its own Subagents still work: it waits for them idle, freeing its slot, and ends with a summary Run once they are done;
+			// its own Subagents or Background Calls still work: it waits for them idle, freeing its slot, and ends with a summary Run once they are done;
 			// a stopped one has nothing to sum up for
 			const own = await tx.query.subagent.findFirst({
 				columns: { outcome: true },
@@ -703,10 +717,15 @@ export async function drain(
  * Those without a Run end at once, one waiting for its own Subagents with its last answer; running ones are marked stopped,
  * which their Run sees when it starts or the stop request reaches it, and keep their slot until it ends.
  * Their Notifications wake nobody, except a parent waiting for its Subagents, which sums up once the last has ended, stopped ones' Runs included.
+ * `cancelCalls` then cancels each stopped one's Background Calls, so none wakes it: `cancelBackgroundCalls` with "stop".
  * Returns the numbers of the parent's own it stopped.
  */
-export async function stopSubagents(parentId: string, numbers?: number[]) {
-	const { targets, running } = await db.transaction(async (tx) => {
+export async function stopSubagents(
+	parentId: string,
+	cancelCalls: (conversationId: string) => Promise<unknown>,
+	numbers?: number[],
+) {
+	const { targets, running, stopped } = await db.transaction(async (tx) => {
 		await lockRoot(tx, parentId);
 		const targets = await tx
 			.select({ id: subagent.conversationId, number: subagent.number })
@@ -718,7 +737,7 @@ export async function stopSubagents(parentId: string, numbers?: number[]) {
 					numbers && inArray(subagent.number, numbers),
 				),
 			);
-		if (!targets.length) return { targets, running: [] };
+		if (!targets.length) return { targets, running: [], stopped: [] };
 		// with the subtrees below them, shallowest first, so a parent is stopped before its Subagents settle
 		const { rows } = await tx.execute<{ id: string; status: string }>(
 			sql`with recursive tree as (
@@ -744,10 +763,11 @@ export async function stopSubagents(parentId: string, numbers?: number[]) {
 					outcome: "stopped",
 					result: await lastAnswer(tx, r.id),
 				});
-		return { targets, running };
+		return { targets, running, stopped: rows.map((r) => r.id) };
 	});
 	if (!targets.length) return [];
 	await requestStop(running);
+	for (const id of stopped) await cancelCalls(id);
 	await wakeAfter(parentId);
 	return targets.map((t) => t.number);
 }

@@ -35,6 +35,7 @@ import { alerts } from "./alerts.ts";
 import {
 	type CancelledCall,
 	cancelBackgroundCalls,
+	cancelStopped,
 	cancelTasks,
 	endBackgroundCallsOf,
 } from "./background-calls.ts";
@@ -740,7 +741,7 @@ export function createConversations({
 						.where(eq(conversation.id, id));
 				await requestStop([id]);
 			}
-			await stopSubagents(id);
+			await stopSubagents(id, cancelStopped(config, fetch));
 			return true;
 		},
 
@@ -925,7 +926,9 @@ export function createConversations({
 		async stopSubagent(userId: string, id: string) {
 			const row = await ownedSubagent(userId, id);
 			if (!row) return false;
-			await stopSubagents(row.parentId, [row.number]);
+			await stopSubagents(row.parentId, cancelStopped(config, fetch), [
+				row.number,
+			]);
 			return true;
 		},
 

@@ -321,10 +321,7 @@ function ConversationView() {
 							{row.origin === "timer" ? (
 								<TimerRang />
 							) : row.backgroundCallId ? (
-								<BackgroundCallLine
-									id={row.backgroundCallId}
-									text={messageText(row.message)}
-								/>
+								<BackgroundCallLine text={messageText(row.message)} />
 							) : row.message.role === "user" && row.subagentId ? (
 								<NotificationLine
 									run={conversation.subagents.find(
@@ -393,10 +390,7 @@ function ConversationView() {
 							{row.origin === "timer" ? (
 								<TimerRang />
 							) : row.backgroundCallId ? (
-								<BackgroundCallLine
-									id={row.backgroundCallId}
-									text={messageText(row.message)}
-								/>
+								<BackgroundCallLine text={messageText(row.message)} />
 							) : row.subagentId ? (
 								<NotificationLine
 									run={conversation.subagents.find(
@@ -1023,15 +1017,24 @@ const backgroundCallLabel = (status?: string) =>
 		}) as Record<string, string>
 	)[status ?? "completed"];
 
-/** A Background Call's Notification, as one divider like a Subagent's: its MCP Server and Tool, and how it ended. */
-function BackgroundCallLine({ id, text }: { id: string; text: string }) {
-	const call = Route.useLoaderData().backgroundCalls.find((b) => b.id === id);
-	const outcome = text.match(/^<task-notification [^>]*status="(\w+)"/)?.[1];
-	if (!call) return null;
+/** A Notification's attribute `name`, unescaped; its tag is the first line. */
+const notificationAttribute = (text: string, name: string) =>
+	text
+		.match(new RegExp(`^<task-notification[^\\n]*? ${name}="([^"]*)"`))?.[1]
+		?.replaceAll("&quot;", '"')
+		.replaceAll("&amp;", "&");
+
+/**
+ * A Background Call's Notification, as one divider like a Subagent's: its MCP Server and Tool, and how it ended,
+ * read from the Notification itself, so a Subagent's panel shows it too.
+ */
+function BackgroundCallLine({ text }: { text: string }) {
 	return (
 		<Marker variant="separator" className="text-xs">
 			<MarkerContent>
-				{call.mcpServerName} · {call.toolName} · {backgroundCallLabel(outcome)}
+				{notificationAttribute(text, "server")} ·{" "}
+				{notificationAttribute(text, "tool")} ·{" "}
+				{backgroundCallLabel(notificationAttribute(text, "status"))}
 			</MarkerContent>
 		</Marker>
 	);
@@ -1237,17 +1240,22 @@ function SubagentPanel({
 							// a Notification from one of its own Subagents, which open from here too
 							// biome-ignore lint/suspicious/noArrayIndexKey: saved messages never reorder
 							<MessageScrollerItem key={i} messageId={String(i)}>
-								<NotificationLine
-									run={subagents.find(
-										(s) =>
-											s.parentId === id &&
-											s.number ===
-												Number(
-													messageText(message).match(/subagent="(\d+)"/)?.[1],
-												),
-									)}
-									text={messageText(message)}
-								/>
+								{notificationAttribute(messageText(message), "server") ? (
+									// one of its own Background Calls'
+									<BackgroundCallLine text={messageText(message)} />
+								) : (
+									<NotificationLine
+										run={subagents.find(
+											(s) =>
+												s.parentId === id &&
+												s.number ===
+													Number(
+														messageText(message).match(/subagent="(\d+)"/)?.[1],
+													),
+										)}
+										text={messageText(message)}
+									/>
+								)}
 							</MessageScrollerItem>
 						) : message.role === "user" && i > 0 ? (
 							// messages the parent sent while it worked; the first is the brief, shown above

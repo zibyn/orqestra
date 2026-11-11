@@ -130,6 +130,13 @@ const mcpAgent: AgentDefinition = {
 	id: "mcp",
 	tools: ["search", "mcp:slow"],
 };
+// a template whose Subagents may use it too
+const mcpSubAgent: AgentDefinition = {
+	...mcpAgent,
+	id: "mcp-sub",
+	instructions: "You carry out one task with a slow service.",
+	pickable: false,
+};
 const newSlow = () =>
 	fakeMcpServer({
 		era: "modern",
@@ -261,7 +268,13 @@ async function patch() {
 				!loaded.models.some((l) => l.provider === m.provider && l.id === m.id),
 		),
 	);
-	loaded.agents.push(fauxAgent, skilledAgent, smallAgent, mcpAgent);
+	loaded.agents.push(
+		fauxAgent,
+		skilledAgent,
+		smallAgent,
+		mcpAgent,
+		mcpSubAgent,
+	);
 	loaded.mcpServers.slow = {
 		name: "Slow",
 		url: "https://slow.example.com/mcp",
@@ -1430,6 +1443,175 @@ describe.skipIf(!url)(
 					async () => cancels(),
 					(c) => c.length === 1,
 				);
+			});
+
+			describe("of a Subagent", () => {
+				const delegate = () =>
+					fauxAssistantMessage(
+						fauxToolCall("subagent", {
+							tasks: [{ brief: "crunch", template: "mcp-sub" }],
+						}),
+					);
+				/** The parent delegates to a Subagent, which puts a call in the background and ends its Run. */
+				const delegated = async (parentAfter: FauxResponseStep[] = []) => {
+					script({
+						parent: [
+							delegate(),
+							fauxAssistantMessage("Delegated"),
+							...parentAfter,
+						],
+						sub: [
+							crunch(),
+							fauxAssistantMessage("Crunching"),
+							fauxAssistantMessage("The answer is 42"),
+						],
+					});
+					const id = await conversations.send(userId, {
+						agentId: "mcp",
+						text: "crunch it",
+					});
+					const view = await waitFor(
+						() => conversations.get(userId, id),
+						(v) =>
+							v?.status === "idle" &&
+							v.messages.length === 4 &&
+							v.backgroundCalls.length === 1,
+					);
+					const subId = view?.subagents[0].id as string;
+					// its Run has ended: it waits for its call idle, holding no slot
+					await waitFor(
+						() =>
+							db.execute(
+								sql`select status from conversation where id = ${subId}`,
+							),
+						(r) => r.rows[0]?.status === "idle",
+					);
+					return {
+						id,
+						subId,
+						toolCallId: view?.backgroundCalls[0].toolCallId ?? "",
+					};
+				};
+
+				it("is not done while its call runs, and its Notification reaches the parent once the call ends", async () => {
+					let woken: unknown;
+					const { id } = await delegated([
+						(context) => {
+							woken = context.messages;
+							return fauxAssistantMessage("Done");
+						},
+					]);
+					await new Promise((r) => setTimeout(r, 300));
+					const waiting = await conversations.get(userId, id);
+					expect(waiting?.subagents[0].outcome).toBe("running");
+					expect(waiting?.messages.length).toBe(4);
+					expect(waiting?.status).toBe("idle");
+
+					finishTask("42 it is");
+					const done = await waitFor(
+						() => conversations.get(userId, id),
+						(v) =>
+							v?.status === "idle" &&
+							v.messages.at(-1)?.message.role === "assistant" &&
+							v.messages.length === 6,
+					);
+					expect(done?.subagents[0].outcome).toBe("completed");
+					expect(done?.backgroundCalls[0].status).toBe("completed");
+					expect(JSON.stringify(woken)).toContain("The answer is 42");
+				});
+
+				it("cancels its calls when the Agent stops it, and it settles at once", async () => {
+					const { id } = await delegated([
+						fauxAssistantMessage(
+							fauxToolCall("subagent_stop", { numbers: [1] }),
+						),
+						fauxAssistantMessage("Stopped it"),
+					]);
+					await conversations.send(userId, {
+						conversationId: id,
+						text: "stop it",
+					});
+					await waitFor(
+						async () => cancels(),
+						(c) => c.length === 1,
+					);
+					const view = await waitFor(
+						() => conversations.get(userId, id),
+						(v) =>
+							v?.status === "idle" &&
+							v.messages.at(-1)?.message.role === "assistant" &&
+							v.subagents[0].outcome === "stopped",
+					);
+					expect(view?.backgroundCalls[0].status).toBe("cancelled");
+				});
+
+				it("cancels its calls when the User stops it, and it settles at once", async () => {
+					const { id, subId } = await delegated();
+					expect(await conversations.stopSubagent(userId, subId)).toBe(true);
+					await waitFor(
+						async () => cancels(),
+						(c) => c.length === 1,
+					);
+					const view = await waitFor(
+						() => conversations.get(userId, id),
+						(v) => v?.subagents[0].outcome === "stopped",
+					);
+					expect(view?.backgroundCalls[0].status).toBe("cancelled");
+				});
+
+				it("keeps a Firing running, with no Alert, while its Subagent is unfinished, and ends it once the Subagent has", async () => {
+					await alerted();
+					script({
+						parent: [
+							delegate(),
+							fauxAssistantMessage("Delegated"),
+							fauxAssistantMessage("Done"),
+						],
+						sub: [
+							crunch(),
+							fauxAssistantMessage("Crunching"),
+							fauxAssistantMessage("The answer is 42"),
+						],
+					});
+					const taskId = await conversations.tasks.create(userId, input());
+					const firing = async () =>
+						(await conversations.tasks.get(userId, taskId))?.firings[0];
+					const started = await waitFor(firing, (f) => !!f?.conversationId);
+					const id = started?.conversationId as string;
+					await waitFor(
+						() => conversations.get(userId, id),
+						(v) =>
+							v?.status === "idle" &&
+							v.messages.length === 4 &&
+							v.backgroundCalls.length === 1,
+					);
+					await new Promise((r) => setTimeout(r, 300));
+					expect(
+						(await conversations.get(userId, id))?.subagents[0].outcome,
+					).toBe("running");
+					expect((await firing())?.outcome).toBe("running");
+					expect(await runAlerts()).toEqual([]);
+
+					finishTask("42 it is");
+					await waitFor(firing, (f) => f?.outcome === "completed");
+					const [alert] = await waitFor(runAlerts, (p) => p.length === 1);
+					expect(alert).toMatchObject({ status: "completed", url: `/c/${id}` });
+				});
+
+				it("lets the User cancel its call through the top-level Conversation", async () => {
+					const { id, toolCallId } = await delegated([
+						fauxAssistantMessage("Done"),
+					]);
+					expect(
+						await conversations.cancelBackgroundCall(userId, id, toolCallId),
+					).toBe(true);
+					await waitFor(
+						async () => cancels(),
+						(c) => c.length === 1,
+					);
+					const view = await conversations.get(userId, id);
+					expect(view?.backgroundCalls[0].status).toBe("cancelled");
+				});
 			});
 
 			it("does not cancel the calls of a failed Run: their result still wakes the Conversation", async () => {

@@ -1713,7 +1713,7 @@ describe.skipIf(!url)(
 				thinkingLevel: "off",
 				wake: true,
 			});
-			await runs.stopSubagents(parent.id, [1]);
+			await runs.stopSubagents(parent.id, async () => {}, [1]);
 			// its Run has yet to end, so the slot is still taken
 			expect(await runs.ensureRun(waiting.id)).toBe(false);
 		});
