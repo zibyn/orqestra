@@ -429,6 +429,9 @@ export const limits = pgTable(
 			.default({ mode: "unlimited" })
 			.notNull(),
 		resetTimeZone: text("reset_time_zone").default("UTC").notNull(),
+		backgroundCallMaxDuration: integer("background_call_max_duration")
+			.default(86400)
+			.notNull(),
 	},
 	(table) => [
 		check("limits_single_row", sql`${table.id} = 1`),

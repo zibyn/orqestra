@@ -291,6 +291,7 @@
   "limit_unattended_max_steps": "Unattended Run 的步数上限",
   "limit_unattended_max_duration": "Unattended Run 的时长上限（分钟）",
   "limit_max_subagent_depth": "Subagent 最大嵌套深度（1–3）",
+  "limit_background_call_max_duration": "Background Call 跟踪时长（分钟，最长 30 天）",
   "limit_spending_limit": "每个 User 的默认 Spending Limit",
   "limit_spending_unlimited": "不限",
   "limit_spending_limited": "限额",

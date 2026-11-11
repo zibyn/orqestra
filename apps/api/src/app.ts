@@ -86,7 +86,7 @@ export function createApp({
 				.use(pushRoutes(user, conversations))
 				.use(providers(user))
 				.use(searchProviders(user))
-				.use(mcpServers(user))
+				.use(mcpServers(user, conversations))
 				.use(sandboxProvider(user))
 				.use(documentParser(user))
 				.use(limits(user))

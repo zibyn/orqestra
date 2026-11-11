@@ -24,10 +24,15 @@ import {
 	subagent,
 	timer,
 } from "@orqestra/db/schema";
-import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
+import {
+	type Fetch,
+	type ObjectStore,
+	orrery as orreryClient,
+} from "@orqestra/tools";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import { alerts } from "./alerts.ts";
+import { endBackgroundCallsOf } from "./background-calls.ts";
 import { MEMORY_CHANGES, undoChange } from "./memories.ts";
 import {
 	AGENT_RUNS_QUEUE,
@@ -150,6 +155,7 @@ export function createConversations({
 	skillFiles,
 	orrery = orreryClient,
 	store,
+	fetch,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
@@ -159,6 +165,8 @@ export function createConversations({
 	orrery?: typeof orreryClient;
 	/** Object storage, where Attachments are kept; tests pass `memoryStore()`. */
 	store: ObjectStore;
+	/** What MCP requests go through, such as cancelling a Background Call; tests pass a fake server's. */
+	fetch?: Fetch;
 }) {
 	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
 	async function expandSkill(
@@ -707,6 +715,10 @@ export function createConversations({
 			await stopSubagents(id);
 			return true;
 		},
+
+		/** Before an Admin deletes an MCP Server: its Background Calls are cancelled and end failed. */
+		deletingMcpServer: (mcpServerId: string) =>
+			endBackgroundCallsOf(config, mcpServerId, fetch),
 
 		/** Cancels the Conversation's Timer at the User's request. False when the Conversation is not the user's. */
 		async cancelTimer(userId: string, id: string) {

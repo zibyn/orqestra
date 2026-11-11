@@ -4,7 +4,10 @@ import { db } from "@orqestra/db";
 import { backgroundCall, inbox, message } from "@orqestra/db/schema";
 import {
 	type BackgroundCallStart,
+	cancelMcpTask,
 	type Fetch,
+	INPUT_REQUIRED,
+	type McpServer,
 	type McpTaskState,
 	pollMcpTask,
 } from "@orqestra/tools";
@@ -30,6 +33,8 @@ const MIN_POLL_MS = 250;
 const MAX_POLL_MS = 30_000;
 /** How long one MCP request of a poll may take. */
 const POLL_TIMEOUT_MS = 60_000;
+/** How long since the last answer a server that cannot be asked is given before its Background Call ends failed. */
+const UNREACHABLE_MS = 5 * 60_000;
 
 type Row = typeof backgroundCall.$inferSelect;
 type Ending = Exclude<McpTaskState, { status: "working" | "input_required" }>;
@@ -90,26 +95,47 @@ export async function pollBackgroundCall(
 		where: eq(backgroundCall.id, id),
 	});
 	if (!row || row.status !== "running" || row.jobId !== jobId) return;
-	const server = (await config()).mcpServers[row.mcpServerId];
+	const cfg = await config();
+	const server = cfg.mcpServers[row.mcpServerId];
 	if (!server)
 		return end(
 			row,
 			{ status: "failed", message: "The MCP Server has been disabled." },
 			row.mcpServerId,
 		);
+	const reference = row.reference as BackgroundCallStart["reference"];
+	const maxSeconds = cfg.limits.backgroundCallMaxDuration;
+	if (Date.now() - row.startedAt.getTime() >= maxSeconds * 1000)
+		return cancelAndEnd(row, server, fetch, {
+			status: "failed",
+			message: `The call ran longer than the ${maxSeconds} seconds Orqestra tracks a Background Call, so it was cancelled.`,
+		});
 	let state: McpTaskState | undefined;
 	try {
-		state = await pollMcpTask(
-			server,
-			row.reference as BackgroundCallStart["reference"],
-			{ fetch, timeoutMs: POLL_TIMEOUT_MS },
-		);
+		state = await pollMcpTask(server, reference, {
+			fetch,
+			timeoutMs: POLL_TIMEOUT_MS,
+		});
 	} catch (error) {
-		// shortcut: a server that cannot be asked is asked again, without end; give up on one gone for good once failures are handled
+		// network errors, timeouts, 5xx: asked again at the interval, until it has been too long since an answer
 		console.error(`could not poll Background Call ${id}`, error);
+		if (Date.now() - row.polledAt.getTime() >= UNREACHABLE_MS)
+			return end(
+				row,
+				{
+					status: "failed",
+					message: "The service could not be reached for 5 minutes.",
+				},
+				server.name,
+			);
 	}
-	if (state && state.status !== "working" && state.status !== "input_required")
-		return end(row, state as Ending, server.name);
+	if (state && state.status !== "working")
+		return state.status === "input_required"
+			? cancelAndEnd(row, server, fetch, {
+					status: "failed",
+					message: INPUT_REQUIRED,
+				})
+			: end(row, state as Ending, server.name);
 	const next = randomUUID();
 	await db
 		.update(backgroundCall)
@@ -135,6 +161,50 @@ export async function requeueBackgroundCalls() {
 		.from(backgroundCall)
 		.where(eq(backgroundCall.status, "running"));
 	for (const r of running) await schedule(r.id, r.jobId, 0);
+}
+
+/** Asks the server to cancel the task, giving up when it cannot be reached, then ends the Background Call as `state`. */
+async function cancelAndEnd(
+	row: Row,
+	server: McpServer,
+	fetch: Fetch | undefined,
+	state: Ending,
+) {
+	await cancelMcpTask(
+		server,
+		row.reference as BackgroundCallStart["reference"],
+		{ fetch, timeoutMs: POLL_TIMEOUT_MS },
+	).catch((error) =>
+		console.error(`could not cancel Background Call ${row.id}`, error),
+	);
+	await end(row, state, server.name);
+}
+
+/**
+ * Before an Admin deletes the MCP Server: cancels each of its Background Calls still running and ends it failed.
+ * One of a disabled server (not in `config`) ends at its next poll instead.
+ */
+export async function endBackgroundCallsOf(
+	config: () => Promise<OrqestraConfig>,
+	mcpServerId: string,
+	fetch?: Fetch,
+) {
+	const server = (await config()).mcpServers[mcpServerId];
+	if (!server) return;
+	const rows = await db
+		.select()
+		.from(backgroundCall)
+		.where(
+			and(
+				eq(backgroundCall.mcpServerId, mcpServerId),
+				eq(backgroundCall.status, "running"),
+			),
+		);
+	for (const row of rows)
+		await cancelAndEnd(row, server, fetch, {
+			status: "failed",
+			message: "The MCP Server has been deleted.",
+		});
 }
 
 /** What the Agent is told of how its Background Call ended, and whether as a Tool's error. */

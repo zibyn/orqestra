@@ -15,6 +15,7 @@ import {
 	createTaskSessionFromClient,
 	DispatchError,
 	type JsonRpcResponse,
+	JsonRpcResponseError,
 	type RawClientDispatch,
 	type SerializedTaskReference,
 	type TaskEnabledSession,
@@ -48,7 +49,7 @@ export type StartBackgroundCall = (
 	call: BackgroundCallStart,
 ) => Promise<AgentToolResult<unknown>>;
 
-const INPUT_REQUIRED =
+export const INPUT_REQUIRED =
 	"This service asked for more input, which Orqestra does not support.";
 
 /** A Tool's result as the Agent gets it: its content converted and cut, MCP's `isError` as a Tool error. */
@@ -276,9 +277,58 @@ export type McpTaskState =
 
 /**
  * Looks a handed-off task up once (one `tasks/get`) on its MCP Server as configured now, then releases it again.
- * A completed task's result comes as an immediate one would. Throws when the server cannot be asked.
+ * A completed task's result comes as an immediate one would. A server that no longer knows the task, or refuses
+ * Orqestra's identity, reports it failed; throws when the server cannot be asked, which may pass.
  */
 export async function pollMcpTask(
+	server: Pick<McpServer, "url" | "headers">,
+	reference: SerializedTaskReference,
+	options: { fetch?: Fetch; timeoutMs: number },
+): Promise<McpTaskState> {
+	try {
+		return await lookUp(server, reference, options);
+	} catch (error) {
+		if (
+			[...causes(error)].some(
+				(e) =>
+					(e instanceof JsonRpcResponseError || e instanceof ProtocolError) &&
+					e.code === -32602,
+			)
+		)
+			return {
+				status: "failed",
+				message: "The service no longer knows this task.",
+			};
+		const status = httpStatus(error);
+		if (status === 401 || status === 403)
+			return {
+				status: "failed",
+				message: `The service refused Orqestra's sign-in (HTTP ${status}).`,
+			};
+		throw error;
+	}
+}
+
+/** Asks the task's MCP Server, as configured now, once to cancel it; throws when it cannot be asked. */
+export async function cancelMcpTask(
+	server: Pick<McpServer, "url" | "headers">,
+	reference: SerializedTaskReference,
+	{ fetch, timeoutMs }: { fetch?: Fetch; timeoutMs: number },
+) {
+	const signal = AbortSignal.timeout(timeoutMs * 2);
+	const connection = await connectMcpServer(
+		server.url,
+		{ headers: server.headers },
+		{ signal, timeoutMs, fetch },
+	);
+	try {
+		await connection.session.task(reference.taskId).cancel(signal);
+	} finally {
+		await connection.close();
+	}
+}
+
+async function lookUp(
 	server: Pick<McpServer, "url" | "headers">,
 	reference: SerializedTaskReference,
 	{ fetch, timeoutMs }: { fetch?: Fetch; timeoutMs: number },

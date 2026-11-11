@@ -1,0 +1,1 @@
+ALTER TABLE "limits" ADD COLUMN "background_call_max_duration" integer DEFAULT 86400 NOT NULL;

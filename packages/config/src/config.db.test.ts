@@ -617,6 +617,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 			maxSubagentDepth: 2,
 			spendingLimit: { mode: "unlimited" as const },
 			resetTimeZone: "UTC",
+			backgroundCallMaxDuration: 86400,
 		};
 
 		it("are the defaults until an Admin saves them, and Runs read the saved ones at once", async () => {
@@ -632,7 +633,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 			expect((await config.current()).limits).toEqual(changed);
 		});
 
-		it("refuse a maximum Subagent depth outside 1 to 3, and counts below 1", () => {
+		it("refuse a maximum Subagent depth outside 1 to 3, counts below 1, and a Background Call tracked under a minute or over 30 days", () => {
 			for (const maxSubagentDepth of [0, 4])
 				expect(
 					limitsInput.safeParse({ ...defaults, maxSubagentDepth }).success,
@@ -640,6 +641,17 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 			expect(
 				limitsInput.safeParse({ ...defaults, unattendedMaxSteps: 0 }).success,
 			).toBe(false);
+			// a Background Call is tracked from a minute to 30 days
+			for (const backgroundCallMaxDuration of [59, 30 * 86400 + 1, 90.5])
+				expect(
+					limitsInput.safeParse({ ...defaults, backgroundCallMaxDuration })
+						.success,
+				).toBe(false);
+			for (const backgroundCallMaxDuration of [60, 30 * 86400])
+				expect(
+					limitsInput.safeParse({ ...defaults, backgroundCallMaxDuration })
+						.success,
+				).toBe(true);
 			expect(limitsInput.safeParse(defaults).success).toBe(true);
 		});
 

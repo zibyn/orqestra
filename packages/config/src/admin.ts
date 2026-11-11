@@ -182,6 +182,12 @@ export const limitsInput = z.object({
 	spendingLimit,
 	/** Where a calendar month of Spending Limits begins and ends. */
 	resetTimeZone: timeZone,
+	/** Seconds, from a minute to 30 days. */
+	backgroundCallMaxDuration: z
+		.number()
+		.int()
+		.min(60)
+		.max(30 * 24 * 60 * 60),
 });
 export const agentInput = z.object({
 	id: agentId,

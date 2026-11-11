@@ -176,6 +176,13 @@
       "when": 1794369890665,
       "tag": "0024_background_call",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794370910625,
+      "tag": "0025_background_call_max_duration",
+      "breakpoints": true
     }
   ]
 }

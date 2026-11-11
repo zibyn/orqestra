@@ -197,6 +197,8 @@ export async function openToolbox(
 
 export {
 	type BackgroundCallStart,
+	cancelMcpTask,
+	INPUT_REQUIRED,
 	type McpTaskState,
 	type McpTestResult,
 	pollMcpTask,
