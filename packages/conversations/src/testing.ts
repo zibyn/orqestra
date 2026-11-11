@@ -97,6 +97,9 @@ export function memoryRun({
 		conversationId: "memory",
 		isSubagent,
 		unattended,
+		userId: "memory",
+		rootId: "memory",
+		scheduledTaskId: null,
 		turn,
 		transcript,
 		renamed,
@@ -123,6 +126,8 @@ export function memoryRun({
 			over = !next.length;
 			return next;
 		},
+		// Usage is the assembled worker's: its wrapper around streamSimple records it
+		recordUsage: async () => {},
 		setTitle: async (title) => {
 			if (!renamed) titles.push(title);
 		},

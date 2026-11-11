@@ -27,8 +27,10 @@ export type RuntimeDeps = {
 		OrqestraConfig,
 		"agents" | "tools" | "mcpServers" | "skills" | "sandboxProvider" | "limits"
 	>;
-	/** Every Model request of the Run goes through it. */
-	streamSimple: OrqestraConfig["streamSimple"];
+	/** Every Model request of the Run goes through it, each saying what it is for. */
+	streamSimple: (
+		purpose: Parameters<RunHandle["recordUsage"]>[0],
+	) => OrqestraConfig["streamSimple"];
 	openToolbox: typeof openToolbox;
 	/** A Skill version's files, written into the Sandbox. */
 	skillFiles: SkillFiles;
@@ -92,7 +94,7 @@ export async function runAgent(
 			run.transcript,
 			turn.model,
 			turn.agent.compaction,
-			{ streamFn: streamSimple, signal },
+			{ streamFn: streamSimple("compaction"), signal },
 		);
 		if (compaction)
 			await run.compacted(
@@ -128,7 +130,7 @@ export async function runAgent(
 				],
 				messages,
 			},
-			streamFn: streamSimple,
+			streamFn: streamSimple("step"),
 			sessionId: conversationId,
 			finishTurn: () =>
 				++steps >= maxSteps || question.asked ? { action: "end" } : undefined,
@@ -204,7 +206,12 @@ export async function runAgent(
 		// titled after the first turn that produced a reply, stopped ones included
 		const first = !rows.some((r) => r.message.role === "assistant");
 		if (first && !run.renamed)
-			await generateTitle(last.message, answer, turn.defaultModel, streamSimple)
+			await generateTitle(
+				last.message,
+				answer,
+				turn.defaultModel,
+				streamSimple("title"),
+			)
 				.then(async (title) => {
 					if (title) await run.setTitle(title);
 				})

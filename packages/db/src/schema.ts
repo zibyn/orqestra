@@ -506,3 +506,34 @@ export const skillFile = pgTable(
 	},
 	(table) => [primaryKey({ columns: [table.versionId, table.path] })],
 );
+
+export type UsagePurpose = "step" | "compaction" | "title";
+
+// One row per Model request the Provider reported usage for; outlives its Conversation and is never swept
+export const usage = pgTable(
+	"usage",
+	{
+		id: serial("id").primaryKey(),
+		// the Polaris `sub` of the top-level Conversation's User (a Firing's: its Scheduled Task's)
+		userId: text("user_id").notNull(),
+		// the Agent that sent the request and its name then; both null for the general worker
+		agentId: text("agent_id"),
+		agentName: text("agent_name"),
+		// the Catalog ids; the Model's name is the Catalog's, looked up when shown
+		provider: text("provider").notNull(),
+		modelId: text("model_id").notNull(),
+		// the top-level Conversation; no foreign key, so deleting the Conversation keeps its Usage
+		conversationId: uuid("conversation_id").notNull(),
+		purpose: text("purpose").$type<UsagePurpose>().notNull(),
+		// the Scheduled Task whose Firing started the Conversation; no foreign key either
+		scheduledTaskId: uuid("scheduled_task_id"),
+		inputTokens: integer("input_tokens").notNull(),
+		outputTokens: integer("output_tokens").notNull(),
+		cacheReadTokens: integer("cache_read_tokens").notNull(),
+		cacheWriteTokens: integer("cache_write_tokens").notNull(),
+		// US dollars, at the Model's price when the request was made
+		cost: doublePrecision("cost").notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [index().on(table.userId, table.createdAt)],
+);

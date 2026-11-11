@@ -1,4 +1,10 @@
-import type { Message } from "@earendil-works/pi-ai";
+import {
+	type Api,
+	calculateCost,
+	type Message,
+	type Model,
+	type Usage,
+} from "@earendil-works/pi-ai";
 import {
 	GENERAL_WORKER,
 	modelRef,
@@ -14,6 +20,8 @@ import {
 	inbox,
 	message,
 	subagent,
+	type UsagePurpose,
+	usage,
 } from "@orqestra/db/schema";
 import type { ObjectStore, Orrery, SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
@@ -112,6 +120,12 @@ export type RunHandle = {
 	 * Judged as the Run starts, from its top-level Conversation.
 	 */
 	unattended: boolean;
+	/** Whom the Run's Model requests are for: the top-level Conversation's User, a Firing's being its Scheduled Task's. */
+	userId: string;
+	/** The top-level Conversation; the Conversation itself unless it is a Subagent's. */
+	rootId: string;
+	/** The Scheduled Task whose Firing started the top-level Conversation; null otherwise. */
+	scheduledTaskId: string | null;
 	/** The Agent, Model and thinking level replying; a Subagent without instructions of its own gets the general worker's. */
 	turn: Turn;
 	transcript: Transcript;
@@ -144,6 +158,15 @@ export type RunHandle = {
 	 * A reply that asked the User a `question` waits for them: only a message of theirs goes on, Notifications wait with it.
 	 */
 	finish(outcome?: Ended, options?: { question?: boolean }): Promise<Message[]>;
+	/**
+	 * Records one Model request of the Run as Usage, for `purpose`, from the usage its Provider reported,
+	 * priced at `model`'s price; nothing when the Provider reported none.
+	 */
+	recordUsage(
+		purpose: UsagePurpose,
+		model: Model<Api>,
+		reported: Usage,
+	): Promise<void>;
 	/** Names the Conversation, unless the User renamed it meanwhile. */
 	setTitle(title: string): Promise<void>;
 	/** The Conversation's Sandbox, ready to use: created the first time, started if stopped (`woke`); see `ensureSandbox`. */
@@ -308,7 +331,11 @@ async function execute(
 			cfg,
 			store,
 			conv,
-			{ incognito: !!root?.incognito, unattended },
+			{
+				incognito: !!root?.incognito,
+				unattended,
+				scheduledTaskId: root?.scheduledTaskId ?? null,
+			},
 			stop.signal,
 			emit,
 			() => {
@@ -336,7 +363,11 @@ async function open(
 	cfg: OrqestraConfig,
 	store: ObjectStore,
 	conv: typeof conversation.$inferSelect,
-	root: { incognito: boolean; unattended: boolean },
+	root: {
+		incognito: boolean;
+		unattended: boolean;
+		scheduledTaskId: string | null;
+	},
 	signal: AbortSignal,
 	emit: (event: ConversationEvent) => Promise<unknown>,
 	end: () => void,
@@ -385,6 +416,10 @@ async function open(
 		conversationId,
 		isSubagent: !!sub,
 		unattended,
+		// the same User throughout the tree
+		userId: conv.userId,
+		rootId: conv.rootId,
+		scheduledTaskId: root.scheduledTaskId,
 		turn,
 		transcript: {
 			messages: rows.map((r) => ({
@@ -478,6 +513,31 @@ async function open(
 				if (!sub) await alertRun(conversationId, status);
 			}
 			return next;
+		},
+		async recordUsage(purpose, model, reported) {
+			const tokens = {
+				inputTokens: reported.input,
+				outputTokens: reported.output,
+				cacheReadTokens: reported.cacheRead,
+				cacheWriteTokens: reported.cacheWrite,
+			};
+			// all zero: the request never reached the Provider (pi reports a failed connection so), nothing to count
+			if (!Object.values(tokens).some(Boolean)) return;
+			await db.insert(usage).values({
+				userId: conv.userId,
+				// the general worker is no Agent Definition
+				agentId: conv.agentId,
+				agentName: conv.agentId === null ? null : turn.agent.name,
+				provider: model.provider,
+				modelId: model.id,
+				conversationId: conv.rootId,
+				purpose,
+				scheduledTaskId: root.scheduledTaskId,
+				...tokens,
+				// pi's own pricing on the request's Model, as every Provider of pi works out `usage.cost`; copied so the reply is left as it was
+				cost: calculateCost(model, { ...reported, cost: { ...reported.cost } })
+					.total,
+			});
 		},
 		async setTitle(title) {
 			await db

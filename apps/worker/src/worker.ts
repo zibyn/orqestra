@@ -1,6 +1,6 @@
 import type { OrqestraConfig } from "@orqestra/config";
 import { skillFiles } from "@orqestra/config/live";
-import { createConversations } from "@orqestra/conversations";
+import { createConversations, type RunHandle } from "@orqestra/conversations";
 import { type ObjectStore, openToolbox } from "@orqestra/tools";
 import { type RuntimeDeps, runAgent } from "./runtime/index.ts";
 
@@ -58,6 +58,25 @@ export function providerLimiter(max: number) {
 		};
 }
 
+/**
+ * Wraps a streamSimple so each Model request of `run` is recorded as Usage, for the purpose its caller names, once its stream ends,
+ * whether it finished, failed or was stopped.
+ */
+export const metered =
+	(run: RunHandle, streamSimple: OrqestraConfig["streamSimple"]) =>
+	(
+		purpose: Parameters<RunHandle["recordUsage"]>[0],
+	): OrqestraConfig["streamSimple"] =>
+	async (model, context, options) => {
+		const stream = await streamSimple(model, context, options);
+		// not awaited: the reply goes on while it is written
+		stream
+			.result()
+			.then((reply) => run.recordUsage(purpose, model, reply.usage))
+			.catch((error) => console.error("recording Usage failed", error));
+		return stream;
+	};
+
 /** Works on queued Runs in this process, replying to each, until the returned close function is called. */
 export function startAgentWorker(
 	// read per Run: a Run keeps the config it started with, the next one picks up a reload
@@ -88,7 +107,7 @@ export function startAgentWorker(
 		(run, config) =>
 			runAgent(run, {
 				config,
-				streamSimple: limitProviders(config.streamSimple),
+				streamSimple: metered(run, limitProviders(config.streamSimple)),
 				openToolbox: toolbox,
 				skillFiles,
 				orrery,

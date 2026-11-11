@@ -18,7 +18,6 @@ import {
 	type AgentDefinition,
 	DEFAULT_LIMITS,
 	messageText,
-	type OrqestraConfig,
 	resolveTurn,
 } from "@orqestra/config";
 import { zip } from "@orqestra/config/test-zip";
@@ -26,7 +25,7 @@ import type { Transcript, Turn } from "@orqestra/conversations";
 import { memoryRun } from "@orqestra/conversations/testing";
 import { openToolbox } from "@orqestra/tools";
 import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
-import { runAgent } from "./index.ts";
+import { type RuntimeDeps, runAgent } from "./index.ts";
 import { MAX_SUBAGENT_STEPS } from "./tools.ts";
 
 // The runtime replying to a Run kept in memory, against pi's faux provider: no Postgres, no BullMQ
@@ -40,7 +39,8 @@ const faux = fauxProvider({
 });
 const models = createModels();
 models.setProvider(faux.provider);
-const streamSimple: OrqestraConfig["streamSimple"] =
+// every request alike, whatever it is for
+const streamSimple: RuntimeDeps["streamSimple"] = () =>
 	models.streamSimple.bind(models);
 
 const agent = (fields: Partial<AgentDefinition>): AgentDefinition => ({
