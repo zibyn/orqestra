@@ -438,5 +438,12 @@
   "connections_state_invalid": "This sign-in expired or was not started by you; connect again.",
   "connections_issuer_mismatch": "The sign-in result did not come from this service's authorization server and was ignored. Connect again.",
   "connections_denied": "The sign-in was cancelled or refused; nothing was connected.",
-  "connections_failed": "The sign-in did not complete; nothing was connected. Try again."
+  "connections_failed": "The sign-in did not complete; nothing was connected. Try again.",
+  "connections_disconnect": "Disconnect",
+  "connections_disconnect_confirm": "Disconnect {server}? After disconnecting, the Agent no longer gets this service's Tools.",
+  "mcp_connected_users": "Users connected: {count}",
+  "mcp_connected_user": "User",
+  "mcp_connected_at": "Connected",
+  "mcp_connection_status": "Status",
+  "mcp_connected_users_hint": "You cannot see their tokens, nor disconnect a User."
 }

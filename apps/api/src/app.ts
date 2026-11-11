@@ -94,7 +94,7 @@ export function createApp({
 				.use(pushRoutes(user, conversations))
 				.use(providers(user))
 				.use(searchProviders(user))
-				.use(mcpServers(user, conversations, fetch))
+				.use(mcpServers(user, conversations, { orqestraUrl, fetch }))
 				.use(connectionRoutes(user, { orqestraUrl, fetch }))
 				.use(sandboxProvider(user))
 				.use(documentParser(user))

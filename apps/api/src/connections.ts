@@ -2,6 +2,8 @@ import { mcpServerId } from "@orqestra/config";
 import {
 	config,
 	connectionStore,
+	deleteConnection,
+	revokeConnections,
 	userConnections,
 } from "@orqestra/config/live";
 import {
@@ -79,6 +81,21 @@ export const connectionRoutes = (
 						serverId: { code: started.error, detail: started.detail },
 					},
 				});
+			},
+			{ params: z.object({ serverId: mcpServerId }) },
+		)
+		// only the User's own; deleted first, then revoked as far as the authorization server lets it
+		.delete(
+			"/:serverId",
+			async ({ user, params: { serverId }, status }) => {
+				const server = (await config.current()).allMcpServers[serverId];
+				const deleted = await deleteConnection(
+					user.id,
+					serverId,
+					server?.oauthClient,
+				);
+				if (!deleted) return status(404, refused("not_found"));
+				await revokeConnections(deleted, { orqestraUrl, fetch });
 			},
 			{ params: z.object({ serverId: mcpServerId }) },
 		);

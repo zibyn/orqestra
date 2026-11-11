@@ -369,3 +369,57 @@ export async function finishConnection(
 		return { serverId, error: "failed" };
 	}
 }
+
+/** How long revoking one Connection may take in all, discovery included. */
+export const REVOKE_TIMEOUT_MS = 5_000;
+
+/**
+ * Revokes a deleted Connection at its authorization server (RFC 7009): its refresh token, else its access token, as the Client it was
+ * most likely made as (pre-registered, the one registered with that issuer, else the Client ID Metadata Document). Nothing when the
+ * authorization server has no `revocation_endpoint`; throws when revoking fails, for the caller to log.
+ */
+export async function revokeConnection(
+	{ tokens, issuer }: { tokens: ConnectionTokens; issuer: string },
+	{
+		oauthClient,
+		registered,
+		orqestraUrl,
+	}: {
+		oauthClient?: McpServer["oauthClient"];
+		registered?: StoredOAuthClientInformation;
+		/** Unknown: no Client ID Metadata Document. */
+		orqestraUrl?: string;
+	},
+	fetch: Fetch = globalThis.fetch,
+): Promise<void> {
+	const signal = AbortSignal.timeout(REVOKE_TIMEOUT_MS);
+	const timed: Fetch = (input, init) => fetch(input, { ...init, signal });
+	const metadata = await discoverAuthorizationServerMetadata(issuer, {
+		fetchFn: timed,
+	});
+	// RFC 8414 lists it; the SDK's OpenID Connect type does not, though such metadata may carry it too
+	const endpoint = (metadata as { revocation_endpoint?: string } | undefined)
+		?.revocation_endpoint;
+	if (!endpoint) return;
+	const client =
+		oauthClient ??
+		(registered?.issuer === issuer ? registered : undefined) ??
+		(orqestraUrl && new URL(orqestraUrl).protocol === "https:"
+			? { client_id: clientMetadataUrl(orqestraUrl) }
+			: undefined);
+	const body = new URLSearchParams(
+		tokens.refresh_token
+			? { token: tokens.refresh_token, token_type_hint: "refresh_token" }
+			: { token: tokens.access_token, token_type_hint: "access_token" },
+	);
+	const headers: Record<string, string> = {
+		"content-type": "application/x-www-form-urlencoded",
+	};
+	// a confidential Client authenticates by HTTP Basic (RFC 6749 §2.3.1), a public one names itself
+	if (client?.client_secret)
+		headers.authorization = `Basic ${btoa(`${encodeURIComponent(client.client_id)}:${encodeURIComponent(client.client_secret)}`)}`;
+	else if (client) body.set("client_id", client.client_id);
+	const response = await timed(endpoint, { method: "POST", headers, body });
+	await response.body?.cancel();
+	if (!response.ok) throw new Error(`${endpoint} answered ${response.status}`);
+}
