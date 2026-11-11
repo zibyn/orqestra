@@ -1,4 +1,4 @@
-import { config } from "@orqestra/config/live";
+import { config, connectionStore } from "@orqestra/config/live";
 import { s3Store } from "@orqestra/tools/s3";
 import { tracing } from "./tracing.ts";
 import { startAgentWorker } from "./worker.ts";
@@ -27,6 +27,7 @@ const close = await startAgentWorker(config.current, {
 	subagentConcurrency: count("SUBAGENT_CONCURRENCY"),
 	providerConcurrency: count("PROVIDER_CONCURRENCY"),
 	store,
+	connections: connectionStore,
 	telemetry: traces.telemetry,
 	captureContent: traces.captureContent,
 });

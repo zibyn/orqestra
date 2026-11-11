@@ -1,6 +1,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import {
+	type AuthProvider,
 	type CallToolResult,
 	Client,
 	isInputRequiredResult,
@@ -24,8 +25,11 @@ import { cut } from "./cut.ts";
 import type { Fetch, McpServer } from "./index.ts";
 import { discoverAuthorization, type OAuthDiscoveryStep } from "./oauth.ts";
 
-/** Who Orqestra is to an MCP Server: for now the shared request headers its Admin set. */
-export type McpIdentity = { headers: Record<string, string> };
+/** Who Orqestra is to an MCP Server: the request headers its Admin set, and for a per-User OAuth one the User's token. */
+export type McpIdentity = {
+	headers: Record<string, string>;
+	authProvider?: AuthProvider;
+};
 
 /** An MCP Server's Tool, saying which server it is from. */
 export type McpTool = AgentTool & { mcpServerId: string };
@@ -141,10 +145,13 @@ export async function mcpTools(
 		timeoutMs,
 		fetch,
 		backgroundCall,
+		auth = {},
 	}: {
 		signal: AbortSignal;
 		timeoutMs: number;
 		fetch?: Fetch;
+		/** The Run's User's token for each per-User OAuth server among `ids`. */
+		auth?: Record<string, AuthProvider>;
 		/** Without it, no Tool call declares the Tasks extension. */
 		backgroundCall?: StartBackgroundCall;
 	},
@@ -155,7 +162,7 @@ export async function mcpTools(
 				const server = servers[id];
 				const connection = await connectMcpServer(
 					server.url,
-					{ headers: server.headers },
+					{ headers: server.headers, authProvider: auth[id] },
 					{ signal, timeoutMs, fetch },
 				);
 				connections.push(connection);
@@ -242,6 +249,7 @@ export async function connectMcpServer(
 	const transport = () =>
 		new StreamableHTTPClientTransport(new URL(url), {
 			requestInit: { headers: identity.headers },
+			authProvider: identity.authProvider,
 			fetch: (input, init) =>
 				send(input, {
 					...init,

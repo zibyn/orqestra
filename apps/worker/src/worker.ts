@@ -92,6 +92,7 @@ export function startAgentWorker(
 		toolbox = openToolbox,
 		orrery,
 		store,
+		connections,
 		telemetry,
 		captureContent,
 		...options
@@ -104,6 +105,8 @@ export function startAgentWorker(
 		orrery?: RuntimeDeps["orrery"];
 		/** Object storage, where Attachments are kept. */
 		store: ObjectStore;
+		/** The Users' Connections to per-User OAuth MCP Servers, which their Runs use. */
+		connections?: RuntimeDeps["connections"];
 		/** Where Run traces go; nowhere by default. */
 		telemetry?: RuntimeDeps["telemetry"];
 		/** Run traces also carry what was said. */
@@ -124,6 +127,7 @@ export function startAgentWorker(
 				skillFiles,
 				orrery,
 				store,
+				connections,
 				telemetry,
 				captureContent,
 			}),

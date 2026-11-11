@@ -1,8 +1,13 @@
 import type { SerializedTaskReference } from "@modelcontextprotocol/ext-tasks/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { openToolbox, type ToolServices } from "./index.ts";
 import { connectMcpServer, pollMcpTask } from "./mcp.ts";
-import { type FakeTool, fakeMcpServer, type McpEra } from "./testing.ts";
+import {
+	type FakeTool,
+	fakeMcpServer,
+	type McpEra,
+	memoryConnections,
+} from "./testing.ts";
 
 type Fake = ReturnType<typeof fakeMcpServer>;
 const fakeServer = (tools: FakeTool[], era?: McpEra) =>
@@ -31,18 +36,79 @@ const echo: FakeTool = {
 const never = new AbortController().signal;
 
 describe("openToolbox with MCP Servers", () => {
-	it("leaves out a per-User OAuth MCP Server, without connecting to it", async () => {
-		const fakes = { wiki: fakeServer([echo]), github: fakeServer([echo]) };
-		const services = config("wiki", "github");
-		services.mcpServers.github.auth = "oauth";
-		const { tools, close } = await openToolbox(
-			services,
-			["mcp:wiki", "mcp:github"],
-			{ signal: never, fetch: route(fakes) },
-		);
-		expect(tools.map((t) => t.name)).toEqual(["wiki__echo"]);
-		expect(fakes.github.requests).toEqual([]);
-		await close();
+	describe("a per-User OAuth MCP Server", () => {
+		const connected = (
+			store: ReturnType<typeof memoryConnections>,
+			user: string,
+		) =>
+			store.saveConnection(user, "github", {
+				tokens: { access_token: `token-of-${user}`, token_type: "Bearer" },
+				issuer: "https://as.example.com",
+			});
+		const open = (
+			fakes: Record<string, Fake>,
+			connections: ReturnType<typeof memoryConnections>,
+			userId?: string,
+		) => {
+			const services = config("wiki", "github");
+			services.mcpServers.github.auth = "oauth";
+			return openToolbox(services, ["mcp:wiki", "mcp:github"], {
+				signal: never,
+				fetch: route(fakes),
+				userId,
+				connections,
+			});
+		};
+
+		it("offers its Tools when the Run's User is connected, sending their own token, and leaves shared ones as they were", async () => {
+			const fakes = { wiki: fakeServer([echo]), github: fakeServer([echo]) };
+			const connections = memoryConnections();
+			await connected(connections, "ada");
+			await connected(connections, "bob");
+			const { tools, close } = await open(fakes, connections, "ada");
+			expect(tools.map((t) => t.name).sort()).toEqual([
+				"github__echo",
+				"wiki__echo",
+			]);
+			await tools.find((t) => t.name === "github__echo")?.execute("1", {});
+			expect(
+				new Set(
+					fakes.github.requests.map((r) => r.headers.get("authorization")),
+				),
+			).toEqual(new Set(["Bearer token-of-ada"]));
+			expect(fakes.wiki.requests[0].headers.get("authorization")).toBeNull();
+			await close();
+		});
+
+		it("leaves it out, without connecting or an error, when the User has no usable Connection", async () => {
+			const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+			const connections = memoryConnections();
+			const stored = {
+				tokens: { access_token: "t", token_type: "Bearer" },
+				issuer: "https://as.example.com",
+				scope: null,
+				connectedAt: new Date(),
+			};
+			connections.connections.set("needs github", {
+				...stored,
+				status: "needs_reconnect",
+			});
+			// tokens sealed with another key
+			connections.connections.set("other-key github", {
+				...stored,
+				tokens: undefined,
+				status: "connected",
+			});
+			for (const userId of [undefined, "nobody", "needs", "other-key"]) {
+				const fakes = { wiki: fakeServer([echo]), github: fakeServer([echo]) };
+				const { tools, close } = await open(fakes, connections, userId);
+				expect(tools.map((t) => t.name)).toEqual(["wiki__echo"]);
+				expect(fakes.github.requests).toEqual([]);
+				await close();
+			}
+			expect(errors).not.toHaveBeenCalled();
+			errors.mockRestore();
+		});
 	});
 
 	it("offers the Tools of allowed, available MCP Servers, prefixed with the server id and cleaned up", async () => {

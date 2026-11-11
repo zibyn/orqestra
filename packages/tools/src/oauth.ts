@@ -1,6 +1,7 @@
 // A User's Connection to a per-User OAuth MCP Server: finding its authorization server, and the authorization that makes the Connection.
 // The SDK does discovery, PKCE, the authorization URL, the code exchange and the `iss` check; Orqestra keeps the state.
 import {
+	type AuthProvider,
 	auth,
 	discoverAuthorizationServerMetadata,
 	discoverOAuthProtectedResourceMetadata,
@@ -74,6 +75,24 @@ export interface ConnectionStore {
 		serverId: string,
 		client: StoredOAuthClientInformation & { issuer: string },
 	): Promise<void>;
+}
+
+/**
+ * How a Run sends the User's own token to a per-User OAuth MCP Server, read once as the Run starts; undefined when the User has no
+ * Connection to it, it needs reconnecting, or its tokens no longer decrypt.
+ */
+export async function connectionAuth(
+	store: ConnectionStore,
+	userId: string,
+	serverId: string,
+): Promise<AuthProvider | undefined> {
+	const connection = await store.connection(userId, serverId);
+	const token =
+		connection?.status === "connected"
+			? connection.tokens?.access_token
+			: undefined;
+	// no onUnauthorized yet: a 401 fails the connection (refreshing comes with #119)
+	return token === undefined ? undefined : { token: async () => token };
 }
 
 /** How long a User has to come back from the authorization server. */

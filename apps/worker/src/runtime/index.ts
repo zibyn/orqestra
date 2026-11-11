@@ -14,6 +14,7 @@ import {
 	type TraceCarrier,
 } from "@orqestra/conversations";
 import {
+	type ConnectionStore,
 	failureReason,
 	type McpTool,
 	type ObjectStore,
@@ -54,6 +55,8 @@ export type RuntimeDeps = {
 	orrery?: typeof orreryClient;
 	/** Object storage, where Attachments are kept; Parse reads them there. No Parse without it. */
 	store?: ObjectStore;
+	/** The Users' Connections to per-User OAuth MCP Servers; without it, those servers are left out. */
+	connections?: ConnectionStore;
 	/** Where the Run's spans go; nowhere by default. */
 	telemetry?: TelemetryContext;
 	/** The spans also carry what was said: messages, Memory, Tool arguments and results, error text. */
@@ -251,6 +254,7 @@ async function reply(
 		skillFiles,
 		orrery = orreryClient,
 		store,
+		connections,
 		span,
 		attributes,
 		captureContent = false,
@@ -274,6 +278,9 @@ async function reply(
 	const background = run.backgroundCalls;
 	const toolbox = await openToolbox(config, turn.agent.tools, {
 		signal,
+		// a Subagent's and a Firing's Conversation are their top-level Conversation's User's
+		userId: run.userId,
+		connections,
 		backgroundCall:
 			background &&
 			(async (call) =>

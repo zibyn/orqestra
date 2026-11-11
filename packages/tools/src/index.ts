@@ -2,6 +2,7 @@
 // A leaf: knows nothing of how the services are stored or configured.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
+import type { AuthProvider } from "@modelcontextprotocol/client";
 import { cut } from "./cut.ts";
 import {
 	type McpConnection,
@@ -9,6 +10,7 @@ import {
 	mcpTools,
 	type StartBackgroundCall,
 } from "./mcp.ts";
+import { type ConnectionStore, connectionAuth } from "./oauth.ts";
 import { type DocumentParser, type ParseFiles, parseTool } from "./parse.ts";
 import {
 	mcpServerOf,
@@ -143,7 +145,8 @@ function builtinTools(
 
 /**
  * Opens the Tools of one Run: those of `allowed` that are available. MCP Servers are connected in parallel,
- * for this Run only; one that cannot be connected to or listed is skipped (logged). Call `close` when the Run ends.
+ * for this Run only; one that cannot be connected to or listed is skipped (logged). A per-User OAuth one only when `userId` has
+ * a usable Connection to it in `connections`, else left out without a word. Call `close` when the Run ends.
  */
 export async function openToolbox(
 	services: ToolServices,
@@ -159,6 +162,10 @@ export async function openToolbox(
 		pollMs?: number;
 		/** Starts a Background Call for an MCP Tool call its server puts in the background; without it, no call declares the Tasks extension. */
 		backgroundCall?: StartBackgroundCall;
+		/** The Run's User: its top-level Conversation's, also for Subagents and Firings. */
+		userId?: string;
+		/** Where the Users' Connections to per-User OAuth MCP Servers are kept. */
+		connections?: ConnectionStore;
 	},
 ): Promise<{
 	/** An MCP Server's Tools say which server they are from. */
@@ -170,20 +177,40 @@ export async function openToolbox(
 		fetch,
 		timeoutMs = 60_000,
 		backgroundCall,
+		userId,
+		connections: store,
 		...parse
 	} = options;
 	const available = availableTools(services);
 	const offered = allowed.filter((t) => available.includes(t));
-	const ids = offered
-		.flatMap((t) => mcpServerOf(t) ?? [])
-		// shortcut: oauth servers left out until Runs connect as their User (#117)
-		.filter((id) => services.mcpServers[id].auth !== "oauth");
+	const allowedIds = offered.flatMap((t) => mcpServerOf(t) ?? []);
+	const auth: Record<string, AuthProvider> = {};
+	await Promise.all(
+		allowedIds
+			.filter((id) => services.mcpServers[id].auth === "oauth")
+			.map(async (id) => {
+				if (!userId || !store) return;
+				const provider = await connectionAuth(store, userId, id).catch(
+					(error) =>
+						void console.error(
+							`Reading the Connection of ${userId} to MCP Server "${id}" failed`,
+							error,
+						),
+				);
+				if (provider) auth[id] = provider;
+			}),
+	);
+	// decided as the Run starts: a Connection made during it counts from the next Run
+	const ids = allowedIds.filter(
+		(id) => services.mcpServers[id].auth !== "oauth" || auth[id],
+	);
 	const connections: McpConnection[] = [];
 	const mcp = await mcpTools(services.mcpServers, ids, connections, {
 		signal,
 		timeoutMs,
 		fetch,
 		backgroundCall,
+		auth,
 	});
 	// a name twice makes the Provider refuse the whole request: keep the first
 	const names = new Set<string>();
