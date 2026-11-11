@@ -94,6 +94,11 @@ export interface Settings {
 		url: string;
 		enabled: boolean;
 		auth: "shared" | "oauth";
+		/** `client_secret` is undefined when there is none or it cannot be decrypted. */
+		oauthClient?: {
+			client_id: string;
+			client_secret: string | undefined;
+		} | null;
 		headers: { name: string; value: string | undefined }[];
 	}[];
 	/** Omitted when none is configured; `token` is undefined when it cannot be decrypted, `snapshot` null means orrery's default. */
@@ -348,13 +353,27 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 
 	const mcpServers: OrqestraConfig["mcpServers"] = {};
 	const allMcpServers: OrqestraConfig["allMcpServers"] = {};
-	for (const { id, name, url, enabled, auth, headers } of settings.mcpServers) {
+	for (const {
+		id,
+		name,
+		url,
+		enabled,
+		auth,
+		oauthClient,
+		headers,
+	} of settings.mcpServers) {
 		const plain = headers.flatMap((h) =>
 			h.value === undefined ? [] : [[h.name, h.value]],
 		);
 		// one unreadable header: the server would reject us, so it is unavailable
 		if (plain.length !== headers.length) continue;
-		allMcpServers[id] = { name, url, auth, headers: Object.fromEntries(plain) };
+		allMcpServers[id] = {
+			name,
+			url,
+			auth,
+			...(oauthClient && { oauthClient }),
+			headers: Object.fromEntries(plain),
+		};
 		if (enabled) mcpServers[id] = allMcpServers[id];
 	}
 

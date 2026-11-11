@@ -53,6 +53,8 @@ export interface McpServer {
 	url: string;
 	/** Omitted: shared, every User sends `headers`; oauth: each User connects with their own account. */
 	auth?: "shared" | "oauth";
+	/** A Client pre-registered with its authorization server, for oauth; omitted: Orqestra uses its own or registers. */
+	oauthClient?: { client_id: string; client_secret?: string };
 	headers: Record<string, string>;
 }
 
@@ -217,6 +219,20 @@ export {
 	type StartBackgroundCall,
 	testMcpServer,
 } from "./mcp.ts";
+export {
+	type ConnectionStore,
+	type ConnectionTokens,
+	callbackUrl,
+	clientMetadataDocument,
+	type FinishConnectionError,
+	finishConnection,
+	type OAuthDiscoveryStep,
+	PENDING_TTL_MS,
+	type PendingAuthorization,
+	type StartConnectionError,
+	type StoredConnection,
+	startConnection,
+} from "./oauth.ts";
 export * from "./orrery.ts";
 export * from "./sandbox.ts";
 export type { ObjectStore } from "./store.ts";

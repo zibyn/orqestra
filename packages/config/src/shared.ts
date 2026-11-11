@@ -146,7 +146,10 @@ export type SaveError =
 				| "skill_description_invalid"
 				| "skill_too_large"
 				| "skill_too_many_files"
-				| "skill_exists";
+				| "skill_exists"
+				| "server_disabled"
+				| "connection_exists"
+				| "oauth_client_required";
 	  }
 	| {
 			code:
@@ -158,7 +161,7 @@ export type SaveError =
 			path: string;
 	  }
 	| { code: "skill_name_mismatch"; name: string; folder: string }
-	| { code: "invalid"; detail: string }
+	| { code: "invalid" | "oauth_unavailable"; detail: string }
 	| {
 			code:
 				| "header_invalid"

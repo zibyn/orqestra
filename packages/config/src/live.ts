@@ -54,6 +54,7 @@ export {
 	skillFiles,
 	toolServiceInput,
 } from "./admin.ts";
+export { connectionStore, userConnections } from "./connections.ts";
 
 /** Everything saved in /console, with API keys decrypted. */
 async function loadSettings(): Promise<Settings> {
@@ -116,6 +117,15 @@ async function loadSettings(): Promise<Settings> {
 			url: s.url,
 			enabled: s.enabled,
 			auth: s.auth,
+			oauthClient: s.oauthClientId
+				? {
+						client_id: s.oauthClientId,
+						client_secret:
+							(s.oauthClientSecret &&
+								decryptSecret(s.oauthClientSecret, key)) ||
+							undefined,
+					}
+				: null,
 			headers: s.headers.map((h) => ({
 				name: h.name,
 				value: decryptSecret(h.value, key),

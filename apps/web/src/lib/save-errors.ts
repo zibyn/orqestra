@@ -38,6 +38,10 @@ const texts: {
 	skill_md_nested: (e) => m.skill_md_nested({ path: e.path }),
 	skill_file_binary: (e) => m.skill_file_binary({ path: e.path }),
 	skill_exists: () => m.skill_exists(),
+	server_disabled: () => m.connections_server_disabled(),
+	connection_exists: () => m.connections_exists(),
+	oauth_client_required: () => m.connections_client_required(),
+	oauth_unavailable: (e) => m.connections_unavailable({ detail: e.detail }),
 };
 
 /** A field error of a /console save, in the User's language. */

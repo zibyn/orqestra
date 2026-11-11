@@ -551,6 +551,69 @@ export const mcpServer = pgTable("mcp_server", {
 		.notNull(),
 });
 
+// A User's authorization of a per-User OAuth MCP Server: at most one per User and server
+export const mcpConnection = pgTable(
+	"mcp_connection",
+	{
+		// the User's Polaris `sub`
+		userId: text("user_id").notNull(),
+		mcpServerId: text("mcp_server_id")
+			.notNull()
+			.references(() => mcpServer.id, { onDelete: "cascade" }),
+		// access token, refresh token and expiry as one JSON, encrypted with ORQESTRA_ENCRYPTION_KEY; one that no longer decrypts needs reconnecting
+		tokens: text("tokens").notNull(),
+		// the authorization server that issued them
+		issuer: text("issuer").notNull(),
+		// as granted; null: the authorization server did not say
+		scope: text("scope"),
+		status: text("status")
+			.$type<"connected" | "needs_reconnect">()
+			.default("connected")
+			.notNull(),
+		connectedAt: timestamp("connected_at", { withTimezone: true }).notNull(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.userId, table.mcpServerId] })],
+);
+
+// A Connection being made: the authorization a User started and its callback has not come back from yet; used once
+export const mcpPendingAuthorization = pgTable(
+	"mcp_pending_authorization",
+	{
+		// random, sent as the authorization request's `state`
+		state: text("state").primaryKey(),
+		userId: text("user_id").notNull(),
+		mcpServerId: text("mcp_server_id")
+			.notNull()
+			.references(() => mcpServer.id, { onDelete: "cascade" }),
+		// the authorization server it was sent to, which the callback's `iss` must name (RFC 9207)
+		issuer: text("issuer").notNull(),
+		// PKCE verifier, the Client used and the discovery as one JSON, encrypted with ORQESTRA_ENCRYPTION_KEY
+		secret: text("secret").notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => [index().on(table.userId, table.mcpServerId)],
+);
+
+// The Client Orqestra registered itself as (dynamic client registration) with an MCP Server's authorization server; shared by every User
+export const mcpRegisteredClient = pgTable("mcp_registered_client", {
+	mcpServerId: text("mcp_server_id")
+		.primaryKey()
+		.references(() => mcpServer.id, { onDelete: "cascade" }),
+	// the authorization server registered with; another one means registering again
+	issuer: text("issuer").notNull(),
+	// the registration response, encrypted with ORQESTRA_ENCRYPTION_KEY as it may hold a secret
+	client: text("client").notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true })
+		.defaultNow()
+		.notNull(),
+});
+
 // The Sandbox Provider (orrery) an Admin configured; at most one row, id "orrery"
 export const sandboxProvider = pgTable("sandbox_provider", {
 	id: text("id").primaryKey(),

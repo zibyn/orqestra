@@ -1,8 +1,10 @@
 import type { Conversations } from "@orqestra/conversations";
+import type { Fetch } from "@orqestra/tools";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { signedInOnly } from "./admin.ts";
 import { agents } from "./agents.ts";
+import { connectionRoutes } from "./connections.ts";
 import { conversationRoutes, notFound } from "./conversations.ts";
 import { documentParser } from "./document-parser.ts";
 import { download, upload } from "./files.ts";
@@ -54,10 +56,16 @@ export function createApp({
 	session,
 	auth,
 	conversations,
+	orqestraUrl = "http://localhost",
+	fetch,
 }: {
 	session: Session;
 	auth: Auth;
 	conversations: Conversations;
+	/** ORQESTRA_URL, where authorization servers send Users back to; tests that connect none may leave it out. */
+	orqestraUrl?: string;
+	/** What MCP Servers and their authorization servers are reached with; tests pass fakes. */
+	fetch?: Fetch;
 }) {
 	const user = signedIn(session);
 	return new Elysia()
@@ -86,7 +94,8 @@ export function createApp({
 				.use(pushRoutes(user, conversations))
 				.use(providers(user))
 				.use(searchProviders(user))
-				.use(mcpServers(user, conversations))
+				.use(mcpServers(user, conversations, fetch))
+				.use(connectionRoutes(user, { orqestraUrl, fetch }))
 				.use(sandboxProvider(user))
 				.use(documentParser(user))
 				.use(limits(user))

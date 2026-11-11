@@ -3,9 +3,6 @@ import { Type } from "@earendil-works/pi-ai";
 import {
 	type CallToolResult,
 	Client,
-	discoverAuthorizationServerMetadata,
-	discoverOAuthProtectedResourceMetadata,
-	extractWWWAuthenticateParams,
 	isInputRequiredResult,
 	type JSONRPCMessage,
 	ProtocolError,
@@ -25,6 +22,7 @@ import {
 } from "@modelcontextprotocol/ext-tasks/client";
 import { cut } from "./cut.ts";
 import type { Fetch, McpServer } from "./index.ts";
+import { discoverAuthorization, type OAuthDiscoveryStep } from "./oauth.ts";
 
 /** Who Orqestra is to an MCP Server: for now the shared request headers its Admin set. */
 export type McpIdentity = { headers: Record<string, string> };
@@ -440,12 +438,6 @@ function rawDispatcher(transport: StreamableHTTPClientTransport) {
 	return { dispatch, close: () => transport.close() };
 }
 
-/** The step of finding a per-User OAuth server's authorization server that failed. */
-export type OAuthDiscoveryStep =
-	| "resource_metadata"
-	| "authorization_server_metadata"
-	| "pkce";
-
 export type McpTestResult =
 	| { ok: true; tools: { name: string; description?: string }[] }
 	/** A per-User OAuth server: its authorization server's issuer, found without connecting. */
@@ -492,49 +484,25 @@ export async function testMcpServer(
 	}
 }
 
-// Protected Resource Metadata, then its authorization server's metadata; never the origin as the authorization server (2025-03-26)
+// Finds the authorization server the way connecting does, saying which step failed
 async function findAuthorizationServer(
-	{ url, headers }: Pick<McpServer, "url" | "headers">,
+	server: Pick<McpServer, "url" | "headers">,
 	signal: AbortSignal,
 	fetch: Fetch,
 ): Promise<McpTestResult> {
-	const timed: Fetch = (input, init) => fetch(input, { ...init, signal });
 	let step: OAuthDiscoveryStep | undefined;
 	try {
-		// the server may name its metadata in the 401 it answers a request without a token with (RFC 9728 §5.1)
-		const probe = await timed(url, {
-			method: "POST",
-			headers: {
-				...headers,
-				"content-type": "application/json",
-				accept: "application/json, text/event-stream",
+		const { authorizationServerMetadata } = await discoverAuthorization(
+			server,
+			(input, init) => fetch(input, { ...init, signal }),
+			(s) => {
+				step = s;
 			},
-			body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "ping" }),
-		});
-		await probe.body?.cancel();
-		step = "resource_metadata";
-		const resource = await discoverOAuthProtectedResourceMetadata(
-			url,
-			{
-				resourceMetadataUrl:
-					extractWWWAuthenticateParams(probe).resourceMetadataUrl,
-			},
-			timed,
 		);
-		const issuer = resource.authorization_servers?.[0];
-		if (!issuer) throw new Error("No authorization_servers in its metadata");
-		step = "authorization_server_metadata";
-		// also checks the metadata's issuer is the one named (RFC 8414 §3.3)
-		const metadata = await discoverAuthorizationServerMetadata(issuer, {
-			fetchFn: timed,
-		});
-		if (!metadata) throw new Error(`No metadata found for ${issuer}`);
-		step = "pkce";
-		if (!metadata.code_challenge_methods_supported?.includes("S256"))
-			throw new Error(
-				`${issuer} does not list S256 in code_challenge_methods_supported`,
-			);
-		return { ok: true, authorizationServer: metadata.issuer };
+		return {
+			ok: true,
+			authorizationServer: authorizationServerMetadata?.issuer ?? "",
+		};
 	} catch (error) {
 		return { ok: false, ...explain(error, signal), ...(step && { step }) };
 	}

@@ -10,6 +10,7 @@ import {
 import type { ObjectStore } from "./store.ts";
 
 export * from "./fake-mcp.ts";
+export * from "./fake-oauth.ts";
 
 type Ran = {
 	stdout?: string;

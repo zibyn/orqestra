@@ -5,6 +5,7 @@ import {
 	mcpServerInput,
 } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
+import type { Fetch } from "@orqestra/tools";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { adminOnly } from "./admin.ts";
@@ -15,15 +16,20 @@ import { saved } from "./saved.ts";
 export const mcpServers = (
 	signedIn: SignedIn,
 	conversations: Pick<Conversations, "deletingMcpServer">,
+	fetch?: Fetch,
 ) =>
 	new Elysia({ prefix: "/mcp-servers" })
 		.use(signedIn)
 		.derive(adminOnly)
 		.get("/", () => config.mcpServers.list())
 		// once saved, with the connection test's result
-		.post("/", async ({ body }) => saved(await config.mcpServers.save(body)), {
-			body: mcpServerInput,
-		})
+		.post(
+			"/",
+			async ({ body }) => saved(await config.mcpServers.save(body, { fetch })),
+			{
+				body: mcpServerInput,
+			},
+		)
 		.put(
 			"/enabled",
 			async ({ body }) => {

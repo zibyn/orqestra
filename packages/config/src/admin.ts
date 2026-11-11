@@ -17,6 +17,7 @@ import {
 import {
 	availableTools,
 	type DocumentParserTestResult,
+	type Fetch,
 	type McpTestResult,
 	type SandboxTestResult,
 	testDocumentParser,
@@ -436,9 +437,10 @@ const mcpServers = ({ write }: Deps) => ({
 		}));
 	},
 
-	/** Once saved, also the connection test's result. */
+	/** Once saved, also the connection test's result; `fetch` makes the test's requests. */
 	async save(
 		input: z.infer<typeof mcpServerInput>,
+		{ fetch }: { fetch?: Fetch } = {},
 	): Promise<{ errors: SaveErrors; test?: McpTestResult }> {
 		if (!mcpServerId.safeParse(input.id).success)
 			return { errors: { id: { code: "id_invalid" } } };
@@ -502,11 +504,14 @@ const mcpServers = ({ write }: Deps) => ({
 		// saved either way, so the Admin can fix the URL or headers later
 		return {
 			errors: {},
-			test: await testMcpServer({
-				url: input.url,
-				headers: plain,
-				auth: input.auth,
-			}),
+			test: await testMcpServer(
+				{
+					url: input.url,
+					headers: plain,
+					auth: input.auth,
+				},
+				{ fetch },
+			),
 		};
 	},
 

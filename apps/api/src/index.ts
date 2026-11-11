@@ -64,6 +64,7 @@ const { session, auth } = polaris(env.data);
 createApp({
 	session: rememberUsers(session),
 	auth,
+	orqestraUrl: env.data.ORQESTRA_URL,
 	conversations: createConversations({
 		config: config.current,
 		skillFiles,

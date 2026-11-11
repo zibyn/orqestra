@@ -6,6 +6,7 @@ import {
 	ChevronsUpDownIcon,
 	CoinsIcon,
 	LogOutIcon,
+	PlugIcon,
 	SettingsIcon,
 } from "lucide-react";
 import { AlertSwitch } from "#/components/AlertSwitch";
@@ -75,6 +76,10 @@ export function NavUser({ user }: { user: User }) {
 						<DropdownMenuItem render={<Link to="/tasks" />}>
 							<CalendarClockIcon />
 							{m.tasks_page()}
+						</DropdownMenuItem>
+						<DropdownMenuItem render={<Link to="/connections" />}>
+							<PlugIcon />
+							{m.connections_page()}
 						</DropdownMenuItem>
 						{user.admin && (
 							<DropdownMenuItem render={<Link to="/console" />}>
