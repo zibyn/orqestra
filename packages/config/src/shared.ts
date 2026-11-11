@@ -126,6 +126,7 @@ export type SaveError =
 				| "api_key_required"
 				| "token_required"
 				| "not_in_catalog"
+				| "model_not_enabled"
 				| "not_found"
 				| "id_invalid"
 				| "id_taken"

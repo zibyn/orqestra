@@ -5,6 +5,7 @@ import {
 	enabledModel,
 	limits,
 	mcpServer,
+	modelPrice,
 	provider,
 	sandboxProvider,
 	searchProvider,
@@ -39,6 +40,7 @@ export {
 	mcpServerEnabledInput,
 	mcpServerInput,
 	modelEnabledInput,
+	modelPriceInput,
 	providerInput,
 	providerTestInput,
 	SkillNotFound,
@@ -58,6 +60,7 @@ async function loadSettings(): Promise<Settings> {
 	const [
 		providers,
 		enabled,
+		prices,
 		searchProviders,
 		served,
 		mcpServers,
@@ -69,6 +72,7 @@ async function loadSettings(): Promise<Settings> {
 	] = await Promise.all([
 		db.select().from(provider),
 		db.select().from(enabledModel),
+		db.select().from(modelPrice),
 		db.select().from(searchProvider),
 		servedBy(),
 		db.select().from(mcpServer).orderBy(mcpServer.createdAt),
@@ -96,6 +100,12 @@ async function loadSettings(): Promise<Settings> {
 		})),
 		enabledModels: enabled.map((m) =>
 			modelRef({ provider: m.providerId, id: m.modelId }),
+		),
+		modelPrices: Object.fromEntries(
+			prices.map(({ providerId, modelId, ...cost }) => [
+				modelRef({ provider: providerId, id: modelId }),
+				cost,
+			]),
 		),
 		agents,
 		searchProviders: searchProviders.map((p) => ({

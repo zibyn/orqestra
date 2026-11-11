@@ -152,8 +152,15 @@
     {
       "idx": 21,
       "version": "7",
-      "when": 1794365077456,
-      "tag": "0021_spending_limit",
+      "when": 1794364912910,
+      "tag": "0021_model_price",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794365647014,
+      "tag": "0022_spending_limit",
       "breakpoints": true
     }
   ]

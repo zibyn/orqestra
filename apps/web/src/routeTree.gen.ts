@@ -14,6 +14,7 @@ import { Route as ConsoleRouteImport } from './routes/console'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppMemoryRouteImport } from './routes/_app/memory'
 import { Route as AppTasksRouteImport } from './routes/_app/tasks'
+import { Route as AppUsageRouteImport } from './routes/_app/usage'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
 import { Route as ConsoleLimitsRouteImport } from './routes/console/limits'
@@ -23,6 +24,7 @@ import { Route as ConsoleProvidersRouteImport } from './routes/console/providers
 import { Route as ConsoleSandboxRouteImport } from './routes/console/sandbox'
 import { Route as ConsoleSearchRouteImport } from './routes/console/search'
 import { Route as ConsoleSkillsRouteImport } from './routes/console/skills'
+import { Route as ConsoleUsageRouteImport } from './routes/console/usage'
 import { Route as ConsoleUsersRouteImport } from './routes/console/users'
 import { Route as AppCConversationIdRouteImport } from './routes/_app/c.$conversationId'
 
@@ -48,6 +50,11 @@ const AppMemoryRoute = AppMemoryRouteImport.update({
 const AppTasksRoute = AppTasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppUsageRoute = AppUsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
   getParentRoute: () => AppRoute,
 } as any)
 const ConsoleIndexRoute = ConsoleIndexRouteImport.update({
@@ -95,6 +102,11 @@ const ConsoleSkillsRoute = ConsoleSkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => ConsoleRoute,
 } as any)
+const ConsoleUsageRoute = ConsoleUsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
+  getParentRoute: () => ConsoleRoute,
+} as any)
 const ConsoleUsersRoute = ConsoleUsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -111,6 +123,7 @@ export interface FileRoutesByFullPath {
   '/console': typeof ConsoleRouteWithChildren
   '/memory': typeof AppMemoryRoute
   '/tasks': typeof AppTasksRoute
+  '/usage': typeof AppUsageRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
   '/console/mcp': typeof ConsoleMcpRoute
@@ -119,6 +132,7 @@ export interface FileRoutesByFullPath {
   '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
   '/console/skills': typeof ConsoleSkillsRoute
+  '/console/usage': typeof ConsoleUsageRoute
   '/console/users': typeof ConsoleUsersRoute
   '/console/': typeof ConsoleIndexRoute
   '/c/$conversationId': typeof AppCConversationIdRoute
@@ -126,6 +140,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/memory': typeof AppMemoryRoute
   '/tasks': typeof AppTasksRoute
+  '/usage': typeof AppUsageRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
   '/console/mcp': typeof ConsoleMcpRoute
@@ -134,6 +149,7 @@ export interface FileRoutesByTo {
   '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
   '/console/skills': typeof ConsoleSkillsRoute
+  '/console/usage': typeof ConsoleUsageRoute
   '/console/users': typeof ConsoleUsersRoute
   '/': typeof AppIndexRoute
   '/console': typeof ConsoleIndexRoute
@@ -145,6 +161,7 @@ export interface FileRoutesById {
   '/console': typeof ConsoleRouteWithChildren
   '/_app/memory': typeof AppMemoryRoute
   '/_app/tasks': typeof AppTasksRoute
+  '/_app/usage': typeof AppUsageRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
   '/console/mcp': typeof ConsoleMcpRoute
@@ -153,6 +170,7 @@ export interface FileRoutesById {
   '/console/sandbox': typeof ConsoleSandboxRoute
   '/console/search': typeof ConsoleSearchRoute
   '/console/skills': typeof ConsoleSkillsRoute
+  '/console/usage': typeof ConsoleUsageRoute
   '/console/users': typeof ConsoleUsersRoute
   '/_app/': typeof AppIndexRoute
   '/console/': typeof ConsoleIndexRoute
@@ -165,6 +183,7 @@ export interface FileRouteTypes {
     | '/console'
     | '/memory'
     | '/tasks'
+    | '/usage'
     | '/console/agents'
     | '/console/limits'
     | '/console/mcp'
@@ -173,6 +192,7 @@ export interface FileRouteTypes {
     | '/console/sandbox'
     | '/console/search'
     | '/console/skills'
+    | '/console/usage'
     | '/console/users'
     | '/console/'
     | '/c/$conversationId'
@@ -180,6 +200,7 @@ export interface FileRouteTypes {
   to:
     | '/memory'
     | '/tasks'
+    | '/usage'
     | '/console/agents'
     | '/console/limits'
     | '/console/mcp'
@@ -188,6 +209,7 @@ export interface FileRouteTypes {
     | '/console/sandbox'
     | '/console/search'
     | '/console/skills'
+    | '/console/usage'
     | '/console/users'
     | '/'
     | '/console'
@@ -198,6 +220,7 @@ export interface FileRouteTypes {
     | '/console'
     | '/_app/memory'
     | '/_app/tasks'
+    | '/_app/usage'
     | '/console/agents'
     | '/console/limits'
     | '/console/mcp'
@@ -206,6 +229,7 @@ export interface FileRouteTypes {
     | '/console/sandbox'
     | '/console/search'
     | '/console/skills'
+    | '/console/usage'
     | '/console/users'
     | '/_app/'
     | '/console/'
@@ -252,6 +276,13 @@ declare module '@tanstack/react-router' {
       path: '/tasks'
       fullPath: '/tasks'
       preLoaderRoute: typeof AppTasksRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/usage': {
+      id: '/_app/usage'
+      path: '/usage'
+      fullPath: '/usage'
+      preLoaderRoute: typeof AppUsageRouteImport
       parentRoute: typeof AppRoute
     }
     '/console/': {
@@ -317,6 +348,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConsoleSkillsRouteImport
       parentRoute: typeof ConsoleRoute
     }
+    '/console/usage': {
+      id: '/console/usage'
+      path: '/usage'
+      fullPath: '/console/usage'
+      preLoaderRoute: typeof ConsoleUsageRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
     '/console/users': {
       id: '/console/users'
       path: '/users'
@@ -337,6 +375,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppMemoryRoute: typeof AppMemoryRoute
   AppTasksRoute: typeof AppTasksRoute
+  AppUsageRoute: typeof AppUsageRoute
   AppIndexRoute: typeof AppIndexRoute
   AppCConversationIdRoute: typeof AppCConversationIdRoute
 }
@@ -344,6 +383,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppMemoryRoute: AppMemoryRoute,
   AppTasksRoute: AppTasksRoute,
+  AppUsageRoute: AppUsageRoute,
   AppIndexRoute: AppIndexRoute,
   AppCConversationIdRoute: AppCConversationIdRoute,
 }
@@ -359,6 +399,7 @@ interface ConsoleRouteChildren {
   ConsoleSandboxRoute: typeof ConsoleSandboxRoute
   ConsoleSearchRoute: typeof ConsoleSearchRoute
   ConsoleSkillsRoute: typeof ConsoleSkillsRoute
+  ConsoleUsageRoute: typeof ConsoleUsageRoute
   ConsoleUsersRoute: typeof ConsoleUsersRoute
   ConsoleIndexRoute: typeof ConsoleIndexRoute
 }
@@ -372,6 +413,7 @@ const ConsoleRouteChildren: ConsoleRouteChildren = {
   ConsoleSandboxRoute: ConsoleSandboxRoute,
   ConsoleSearchRoute: ConsoleSearchRoute,
   ConsoleSkillsRoute: ConsoleSkillsRoute,
+  ConsoleUsageRoute: ConsoleUsageRoute,
   ConsoleUsersRoute: ConsoleUsersRoute,
   ConsoleIndexRoute: ConsoleIndexRoute,
 }

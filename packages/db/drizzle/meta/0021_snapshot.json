@@ -1,5 +1,5 @@
 {
-  "id": "bcf55f22-aa3d-46c7-aac0-b255b1f91000",
+  "id": "c11e665d-bc18-4f3b-b2ef-da4813602cf6",
   "prevId": "9712adf7-56f1-4576-82d3-95bdcee1d046",
   "version": "7",
   "dialect": "postgresql",
@@ -305,12 +305,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'idle'"
-        },
-        "failure": {
-          "name": "failure",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "job_id": {
           "name": "job_id",
@@ -831,20 +825,6 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true
-        },
-        "spending_limit": {
-          "name": "spending_limit",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{\"mode\":\"unlimited\"}'::jsonb"
-        },
-        "reset_time_zone": {
-          "name": "reset_time_zone",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'UTC'"
         }
       },
       "indexes": {},
@@ -1143,6 +1123,82 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.model_price": {
+      "name": "model_price",
+      "schema": "",
+      "columns": {
+        "provider_id": {
+          "name": "provider_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model_id": {
+          "name": "model_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "input": {
+          "name": "input",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "output": {
+          "name": "output",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cache_read": {
+          "name": "cache_read",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cache_write": {
+          "name": "cache_write",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "model_price_provider_id_provider_id_fk": {
+          "name": "model_price_provider_id_provider_id_fk",
+          "tableFrom": "model_price",
+          "tableTo": "provider",
+          "columnsFrom": [
+            "provider_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "model_price_provider_id_model_id_pk": {
+          "name": "model_price_provider_id_model_id_pk",
+          "columns": [
+            "provider_id",
+            "model_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "model_price_non_negative": {
+          "name": "model_price_non_negative",
+          "value": "\"model_price\".\"input\" >= 0 and \"model_price\".\"output\" >= 0 and \"model_price\".\"cache_read\" >= 0 and \"model_price\".\"cache_write\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.provider": {

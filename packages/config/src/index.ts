@@ -69,6 +69,8 @@ export interface Settings {
 	}[];
 	/** As `provider/id`. */
 	enabledModels: string[];
+	/** An Admin's prices, by `provider/id`, each replacing the Catalog's `cost` as a whole. */
+	modelPrices: Record<string, Model<Api>["cost"]>;
 	/** Agent Definitions as stored, validated by `loadConfig`. */
 	agents: { id: string; definition: unknown }[];
 	/** `apiKey` is undefined when the stored key cannot be decrypted; `baseUrl` null means the official one. */
@@ -236,7 +238,12 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		if (!configured) return [];
 		return p.models
 			.filter((m) => enabled.has(modelRef(m)))
-			.map((m) => ({ ...m, baseUrl: configured.baseUrl || m.baseUrl }));
+			.map((m) => ({
+				...m,
+				baseUrl: configured.baseUrl || m.baseUrl,
+				// pi prices usage.cost with it, so Usage is costed at the price in force
+				cost: settings.modelPrices[modelRef(m)] ?? m.cost,
+			}));
 	});
 	const known = models.map(modelRef);
 
