@@ -125,7 +125,9 @@ export async function pollBackgroundCall(
 			row.mcpServerId,
 		);
 	const signIn =
-		server.auth === "oauth" ? await asUser(row, connections) : undefined;
+		server.auth === "oauth"
+			? await asUser(row, server, connections, fetch)
+			: undefined;
 	if (signIn && "status" in signIn) return end(row, signIn, server.name);
 	const authProvider = signIn;
 	const maxSeconds = cfg.limits.backgroundCallMaxDuration;
@@ -194,7 +196,9 @@ export async function requeueBackgroundCalls() {
  */
 async function asUser(
 	row: Row,
+	server: McpServer,
 	connections: ConnectionStore | undefined,
+	fetch: Fetch | undefined,
 ): Promise<NonNullable<TaskRequestOptions["authProvider"]> | Ending> {
 	const conv = await db.query.conversation.findFirst({
 		columns: { userId: true },
@@ -203,7 +207,10 @@ async function asUser(
 	const provider =
 		connections &&
 		conv &&
-		(await connectionAuth(connections, conv.userId, row.mcpServerId));
+		(await connectionAuth(connections, conv.userId, row.mcpServerId, {
+			server,
+			fetch,
+		}));
 	if (provider) return provider;
 	const kept =
 		connections &&

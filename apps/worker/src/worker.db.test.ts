@@ -25,6 +25,7 @@ import type { AgentDefinition } from "@orqestra/config";
 import type { ConversationEvent } from "@orqestra/conversations";
 import { openToolbox } from "@orqestra/tools";
 import {
+	fakeAuthorizationServer,
 	fakeMcpServer,
 	memoryConnections,
 	memoryOrrery,
@@ -162,10 +163,15 @@ const newSlow = () =>
 	});
 let slow = newSlow();
 /** Search answers with no results; the MCP Server `slow` is the fake one. */
-const fetchFake = (async (input: string | URL, init?: RequestInit) =>
-	new URL(String(input)).hostname === "slow.example.com"
-		? slow.fetch(input, init)
-		: new Response(JSON.stringify({ results: [] }))) as typeof fetch;
+/** When set, `slow` is behind this authorization server, which answers at as.example.com. */
+let as: ReturnType<typeof fakeAuthorizationServer> | undefined;
+const fetchFake = (async (input: string | URL, init?: RequestInit) => {
+	const host = new URL(String(input)).hostname;
+	if (host === "slow.example.com")
+		return as ? as.guard(slow.fetch)(input, init) : slow.fetch(input, init);
+	if (as && host === "as.example.com") return as.fetch(input, init);
+	return new Response(JSON.stringify({ results: [] }));
+}) as typeof fetch;
 const userId = "u1";
 /** The Users' Connections to per-User OAuth MCP Servers, as the worker reads them. */
 const connections = memoryConnections();
@@ -2177,13 +2183,23 @@ describe.skipIf(!url)(
 						const loaded = await config.current();
 						shared = loaded.mcpServers.slow;
 						loaded.mcpServers.slow = { ...shared, auth: "oauth" };
+						// u1 connected through it as the public Client "orqestra"
+						as = fakeAuthorizationServer({ resource: shared.url });
+						as.accessTokens.add("u1-token");
+						as.refreshTokens.set("u1-refresh", "orqestra");
 						connections.connections.clear();
 						await connections.saveConnection(userId, "slow", {
-							tokens: { access_token: "u1-token", token_type: "Bearer" },
+							tokens: {
+								access_token: "u1-token",
+								token_type: "Bearer",
+								refresh_token: "u1-refresh",
+								client_id: "orqestra",
+							},
 							issuer: "https://as.example.com",
 						});
 					});
 					afterEach(async () => {
+						as = undefined;
 						(await config.current()).mcpServers.slow = shared;
 					});
 					/** Starts a Background Call and waits until its server has been polled with the User's token. */
@@ -2217,6 +2233,31 @@ describe.skipIf(!url)(
 						const id = await polledAsUser();
 						const c = connections.connections.get(`${userId} slow`);
 						if (c) c.status = "needs_reconnect";
+						expect(await woken(id, "failed")).toContain("reconnect");
+					});
+
+					it("refreshes its User's token when it expires while polling, and completes as usual", async () => {
+						const id = await polledAsUser();
+						as?.accessTokens.clear();
+						const asked = slow.requests.length;
+						await waitFor(
+							async () => slow.requests.slice(asked),
+							(r) => r.some((q) => q.method === "tasks/get"),
+						);
+						expect(as?.refreshed).toBe(1);
+						finishTask("after the refresh");
+						expect(await woken(id, "completed")).toContain(
+							"after the refresh",
+						);
+						expect(
+							(await connections.connection(userId, "slow"))?.status,
+						).toBe("connected");
+					});
+
+					it("as failed, needing reconnecting, when its User's token expires and cannot be refreshed", async () => {
+						const id = await polledAsUser();
+						as?.accessTokens.clear();
+						as?.refreshTokens.clear();
 						expect(await woken(id, "failed")).toContain("reconnect");
 					});
 				});
