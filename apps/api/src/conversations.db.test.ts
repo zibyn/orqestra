@@ -268,6 +268,7 @@ describe.skipIf(!url)("Conversations through the api", () => {
 			["POST", `/api/conversations/${id}/retry`],
 			["POST", `/api/conversations/${id}/seen`],
 			["POST", `/api/conversations/${id}/memory-undo`, { toolCallId: "t" }],
+			["DELETE", `/api/conversations/${id}/background-calls/t`],
 			["POST", "/api/messages", { conversationId: id, text: "hi" }],
 			["GET", `/api/subagents/${sub}`],
 			["POST", `/api/subagents/${sub}/stop`],

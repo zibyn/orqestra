@@ -799,7 +799,7 @@ function ToolCallView({
 		</TraceLine>
 	);
 	if (!result) return line;
-	return (
+	const view = (
 		<TraceCollapsible>
 			<TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
 			<TraceCollapsibleContent>
@@ -813,6 +813,41 @@ function ToolCallView({
 				</CodeBlock>
 			</TraceCollapsibleContent>
 		</TraceCollapsible>
+	);
+	if (background?.status !== "running") return view;
+	return (
+		<div className="flex items-start gap-2">
+			<div className="min-w-0 flex-1">{view}</div>
+			<CancelBackgroundCall toolCallId={call.id} />
+		</div>
+	);
+}
+
+/** Cancels a Background Call still running, at the User's request; the Agent hears of it with the next message. */
+function CancelBackgroundCall({ toolCallId }: { toolCallId: string }) {
+	const router = useRouter();
+	// the page's top-level Conversation: it finds the call in its Subagents too
+	const { conversationId } = Route.useParams();
+	const [cancelling, cancel] = useBusy();
+	return (
+		<Button
+			variant="ghost"
+			size="sm"
+			disabled={cancelling}
+			onClick={() =>
+				cancel(async () => {
+					await ok(
+						api()
+							.api.conversations({ id: conversationId })
+							["background-calls"]({ toolCallId })
+							.delete(),
+					);
+					await router.invalidate();
+				})
+			}
+		>
+			{m.background_call_cancel()}
+		</Button>
 	);
 }
 

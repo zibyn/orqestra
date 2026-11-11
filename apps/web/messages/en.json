@@ -132,6 +132,7 @@
   "background_call_completed": "Completed",
   "background_call_failed": "Failed",
   "background_call_cancelled": "Cancelled",
+  "background_call_cancel": "Cancel",
   "incognito": "Incognito",
   "incognito_hint": "Memory stays off and this conversation is never recalled. This can't be changed later.",
   "mcp_servers": "MCP Servers",

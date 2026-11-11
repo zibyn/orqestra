@@ -24,10 +24,19 @@ import {
 	subagent,
 	timer,
 } from "@orqestra/db/schema";
-import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
+import {
+	type Fetch,
+	type ObjectStore,
+	orrery as orreryClient,
+} from "@orqestra/tools";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import { alerts } from "./alerts.ts";
+import {
+	type CancelledCall,
+	cancelBackgroundCalls,
+	cancelTasks,
+} from "./background-calls.ts";
 import { MEMORY_CHANGES, undoChange } from "./memories.ts";
 import {
 	AGENT_RUNS_QUEUE,
@@ -150,6 +159,7 @@ export function createConversations({
 	skillFiles,
 	orrery = orreryClient,
 	store,
+	fetch,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
@@ -159,6 +169,8 @@ export function createConversations({
 	orrery?: typeof orreryClient;
 	/** Object storage, where Attachments are kept; tests pass `memoryStore()`. */
 	store: ObjectStore;
+	/** The `fetch` Background Calls are cancelled with; tests stand in for the MCP Servers. */
+	fetch?: Fetch;
 }) {
 	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
 	async function expandSkill(
@@ -632,6 +644,20 @@ export function createConversations({
 						"id",
 						"nothing_to_retry",
 					);
+				// the Background Calls it made go with it, cancelled once it is gone
+				const calls: CancelledCall[] = await tx
+					.select({
+						mcpServerId: backgroundCall.mcpServerId,
+						reference: backgroundCall.reference,
+					})
+					.from(backgroundCall)
+					.where(
+						and(
+							eq(backgroundCall.conversationId, id),
+							eq(backgroundCall.status, "running"),
+							sql`${backgroundCall.messageId} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
+						),
+					);
 				// the files it attached go with it; the User's message, with its uploads, stays
 				const attached = await tx.execute<{ key: string }>(
 					sql`delete from ${attachment} where ${attachment.conversationId} = ${id} and ${attachment.messageId} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user') returning ${attachment.key}`,
@@ -640,25 +666,30 @@ export function createConversations({
 				await tx.execute(
 					sql`delete from ${message} where ${message.conversationId} = ${id} and ${message.id} > (select max(id) from ${message} where ${message.conversationId} = ${id} and ${message.message}->>'role' = 'user')`,
 				);
-				// with the Subagents those started in turn
+				// with the Subagents those started in turn, and their Background Calls
+				const dropped = sql`with recursive dropped as (
+							select id from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id})
+							union all
+							select c.id from conversation c join dropped on c.parent_id = dropped.id
+						)`;
+				const theirs = await tx.execute<CancelledCall>(
+					sql`${dropped} select mcp_server_id as "mcpServerId", reference from ${backgroundCall} where status = 'running' and conversation_id in (select id from dropped)`,
+				);
 				const subagents = await tx.execute<{
 					id: string;
 					sandboxId: string | null;
 				}>(
-					sql`with recursive dropped as (
-							select id from ${conversation} where ${conversation.parentId} = ${id} and ${conversation.createdAt} >= (select max(created_at) from ${message} where ${message.conversationId} = ${id})
-							union all
-							select c.id from conversation c join dropped on c.parent_id = dropped.id
-						)
-						delete from ${conversation} where ${conversation.id} in (select id from dropped) returning id, sandbox_id as "sandboxId"`,
+					sql`${dropped} delete from ${conversation} where ${conversation.id} in (select id from dropped) returning id, sandbox_id as "sandboxId"`,
 				);
 				return {
 					subagents: subagents.rows,
 					keys: attached.rows.map((a) => a.key),
+					calls: [...calls, ...theirs.rows],
 				};
 			});
 			// their Runs stop; with their Conversation gone they save nothing more
 			await requestStop(dropped.subagents.map((d) => d.id));
+			await cancelTasks(config, dropped.calls, fetch);
 			await deleteSandboxes(dropped.subagents.map((d) => d.sandboxId));
 			await deleteObjects(store, [
 				...dropped.keys,
@@ -670,13 +701,14 @@ export function createConversations({
 
 		/**
 		 * Drops this Conversation's Run while it is still queued, or else asks whichever worker runs it to abort it.
-		 * Then its Subagents stop too, without waking it: after the Run, so it starts none past this. Its Timer is cancelled.
+		 * Then its Subagents stop too, without waking it: after the Run, so it starts none past this. Its Timer and its Background Calls are cancelled.
 		 * False when the Conversation is not the user's.
 		 */
 		async stop(userId: string, id: string) {
 			const conv = await owned(userId, id);
 			if (!conv) return false;
 			await cancelTimer(id);
+			await cancelBackgroundCalls(config, id, "stop", fetch);
 			const job =
 				conv.status === "running" && conv.jobId
 					? await runQueue(AGENT_RUNS_QUEUE).getJob(conv.jobId)
@@ -715,6 +747,17 @@ export function createConversations({
 			return true;
 		},
 
+		/**
+		 * Cancels the Background Call of the Tool call `toolCallId` in the user's Conversation or one of its Subagents, at the User's request.
+		 * False when the Conversation is not the user's, or the call has ended.
+		 */
+		async cancelBackgroundCall(userId: string, id: string, toolCallId: string) {
+			if (!(await owned(userId, id))) return false;
+			return (
+				(await cancelBackgroundCalls(config, id, { toolCallId }, fetch)) > 0
+			);
+		},
+
 		/** The User opened the Conversation: it is no longer Unread. False when it is not the user's. */
 		async seen(userId: string, id: string) {
 			const seen = await db
@@ -744,11 +787,28 @@ export function createConversations({
 				.where(eq(conversation.rootId, id));
 			// its Run and its Subagents' stop first, then they go; a Run that outlives its Conversation saves nothing more
 			await requestStop(tree.map((c) => c.id));
+			// their Background Calls go with them, unannounced, and are cancelled once they are gone
+			const calls: CancelledCall[] = await db
+				.select({
+					mcpServerId: backgroundCall.mcpServerId,
+					reference: backgroundCall.reference,
+				})
+				.from(backgroundCall)
+				.where(
+					and(
+						eq(backgroundCall.status, "running"),
+						inArray(
+							backgroundCall.conversationId,
+							tree.map((c) => c.id),
+						),
+					),
+				);
 			// its Subagents' rows too, so the Sandbox ids are those last stored: a Run claims one under the row's lock
 			const deleted = await db
 				.delete(conversation)
 				.where(eq(conversation.rootId, id))
 				.returning({ sandboxId: conversation.sandboxId });
+			await cancelTasks(config, calls, fetch);
 			await deleteSandboxes(deleted.map((d) => d.sandboxId));
 			// its Attachments, its Subagents' too, are kept under its id
 			if (deleted.length) await deleteObjects(store, [`${id}/`]);

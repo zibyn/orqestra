@@ -116,6 +116,21 @@ export const conversationRoutes = (
 			},
 			{ params: idParams },
 		)
+		/** Cancels the Background Call of one of the Agent's Tool calls in the Conversation, a Subagent's included. */
+		.delete(
+			"/conversations/:id/background-calls/:toolCallId",
+			async ({ user, params, status }) => {
+				if (
+					!(await conversations.cancelBackgroundCall(
+						user.id,
+						params.id,
+						params.toolCallId,
+					))
+				)
+					return status(404, notFound);
+			},
+			{ params: idParams.extend({ toolCallId: z.string().min(1) }) },
+		)
 		/** The User opened the Conversation: it is no longer Unread. */
 		.post(
 			"/conversations/:id/seen",

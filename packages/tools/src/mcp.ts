@@ -320,6 +320,25 @@ export async function pollMcpTask(
 	}
 }
 
+/** Asks a handed-off task's MCP Server, as configured now, once to cancel it (one `tasks/cancel`). Throws when the server cannot be asked. */
+export async function cancelMcpTask(
+	server: Pick<McpServer, "url" | "headers">,
+	reference: SerializedTaskReference,
+	{ fetch, timeoutMs }: { fetch?: Fetch; timeoutMs: number },
+) {
+	const signal = AbortSignal.timeout(timeoutMs * 2);
+	const connection = await connectMcpServer(
+		server.url,
+		{ headers: server.headers },
+		{ signal, timeoutMs, fetch },
+	);
+	try {
+		await connection.session.task(reference.taskId).cancel(signal);
+	} finally {
+		await connection.close();
+	}
+}
+
 /**
  * The raw JSON-RPC path ext-tasks needs for 2026-07-28 task traffic, which the SDK client's codecs refuse:
  * a second transport to the same server, with the same identity.

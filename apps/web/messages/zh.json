@@ -131,6 +131,7 @@
   "background_call_completed": "已完成",
   "background_call_failed": "失败",
   "background_call_cancelled": "已取消",
+  "background_call_cancel": "取消",
   "incognito": "无痕对话",
   "incognito_hint": "不读写记忆，也不会被回忆搜到；开始后不能更改。",
   "mcp_servers": "MCP Server",

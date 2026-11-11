@@ -1,14 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type { OrqestraConfig } from "@orqestra/config";
 import { db } from "@orqestra/db";
-import { backgroundCall, inbox, message } from "@orqestra/db/schema";
+import {
+	backgroundCall,
+	conversation,
+	inbox,
+	message,
+} from "@orqestra/db/schema";
 import {
 	type BackgroundCallStart,
+	cancelMcpTask,
 	type Fetch,
 	type McpTaskState,
 	pollMcpTask,
 } from "@orqestra/tools";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
 	ensureRun,
 	lastModel,
@@ -195,4 +201,100 @@ async function end(row: Row, state: Ending, server: string) {
 	const rootId = await rootOf(row.conversationId);
 	if (rootId) await saved(rootId);
 	await ensureRun(row.conversationId);
+}
+
+/** A Background Call to cancel with its MCP Server. */
+export type CancelledCall = Pick<Row, "mcpServerId" | "reference">;
+
+/**
+ * Asks each call's MCP Server, as configured now, once to cancel its task, without waiting for that:
+ * one disabled, deleted or unreachable is given up on.
+ */
+export async function cancelTasks(
+	config: () => Promise<OrqestraConfig>,
+	calls: CancelledCall[],
+	fetch?: Fetch,
+) {
+	if (!calls.length) return;
+	const servers = (await config()).mcpServers;
+	for (const call of calls) {
+		const server = servers[call.mcpServerId];
+		if (server)
+			void cancelMcpTask(
+				server,
+				call.reference as BackgroundCallStart["reference"],
+				{ fetch, timeoutMs: POLL_TIMEOUT_MS },
+			).catch((error) =>
+				console.error("could not cancel a Background Call's task", error),
+			);
+	}
+}
+
+/**
+ * Under the root's lock: stops tracking running Background Calls as cancelled, each with a Notification that wakes nobody
+ * and goes with the next input, then cancels their tasks. By the User: the call `toolCallId` in the tree of the top-level
+ * Conversation `conversationId`; by Stop: all of the Conversation `conversationId`'s. Returns how many it cancelled.
+ */
+export async function cancelBackgroundCalls(
+	config: () => Promise<OrqestraConfig>,
+	conversationId: string,
+	by: { toolCallId: string } | "stop",
+	fetch?: Fetch,
+) {
+	const cfg = await config();
+	const cancelled = await db.transaction(async (tx) => {
+		await lockRoot(tx, conversationId);
+		const rows = await tx
+			.update(backgroundCall)
+			.set({ status: "cancelled" })
+			.where(
+				and(
+					eq(backgroundCall.status, "running"),
+					by === "stop"
+						? eq(backgroundCall.conversationId, conversationId)
+						: and(
+								eq(backgroundCall.toolCallId, by.toolCallId),
+								inArray(
+									backgroundCall.conversationId,
+									tx
+										.select({ id: conversation.id })
+										.from(conversation)
+										.where(eq(conversation.rootId, conversationId)),
+								),
+							),
+				),
+			)
+			.returning();
+		for (const row of rows) {
+			// the Notification is answered on the Model the Conversation last replied with
+			const last = await lastModel(tx, row.conversationId);
+			await tx.insert(inbox).values({
+				conversationId: row.conversationId,
+				message: {
+					role: "user",
+					content: notificationFrame(
+						{
+							server: cfg.mcpServers[row.mcpServerId]?.name ?? row.mcpServerId,
+							tool: row.toolName,
+							status: "cancelled",
+						},
+						by === "stop"
+							? "The call was cancelled as the User stopped the Conversation: no result will come."
+							: "The User cancelled the call: no result will come.",
+					),
+					timestamp: Date.now(),
+				},
+				model: last?.model ?? "",
+				thinkingLevel: last?.thinkingLevel ?? "off",
+				backgroundCallId: row.id,
+				wake: false,
+			});
+		}
+		return rows;
+	});
+	if (!cancelled.length) return 0;
+	const rootId = await rootOf(conversationId);
+	if (rootId) await saved(rootId);
+	await cancelTasks(async () => cfg, cancelled, fetch);
+	return cancelled.length;
 }

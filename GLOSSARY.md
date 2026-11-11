@@ -161,7 +161,7 @@ One input, a user message, a Notification or a Timer's note, and the Agent's rep
 _Avoid_: Exchange, round
 
 **Run**:
-The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time; inputs that arrive meanwhile are delivered between its steps, and it ends only once none are left. Each Subagent runs in Runs of its own, and the User stopping a Conversation stops its Subagents too and cancels its Timer.
+The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time; inputs that arrive meanwhile are delivered between its steps, and it ends only once none are left. Each Subagent runs in Runs of its own, and the User stopping a Conversation stops its Subagents too and cancels its Timer and its Background Calls; a Run that fails cancels no Background Call.
 _Avoid_: Job, task, generation
 
 **Unattended Run**:

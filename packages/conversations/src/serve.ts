@@ -29,6 +29,7 @@ import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { alertRun } from "./alerts.ts";
 import {
 	BACKGROUND_CALLS_QUEUE,
+	cancelBackgroundCalls,
 	pollBackgroundCall,
 	requeueBackgroundCalls,
 	startBackgroundCall,
@@ -256,10 +257,14 @@ async function stopped(
 	conv: { id: string; parentId: string | null },
 	result: string,
 	signal: AbortSignal,
+	config: () => Promise<OrqestraConfig>,
+	fetch?: Fetch,
 ) {
 	await stopSubagents(conv.id);
 	// out of time is no stop of the User's: the parent gets what it has, the User an Alert
 	const timedOut = signal.reason instanceof RunTimedOut;
+	// one handed off while the stop was on its way: Stop cancels it too
+	if (!timedOut) await cancelBackgroundCalls(config, conv.id, "stop", fetch);
 	if (conv.parentId)
 		return endSubagent(conv.id, {
 			outcome: timedOut ? "partial" : "stopped",
@@ -302,6 +307,7 @@ async function execute(
 	conversationId: string,
 	jobId: string | undefined,
 	handler: RunHandler,
+	fetch?: Fetch,
 ) {
 	// listening for a Stop before reading the row, which holds one sent before this listened
 	const stop = new AbortController();
@@ -355,14 +361,16 @@ async function execute(
 			() => {
 				over = true;
 			},
+			fetch,
 		);
 		await handler(run, cfg);
 		if (!over && !stop.signal.aborted)
 			throw new Error("The Run ended without finishing");
-		if (!over) await stopped(conv, "", stop.signal);
+		if (!over) await stopped(conv, "", stop.signal, config, fetch);
 	} catch (error) {
 		// stopped before the reply was saved (while compacting, say): nothing to save
-		if (stop.signal.aborted && !over) return stopped(conv, "", stop.signal);
+		if (stop.signal.aborted && !over)
+			return stopped(conv, "", stop.signal, config, fetch);
 		// the failed reply's live copy goes
 		await emit({ type: "end", subagent: sub });
 		throw error;
@@ -385,6 +393,7 @@ async function open(
 	signal: AbortSignal,
 	emit: (event: ConversationEvent) => Promise<unknown>,
 	end: () => void,
+	fetch?: Fetch,
 ): Promise<RunHandle> {
 	const conversationId = conv.id;
 	const sub = conv.parentId ? conversationId : undefined;
@@ -500,7 +509,13 @@ async function open(
 		async finish(outcome, { question = false } = {}) {
 			if (signal.aborted) {
 				end();
-				await stopped(conv, outcome?.result ?? "", signal);
+				await stopped(
+					conv,
+					outcome?.result ?? "",
+					signal,
+					async () => cfg,
+					fetch,
+				);
 				return [];
 			}
 			// an Unattended Run cut off at its step cap ends partial
@@ -756,7 +771,8 @@ export async function serveRuns(
 	).map(([queue, concurrency]) => {
 		const worker = new Worker(
 			queue,
-			(job) => execute(config, store, job.data.conversationId, job.id, handler),
+			(job) =>
+				execute(config, store, job.data.conversationId, job.id, handler, fetch),
 			{
 				concurrency,
 				// bullmq tables live in their own "bullmq" schema; migrate is advisory-locked across processes

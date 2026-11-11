@@ -46,6 +46,8 @@ const conversations = createConversations({
 	store,
 	config: config.current,
 	skillFiles,
+	// the api cancels Background Calls with the fake MCP Server too
+	fetch: (input, init) => fetchFake(input, init),
 });
 const faux = fauxProvider({
 	provider: "faux",
@@ -1142,6 +1144,158 @@ describe.skipIf(!url)(
 						notifications(v).length === 1,
 				);
 				expect(JSON.stringify(answered)).toContain("while asking");
+			});
+
+			const cancels = () =>
+				slow.requests.filter((r) => r.method === "tasks/cancel");
+			/** Sends "crunch it" and waits for the Run that put the call in the background to end. */
+			const crunched = async () => {
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "crunch it",
+				});
+				const ran = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && v.messages.length === 4,
+				);
+				return { id, toolCallId: ran?.backgroundCalls[0].toolCallId ?? "" };
+			};
+
+			it("cancels a call at the User's request without waking the Agent, which learns of it with the next message", async () => {
+				let next: unknown;
+				script({
+					parent: [
+						crunch(),
+						fauxAssistantMessage("Crunching"),
+						(context) => {
+							next = context.messages;
+							return fauxAssistantMessage("Noted");
+						},
+					],
+				});
+				const { id, toolCallId } = await crunched();
+				expect(
+					await conversations.cancelBackgroundCall("u2", id, toolCallId),
+				).toBe(false);
+				expect(
+					await conversations.cancelBackgroundCall(userId, id, toolCallId),
+				).toBe(true);
+				await waitFor(
+					async () => cancels(),
+					(c) => c.length === 1,
+				);
+				const view = await conversations.get(userId, id);
+				expect(view?.backgroundCalls[0].status).toBe("cancelled");
+				// ended: nothing left to cancel
+				expect(
+					await conversations.cancelBackgroundCall(userId, id, toolCallId),
+				).toBe(false);
+				await new Promise((r) => setTimeout(r, 300));
+				const still = await conversations.get(userId, id);
+				expect(still?.status).toBe("idle");
+				// the Notification, waiting in the inbox
+				expect(still?.messages.length).toBe(5);
+
+				await conversations.send(userId, { conversationId: id, text: "and?" });
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant" &&
+						v.messages.length === 7,
+				);
+				expect(JSON.stringify(next)).toContain("The User cancelled the call");
+			});
+
+			it("cancels the calls of a stopped Conversation without waking it", async () => {
+				script({
+					parent: [crunch(), fauxAssistantMessage("Crunching")],
+				});
+				const { id } = await crunched();
+				await conversations.stop(userId, id);
+				await waitFor(
+					async () => cancels(),
+					(c) => c.length === 1,
+				);
+				const view = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.backgroundCalls[0].status === "cancelled",
+				);
+				await new Promise((r) => setTimeout(r, 300));
+				const still = await conversations.get(userId, id);
+				expect(still?.status).toBe("idle");
+				expect(still?.messages.length).toBe(view?.messages.length);
+			});
+
+			it("cancels a call the retried reply made", async () => {
+				script({
+					parent: [
+						fauxAssistantMessage([
+							fauxToolCall("slow__crunch", {}),
+							fauxToolCall("ask_user", { question: "Which one?" }),
+						]),
+						fauxAssistantMessage("Again"),
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "crunch it",
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && !!v.awaitingReply,
+				);
+				await conversations.retry(userId, id);
+				await waitFor(
+					async () => cancels(),
+					(c) => c.length === 1,
+				);
+				const view = await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle",
+				);
+				expect(view?.backgroundCalls).toEqual([]);
+			});
+
+			it("cancels the calls of a deleted Conversation", async () => {
+				script({
+					parent: [crunch(), fauxAssistantMessage("Crunching")],
+				});
+				const { id } = await crunched();
+				await conversations.delete(userId, id);
+				await waitFor(
+					async () => cancels(),
+					(c) => c.length === 1,
+				);
+			});
+
+			it("does not cancel the calls of a failed Run: their result still wakes the Conversation", async () => {
+				script({
+					parent: [
+						crunch(),
+						() => {
+							throw new Error("provider down");
+						},
+						fauxAssistantMessage("Got it after all"),
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "crunch it",
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "failed",
+				);
+				finishTask("despite the failure");
+				const view = await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				expect(view?.backgroundCalls[0].status).toBe("completed");
+				expect(cancels()).toEqual([]);
 			});
 
 			it("keeps tracking a call across a worker restart", async () => {
