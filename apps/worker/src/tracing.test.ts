@@ -20,6 +20,16 @@ describe("tracing", () => {
 		await traced.shutdown();
 	});
 
+	it("captures content only for true, SPAN_ONLY and SPAN_AND_EVENT", () => {
+		const capture = (value?: string) =>
+			tracing({ OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT: value })
+				.captureContent;
+		for (const on of ["true", "SPAN_ONLY", "SPAN_AND_EVENT"])
+			expect(capture(on)).toBe(true);
+		for (const off of [undefined, "NO_CONTENT", "EVENT_ONLY", "yes", "flase"])
+			expect(capture(off)).toBe(false);
+	});
+
 	it("exports to either OTLP endpoint", async () => {
 		for (const name of [
 			"OTEL_EXPORTER_OTLP_ENDPOINT",

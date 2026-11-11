@@ -28,6 +28,7 @@ const close = await startAgentWorker(config.current, {
 	providerConcurrency: count("PROVIDER_CONCURRENCY"),
 	store,
 	telemetry: traces.telemetry,
+	captureContent: traces.captureContent,
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {

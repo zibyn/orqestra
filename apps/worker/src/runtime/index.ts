@@ -17,6 +17,7 @@ import {
 	type openToolbox,
 	orrery as orreryClient,
 } from "@orqestra/tools";
+import { inputContent, outputContent } from "../tracing.ts";
 import { prepareContext } from "./compaction.ts";
 import { memoryPrompt, memoryTools, recallTool } from "./memory.ts";
 import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
@@ -52,6 +53,8 @@ export type RuntimeDeps = {
 	store?: ObjectStore;
 	/** Where the Run's spans go; nowhere by default. */
 	telemetry?: TelemetryContext;
+	/** The spans also carry what was said: messages, Memory, Tool arguments and results, error text. */
+	captureContent?: boolean;
 };
 
 /** Whose a span is: on every span of the Run, never a name, an email or a title. */
@@ -83,15 +86,15 @@ const withAttributes = (
 });
 
 /**
- * `tool`, each call a span of its own under `span`: the Tool's name, its call id and whether it failed, never its
- * arguments or result. A thrown error is `_OTHER` (the adapter's default); a result that is an error, MCP's `isError`
- * included, is `tool_error`.
+ * `tool`, each call a span of its own under `span`: the Tool's name, its call id and whether it failed, its
+ * arguments, result and error text only with `captureContent`. A thrown error is `_OTHER` (the adapter's default);
+ * a result that is an error, MCP's `isError` included, is `tool_error`.
  */
 const traced =
-	(span: TelemetrySpan) =>
+	(span: TelemetrySpan, captureContent: boolean) =>
 	(tool: AgentTool & { mcpServerId?: string }): AgentTool => ({
 		...tool,
-		execute: (toolCallId, ...rest) =>
+		execute: (toolCallId, params, ...rest) =>
 			span.startSpan(
 				{
 					name: `execute_tool ${tool.name}`,
@@ -103,7 +106,28 @@ const traced =
 					},
 				},
 				async (toolSpan) => {
-					const result = await tool.execute(toolCallId, ...rest);
+					if (captureContent)
+						toolSpan.setAttributes({
+							"gen_ai.tool.call.arguments": JSON.stringify(params),
+						});
+					const result = await tool
+						.execute(toolCallId, params, ...rest)
+						.catch((error) => {
+							if (captureContent)
+								toolSpan.setStatus({
+									status: "error",
+									error: {
+										name: "_OTHER",
+										message:
+											error instanceof Error ? error.message : String(error),
+									},
+								});
+							throw error;
+						});
+					if (captureContent)
+						toolSpan.setAttributes({
+							"gen_ai.tool.call.result": JSON.stringify(result.content),
+						});
 					if (result.isError)
 						toolSpan.setStatus({
 							status: "error",
@@ -124,7 +148,11 @@ const runPurpose = (run: RunHandle) =>
  */
 export function runAgent(
 	run: RunHandle,
-	{ telemetry = NOOP_TELEMETRY_CONTEXT, ...deps }: RuntimeDeps,
+	{
+		telemetry = NOOP_TELEMETRY_CONTEXT,
+		captureContent = false,
+		...deps
+	}: RuntimeDeps,
 ) {
 	const attributes = runAttributes(run);
 	return telemetry.startSpan(
@@ -141,6 +169,7 @@ export function runAgent(
 			reply(run, {
 				...deps,
 				span,
+				captureContent,
 				// every Model request of the Run is a child of its span, saying what it is for
 				streamSimple: (purpose) => {
 					const streamSimple = deps.streamSimple(purpose);
@@ -148,8 +177,29 @@ export function runAgent(
 						...attributes,
 						"orqestra.purpose": purpose,
 					});
-					return (model, context, options) =>
-						streamSimple(model, context, { ...options, telemetry });
+					return (model, context, options) => {
+						if (!captureContent)
+							return streamSimple(model, context, { ...options, telemetry });
+						// pi records no content: the request span gets its input here and its answer once the stream ends
+						const request = withAttributes(telemetry, inputContent(context));
+						const stream = streamSimple(model, context, {
+							...options,
+							telemetry: {
+								...request,
+								startSpan: (o, callback) =>
+									request.startSpan(o, async (requestSpan) => {
+										const value = await callback(requestSpan);
+										requestSpan.setAttributes({
+											"gen_ai.output.messages": outputContent(
+												await (await stream).result(),
+											),
+										});
+										return value;
+									}),
+							},
+						});
+						return stream;
+					};
 				},
 			}),
 	);
@@ -165,6 +215,7 @@ async function reply(
 		orrery = orreryClient,
 		store,
 		span,
+		captureContent = false,
 	}: Omit<RuntimeDeps, "telemetry"> & { span: TelemetrySpan },
 ) {
 	const { conversationId, turn, signal } = run;
@@ -260,6 +311,7 @@ async function reply(
 							...runAttributes(run),
 							"orqestra.purpose": runPurpose(run),
 						}),
+						captureContent,
 					),
 				),
 				messages,
@@ -380,7 +432,11 @@ async function reply(
 						error instanceof SpendingLimitReached
 							? "spending_limit_reached"
 							: failure,
-					message: "",
+					message: captureContent
+						? error instanceof Error
+							? error.message
+							: String(error)
+						: "",
 				},
 			});
 		}

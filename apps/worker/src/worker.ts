@@ -93,6 +93,7 @@ export function startAgentWorker(
 		orrery,
 		store,
 		telemetry,
+		captureContent,
 		...options
 	}: Parameters<ReturnType<typeof createConversations>["serveRuns"]>[1] & {
 		/** Model requests to one Provider at once, across this worker's Runs. */
@@ -105,6 +106,8 @@ export function startAgentWorker(
 		store: ObjectStore;
 		/** Where Run traces go; nowhere by default. */
 		telemetry?: RuntimeDeps["telemetry"];
+		/** Run traces also carry what was said. */
+		captureContent?: boolean;
 	},
 ) {
 	const limitProviders = providerLimiter(providerConcurrency);
@@ -122,6 +125,7 @@ export function startAgentWorker(
 				orrery,
 				store,
 				telemetry,
+				captureContent,
 			}),
 		options,
 	);

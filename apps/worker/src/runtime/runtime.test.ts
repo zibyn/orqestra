@@ -34,7 +34,7 @@ import {
 	memoryOrrery,
 	memoryStore,
 } from "@orqestra/tools/testing";
-import { otelTelemetry } from "../tracing.ts";
+import { otelTelemetry, tracing } from "../tracing.ts";
 import { type RuntimeDeps, runAgent } from "./index.ts";
 import { MAX_SUBAGENT_STEPS } from "./tools.ts";
 
@@ -1305,13 +1305,13 @@ describe("runAgent with a Document Parser", () => {
 });
 
 describe("runAgent traces", () => {
-	const traced = () => {
+	const traced = (captureContent = false) => {
 		const exporter = new InMemorySpanExporter();
 		const provider = new TracerProvider({
 			spanProcessors: [new SimpleSpanProcessor({ exporter })],
 		});
 		return {
-			telemetry: otelTelemetry(provider.getTracer("test")),
+			telemetry: otelTelemetry(provider.getTracer("test"), captureContent),
 			spans: () => exporter.getFinishedSpans(),
 		};
 	};
@@ -1540,6 +1540,131 @@ describe("runAgent traces", () => {
 		expect(
 			JSON.stringify(t.spans().map((s) => [s.status, s.attributes, s.events])),
 		).not.toContain("what is pi");
+	});
+
+	it("carries the messages, Memory, Tool arguments and results only when content capture is on", async () => {
+		const remembers = {
+			...config,
+			agents: [agent({ id: "remembers", tools: ["search"], memory: true })],
+		};
+		const said =
+			/hello there|Food taste|likes durian|secret words|hidden result|secret reply|You are a test/;
+		for (const [value, on] of [
+			[undefined, false],
+			["NO_CONTENT", false],
+			["EVENT_ONLY", false],
+			["bogus", false],
+			["true", true],
+			["SPAN_ONLY", true],
+			["SPAN_AND_EVENT", true],
+		] as const) {
+			script([
+				fauxAssistantMessage(
+					[
+						fauxToolCall("memory_read", { path: "food/taste" }),
+						fauxToolCall("search", { query: "secret words" }),
+					],
+					{ stopReason: "toolUse" },
+				),
+				fauxAssistantMessage("secret reply"),
+			]);
+			const { captureContent } = tracing({
+				OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT: value,
+			});
+			const t = traced(captureContent);
+			const m = memoryRun({
+				transcript: transcript(user("hello there")),
+				turn: resolveTurn(remembers, "remembers") as Turn,
+				memories: [
+					{
+						path: "food/taste",
+						description: "Food taste",
+						body: "likes durian",
+					},
+				],
+				titled: true,
+			});
+			await runAgent(m.run, {
+				...deps([{ title: "Result page", content: "hidden result" }]),
+				config: remembers,
+				telemetry: t.telemetry,
+				captureContent,
+			});
+
+			const all = JSON.stringify(
+				t.spans().map((s) => [s.status, s.attributes, s.events]),
+			);
+			if (!on) {
+				expect(all).not.toMatch(said);
+				continue;
+			}
+			for (const text of String(said.source).split("|"))
+				expect(all).toContain(text);
+			const [first, last] = named(t.spans(), "chat faux-1");
+			expect(first?.attributes["gen_ai.system_instructions"]).toContain(
+				"You are a test",
+			);
+			expect(first?.attributes["gen_ai.input.messages"]).toContain(
+				"hello there",
+			);
+			expect(first?.attributes["gen_ai.output.messages"]).toContain(
+				"secret words",
+			);
+			expect(last?.attributes["gen_ai.output.messages"]).toContain(
+				"secret reply",
+			);
+			const [search] = named(t.spans(), "execute_tool search");
+			expect(search?.attributes["gen_ai.tool.call.arguments"]).toContain(
+				"secret words",
+			);
+			expect(search?.attributes["gen_ai.tool.call.result"]).toContain(
+				"hidden result",
+			);
+			const [read] = named(t.spans(), "execute_tool memory_read");
+			expect(read?.attributes["gen_ai.tool.call.result"]).toContain(
+				"likes durian",
+			);
+		}
+	});
+
+	it("keeps the error text with content capture on", async () => {
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("search", { query: "x" }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "429 rate limit: you said what is pi?",
+			}),
+		]);
+		const t = traced(true);
+		const m = memoryRun({
+			transcript: transcript(user("what is pi?")),
+			turn: turn(),
+			titled: true,
+		});
+		await expect(
+			runAgent(m.run, {
+				...deps(),
+				openToolbox: ((services, allowed, options) =>
+					openToolbox(services, allowed, {
+						...options,
+						fetch: (async () =>
+							new Response("search is down", {
+								status: 500,
+							})) as unknown as typeof fetch,
+					})) as typeof openToolbox,
+				telemetry: t.telemetry,
+				captureContent: true,
+			}),
+		).rejects.toThrow();
+
+		const [, chat] = named(t.spans(), "chat faux-1");
+		expect(chat?.attributes["error.type"]).toBe("rate_limited");
+		expect(chat?.status.message).toBe("429 rate limit: you said what is pi?");
+		const [search] = named(t.spans(), "execute_tool search");
+		expect(search?.attributes["error.type"]).toBe("_OTHER");
+		expect(search?.status.message).toContain("search is down");
 	});
 
 	it("marks no error on a stopped Run, nor on a partial Unattended one, whose Firing's ids it carries", async () => {
