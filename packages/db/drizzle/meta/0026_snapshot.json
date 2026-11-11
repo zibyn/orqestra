@@ -224,6 +224,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "trace": {
+          "name": "trace",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {

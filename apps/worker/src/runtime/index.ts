@@ -254,9 +254,11 @@ async function reply(
 			background &&
 			(async (call) =>
 				backgrounded(
-					await background.start(call).catch((error) => {
-						throw refusal(error);
-					}),
+					await background
+						.start(call, carriers.get(call.toolCallId))
+						.catch((error) => {
+							throw refusal(error);
+						}),
 				)),
 		files: store && {
 			store,

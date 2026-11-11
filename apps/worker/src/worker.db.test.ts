@@ -1169,6 +1169,44 @@ describe.skipIf(!url)(
 				);
 			});
 
+			it("traces the Run its result wakes as a root linked back to the Tool call that made it", async () => {
+				script({
+					parent: [
+						crunch(),
+						fauxAssistantMessage("Crunching"),
+						fauxAssistantMessage("Done"),
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "crunch it",
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && v.messages.length === 4,
+				);
+				finishTask("42");
+				const [first, woken] = await waitFor(
+					async () =>
+						spans.getFinishedSpans().filter((s) => s.name === "invoke_agent"),
+					(r) => r.length === 2,
+				);
+				const [tool] = spans
+					.getFinishedSpans()
+					.filter((s) => s.name === "execute_tool slow__crunch");
+
+				expect(tool?.parentSpanContext?.spanId).toBe(
+					first?.spanContext().spanId as string,
+				);
+				expect(woken?.parentSpanContext).toBeUndefined();
+				expect(woken?.spanContext().traceId).not.toBe(
+					first?.spanContext().traceId as string,
+				);
+				expect(woken?.links.map((l) => l.context.spanId)).toEqual([
+					tool?.spanContext().spanId as string,
+				]);
+			});
+
 			it("hands the Agent a result's images as an immediate result would", async () => {
 				let woken: unknown;
 				script({

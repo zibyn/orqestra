@@ -314,6 +314,8 @@ export const backgroundCall = pgTable(
 		polledAt: timestamp("polled_at", { withTimezone: true })
 			.defaultNow()
 			.notNull(),
+		// the W3C trace context of the Tool call that made it, which the Run its Notification wakes links to
+		trace: jsonb("trace").$type<Record<string, string>>(),
 	},
 	(table) => [
 		index("background_call_conversationId_idx").on(table.conversationId),

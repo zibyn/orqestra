@@ -201,8 +201,11 @@ export type RunHandle = {
 	};
 	/** The Run's Background Calls: Tool calls its MCP Servers put in the background, tracked past the Run until they end. */
 	backgroundCalls?: {
-		/** Starts tracking one; its outcome comes as a Notification. Returns its id. */
-		start(call: BackgroundCallStart): Promise<string>;
+		/**
+		 * Starts tracking one; its outcome comes as a Notification. Returns its id.
+		 * `trace`: the trace context of the Tool call's span, which the Run its Notification wakes links to.
+		 */
+		start(call: BackgroundCallStart, trace?: TraceCarrier): Promise<string>;
 	};
 	/** The Run's Subagents; none for a Subagent at the deepest level Subagents may nest to. */
 	subagents?: {
@@ -640,7 +643,7 @@ async function open(
 					cancel: () => cancelTimer(conversationId),
 				},
 		backgroundCalls: {
-			start: (call) => startBackgroundCall(conversationId, call),
+			start: (call, trace) => startBackgroundCall(conversationId, call, trace),
 		},
 		subagents:
 			conv.depth < cfg.limits.maxSubagentDepth

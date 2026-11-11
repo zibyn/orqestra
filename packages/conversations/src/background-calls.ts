@@ -66,6 +66,7 @@ const schedule = (id: string, jobId: string, delay: number) =>
 export async function startBackgroundCall(
 	conversationId: string,
 	call: BackgroundCallStart,
+	trace?: Record<string, string>,
 ) {
 	const rootId = await rootOf(conversationId);
 	const row = await db.transaction(async (tx) => {
@@ -79,6 +80,7 @@ export async function startBackgroundCall(
 				mcpServerId: call.serverId,
 				toolName: call.toolName,
 				reference: call.reference,
+				trace,
 				jobId: randomUUID(),
 				// the Tool call's message, saved before the Tool runs, or a later one of its Turn
 				messageId: sql`(select max(${message.id}) from ${message} where ${message.conversationId} = ${conversationId})`,
@@ -269,6 +271,7 @@ async function insertNotification(
 		model: last?.model ?? "",
 		thinkingLevel: last?.thinkingLevel ?? "off",
 		backgroundCallId: row.id,
+		trace: row.trace ? { link: row.trace } : undefined,
 		wake,
 	});
 }
