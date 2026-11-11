@@ -1,5 +1,4 @@
-import type { McpFetch } from "@earendil-works/pi-mcp";
-import type { SearchProviderId, ToolService } from "./index.ts";
+import type { Fetch, SearchProviderId, ToolService } from "./index.ts";
 
 // Search and Scrape through the Search Providers' HTTP APIs; only the parameters all of them share are exposed.
 
@@ -71,7 +70,7 @@ const adapters: Record<SearchProviderId, Adapter> = {
 /** Search and Scrape through `service`. */
 export function searchProvider(
 	{ provider, apiKey, baseUrl }: ToolService,
-	fetch: McpFetch,
+	fetch: Fetch,
 ) {
 	const adapter = adapters[provider];
 	const post =

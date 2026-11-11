@@ -2,7 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { inflateRawSync } from "node:zlib";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
-import type { McpFetch } from "@earendil-works/pi-mcp";
+import type { Fetch } from "./index.ts";
 import { isMineruNet } from "./refs.ts";
 import type { ObjectStore } from "./store.ts";
 
@@ -33,7 +33,6 @@ const PAGE_CHARS = 50_000;
 
 // biome-ignore lint/suspicious/noExplicitAny: MinerU's JSON, read field by field
 type Json = any;
-type Fetch = McpFetch;
 
 /** mineru.net's page limit per file: "文件页数不超出 200 页" (https://mineru.net/apiManage/docs). */
 const MINERU_NET_MAX_PAGES = 200;

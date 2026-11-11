@@ -16,7 +16,6 @@
     "@orqestra/tools": "workspace:*"
   },
   "devDependencies": {
-    "@earendil-works/pi-mcp": "1.4.0",
     "@orqestra/db": "workspace:*",
     "@types/bun": "latest",
     "drizzle-orm": "^0.45.4",

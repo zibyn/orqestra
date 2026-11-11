@@ -2,9 +2,8 @@
 // A leaf: knows nothing of how the services are stored or configured.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
-import type { McpClient, McpFetch, McpTransport } from "@earendil-works/pi-mcp";
 import { cut } from "./cut.ts";
-import { mcpTools } from "./mcp.ts";
+import { type McpConnection, mcpTools } from "./mcp.ts";
 import { type DocumentParser, type ParseFiles, parseTool } from "./parse.ts";
 import {
 	mcpServerOf,
@@ -15,6 +14,12 @@ import {
 	toolNames,
 } from "./refs.ts";
 import { searchProvider } from "./search.ts";
+
+/** `fetch` as Orqestra calls it, so a test can stand in for it. */
+export type Fetch = (
+	input: string | URL,
+	init?: RequestInit,
+) => Promise<Response>;
 
 export {
 	type DocumentParser,
@@ -67,7 +72,7 @@ const tool = <T extends TSchema>(t: AgentTool<T>) => t as unknown as AgentTool;
 function builtinTools(
 	services: ToolServices,
 	offered: ToolRef[],
-	fetch: McpFetch,
+	fetch: Fetch,
 	{ files, pollMs }: { files?: ParseFiles; pollMs?: number },
 ): AgentTool[] {
 	const tools: AgentTool[] = [];
@@ -136,8 +141,7 @@ export async function openToolbox(
 	allowed: readonly ToolRef[],
 	options: {
 		signal: AbortSignal;
-		fetch?: McpFetch;
-		mcpTransport?: (id: string, server: McpServer) => McpTransport;
+		fetch?: Fetch;
 		/** How long one MCP request (connecting, listing, a Tool call) may take. */
 		timeoutMs?: number;
 		/** The Run's Attachments, which Parse reads; no Parse without them. */
@@ -146,16 +150,15 @@ export async function openToolbox(
 		pollMs?: number;
 	},
 ): Promise<{ tools: AgentTool[]; close: () => Promise<unknown> }> {
-	const { signal, fetch, mcpTransport, timeoutMs = 60_000, ...parse } = options;
+	const { signal, fetch, timeoutMs = 60_000, ...parse } = options;
 	const available = availableTools(services);
 	const offered = allowed.filter((t) => available.includes(t));
 	const ids = offered.flatMap((t) => mcpServerOf(t) ?? []);
-	const clients: McpClient[] = [];
-	const mcp = await mcpTools(services.mcpServers, ids, clients, {
+	const connections: McpConnection[] = [];
+	const mcp = await mcpTools(services.mcpServers, ids, connections, {
 		signal,
 		timeoutMs,
 		fetch,
-		transport: mcpTransport,
 	});
 	// a name twice makes the Provider refuse the whole request: keep the first
 	const names = new Set<string>();
@@ -175,7 +178,7 @@ export async function openToolbox(
 	});
 	return {
 		tools,
-		close: () => Promise.allSettled(clients.map((c) => c.close())),
+		close: () => Promise.allSettled(connections.map((c) => c.close())),
 	};
 }
 

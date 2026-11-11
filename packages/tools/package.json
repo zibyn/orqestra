@@ -14,9 +14,11 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-mcp": "1.4.0"
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/ext-tasks": "0.2.3"
   },
   "devDependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
     "@types/bun": "latest",
     "@types/node": "^22.10.2",
     "typescript": "^6.0.2",

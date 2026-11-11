@@ -1,4 +1,5 @@
-// An orrery client and object storage kept in memory, for testing what uses Sandboxes and Attachments without an orrery or S3.
+// An orrery client and object storage kept in memory, and a scripted MCP Server, for testing what uses Sandboxes,
+// Attachments and MCP Servers without an orrery, S3 or a real MCP Server.
 import {
 	type Exec,
 	type Frame,
@@ -7,6 +8,8 @@ import {
 	type SandboxState,
 } from "./orrery.ts";
 import type { ObjectStore } from "./store.ts";
+
+export * from "./fake-mcp.ts";
 
 type Ran = {
 	stdout?: string;

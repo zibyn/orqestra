@@ -1,55 +1,16 @@
-import type {
-	CallToolResult,
-	JsonRpcMessage,
-	Tool,
-} from "@earendil-works/pi-mcp";
-import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
+import type { SerializedTaskReference } from "@modelcontextprotocol/ext-tasks/client";
 import { describe, expect, it } from "vitest";
 import { openToolbox, type ToolServices } from "./index.ts";
+import { connectMcpServer } from "./mcp.ts";
+import { type FakeTool, fakeMcpServer, type McpEra } from "./testing.ts";
 
-type Call = (
-	args: Record<string, unknown>,
-) => CallToolResult | Promise<CallToolResult>;
-
-/** A tiny scripted MCP Server: answers initialize, tools/list and tools/call from `tools`. */
-function fakeServer(tools: (Tool & { call?: Call })[]) {
-	const { client, server } = createInMemoryTransportPair();
-	const state = { closed: false, cancelled: 0 };
-	server.onClose(() => {
-		state.closed = true;
-	});
-	const reply = (id: unknown, result: unknown) =>
-		server.send({ jsonrpc: "2.0", id, result } as JsonRpcMessage);
-	server.onMessage(async (message) => {
-		const m = message as {
-			id?: string | number;
-			method?: string;
-			params?: Record<string, unknown>;
-		};
-		if (m.method === "notifications/cancelled") state.cancelled++;
-		if (m.id === undefined || !m.method) return;
-		if (m.method === "initialize")
-			return reply(m.id, {
-				protocolVersion: m.params?.protocolVersion,
-				capabilities: { tools: {} },
-				serverInfo: { name: "fake", version: "1" },
-			});
-		if (m.method === "tools/list")
-			return reply(m.id, {
-				tools: tools.map(({ call: _, ...t }) => t),
-			});
-		if (m.method === "tools/call") {
-			const tool = tools.find((t) => t.name === m.params?.name);
-			const result = await tool?.call?.(
-				(m.params?.arguments ?? {}) as Record<string, unknown>,
-			);
-			// a closed transport cannot send the reply of a call that was given up on
-			return reply(m.id, result).catch(() => {});
-		}
-	});
-	void server.start();
-	return { transport: client, state };
-}
+type Fake = ReturnType<typeof fakeMcpServer>;
+const fakeServer = (tools: FakeTool[], era?: McpEra) =>
+	fakeMcpServer({ tools, era });
+/** One fetch for several fake MCP Servers, each reached at https://{id}.example.com/mcp. */
+const route =
+	(fakes: Record<string, Fake>) => (input: string | URL, init?: RequestInit) =>
+		fakes[new URL(input).hostname.split(".")[0]].fetch(input, init);
 
 const server = (id: string) => ({
 	name: id,
@@ -62,7 +23,7 @@ const config = (...ids: string[]) =>
 		mcpServers: Object.fromEntries(ids.map((id) => [id, server(id)])),
 	}) as ToolServices;
 
-const echo: Tool & { call: Call } = {
+const echo: FakeTool = {
 	name: "echo",
 	inputSchema: { type: "object" },
 	call: ({ text }) => ({ content: [{ type: "text", text: String(text) }] }),
@@ -92,7 +53,7 @@ describe("openToolbox with MCP Servers", () => {
 			["search", "mcp:github", "mcp:wiki", "mcp:gone"],
 			{
 				signal: never,
-				mcpTransport: (id) => fakes[id as keyof typeof fakes].transport,
+				fetch: route(fakes),
 			},
 		);
 		expect(
@@ -135,7 +96,7 @@ describe("openToolbox with MCP Servers", () => {
 		]);
 		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
 			signal: never,
-			mcpTransport: () => fake.transport,
+			fetch: fake.fetch,
 		});
 		expect(tools.map((t) => [t.name, t.label])).toEqual([["s__a_b", "a.b"]]);
 		await close();
@@ -156,7 +117,7 @@ describe("openToolbox with MCP Servers", () => {
 		]);
 		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
 			signal: never,
-			mcpTransport: () => fake.transport,
+			fetch: fake.fetch,
 		});
 		const result = await tools[0].execute("1", {}, never);
 		expect(result.isError).toBe(false);
@@ -183,7 +144,7 @@ describe("openToolbox with MCP Servers", () => {
 		]);
 		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
 			signal: never,
-			mcpTransport: () => fake.transport,
+			fetch: fake.fetch,
 		});
 		const result = await tools[0].execute("1", {}, never);
 		expect(result).toMatchObject({
@@ -195,15 +156,12 @@ describe("openToolbox with MCP Servers", () => {
 
 	it("skips an MCP Server it cannot reach, and the others still work", async () => {
 		const up = fakeServer([echo]);
-		const down = createInMemoryTransportPair().client; // nobody answers on the other end
+		const down = fakeServer([echo]);
+		down.down = true;
 		const { tools, close } = await openToolbox(
 			config("down", "up"),
 			["mcp:down", "mcp:up"],
-			{
-				signal: never,
-				mcpTransport: (id) => (id === "up" ? up.transport : down),
-				timeoutMs: 50,
-			},
+			{ signal: never, fetch: route({ down, up }), timeoutMs: 50 },
 		);
 		expect(tools.map((t) => t.name)).toEqual(["up__echo"]);
 		const result = await tools[0].execute("1", { text: "hi" }, never);
@@ -211,13 +169,52 @@ describe("openToolbox with MCP Servers", () => {
 		await close();
 	});
 
+	it.each<McpEra>([
+		"legacy",
+		"dual",
+		"modern",
+	])("calls the Tools of a %s server", async (era) => {
+		const fake = fakeServer([echo], era);
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			fetch: fake.fetch,
+		});
+		const result = await tools[0].execute("1", { text: "hi" }, never);
+		expect(result).toMatchObject({
+			isError: false,
+			content: [{ type: "text", text: "hi" }],
+		});
+		await close();
+	});
+
+	it("fails a call whose service asks for more input, saying Orqestra does not support that", async () => {
+		const fake = fakeServer(
+			[
+				{
+					name: "ask",
+					inputSchema: { type: "object" },
+					call: () => ({ inputRequired: true }),
+				},
+			],
+			"modern",
+		);
+		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			signal: never,
+			fetch: fake.fetch,
+		});
+		await expect(tools[0].execute("1", {}, never)).rejects.toThrow(
+			"This service asked for more input, which Orqestra does not support.",
+		);
+		await close();
+	});
+
 	it("stops connecting when the Run stops", async () => {
-		const { client, server } = createInMemoryTransportPair();
-		void server.start(); // listening, but never answers
+		const fake = fakeServer([echo]);
+		fake.delayMs = 10_000; // listening, but never answers
 		const stop = new AbortController();
 		const connecting = openToolbox(config("s"), ["mcp:s"], {
 			signal: stop.signal,
-			mcpTransport: () => client,
+			fetch: fake.fetch,
 		});
 		setTimeout(() => stop.abort(new Error("stopped")), 10);
 		const { tools, close } = await connecting;
@@ -235,7 +232,7 @@ describe("openToolbox with MCP Servers", () => {
 		]);
 		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
 			signal: never,
-			mcpTransport: () => fake.transport,
+			fetch: fake.fetch,
 		});
 		const stop = new AbortController();
 		const call = tools[0].execute("1", {}, stop.signal);
@@ -254,22 +251,96 @@ describe("openToolbox with MCP Servers", () => {
 		]);
 		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
 			signal: never,
-			mcpTransport: () => fake.transport,
+			fetch: fake.fetch,
 			timeoutMs: 50,
 		});
 		await expect(tools[0].execute("1", {}, never)).rejects.toThrow(/time/i);
 		await close();
 	});
 
-	it("closes every connection when done", async () => {
-		const a = fakeServer([echo]);
-		const b = fakeServer([echo]);
-		const { close } = await openToolbox(config("a", "b"), ["mcp:a", "mcp:b"], {
-			signal: never,
-			mcpTransport: (id) => (id === "a" ? a : b).transport,
-		});
-		expect(a.state.closed || b.state.closed).toBe(false);
+	it("closes every connection when done, ending calls still under way", async () => {
+		const hang: FakeTool = {
+			name: "hang",
+			inputSchema: { type: "object" },
+			call: () => new Promise(() => {}),
+		};
+		const { tools, close } = await openToolbox(
+			config("a", "b"),
+			["mcp:a", "mcp:b"],
+			{
+				signal: never,
+				fetch: route({ a: fakeServer([hang]), b: fakeServer([hang]) }),
+			},
+		);
+		const calls = tools.map((t) => t.execute("1", {}, never));
 		await close();
-		expect([a.state.closed, b.state.closed]).toEqual([true, true]);
+		for (const call of calls) await expect(call).rejects.toThrow();
+	});
+});
+
+describe("connectMcpServer and the Tasks extension", () => {
+	it("hands a task off, then looks it up once per resume, with the server's headers", async () => {
+		const fake = fakeMcpServer({
+			era: "modern",
+			tools: [
+				{
+					name: "slow",
+					inputSchema: { type: "object" },
+					call: () => ({ task: { status: "working", pollIntervalMs: 10 } }),
+				},
+			],
+		});
+		const connect = () =>
+			connectMcpServer(
+				"https://s.example.com/mcp",
+				{ headers: { Authorization: "Bearer s3cret" } },
+				{ signal: never, timeoutMs: 1000, fetch: fake.fetch },
+			);
+		const gets = () => fake.requests.filter((r) => r.method === "tasks/get");
+
+		const run = await connect();
+		const started = await run.session.callTool("slow", {});
+		if (started.kind !== "task") throw new Error("expected a task");
+		let reference: SerializedTaskReference | undefined;
+		await started.handoff((r) => {
+			reference = r;
+		});
+		await started.result(); // settles once handed off, so closing does not cancel it
+		await run.close();
+		const handedOff = reference;
+		if (!handedOff) throw new Error("expected a reference");
+
+		const poll = async () => {
+			const job = await connect();
+			const resumed = await job.session.resumeTask(handedOff);
+			const first = await resumed.updates()[Symbol.asyncIterator]().next();
+			const outcome =
+				first.value?.type === "task" && first.value.task.status !== "working"
+					? await resumed.result()
+					: undefined;
+			await resumed.detach();
+			await resumed.result();
+			await job.close();
+			return { first: first.value, outcome };
+		};
+		expect((await poll()).first).toMatchObject({
+			type: "task",
+			task: { status: "working", suggestedPollIntervalMs: 10 },
+		});
+		await new Promise((r) => setTimeout(r, 50)); // several poll intervals
+		expect(gets()).toHaveLength(1);
+
+		Object.assign(fake.tasks.get("task-1") ?? {}, {
+			status: "completed",
+			result: { content: [{ type: "text", text: "done" }] },
+		});
+		expect((await poll()).outcome).toMatchObject({
+			status: "completed",
+			result: { content: [{ type: "text", text: "done" }] },
+		});
+		expect(gets()).toHaveLength(2);
+		expect(fake.requests.map((r) => r.method)).not.toContain("tasks/cancel");
+		for (const r of fake.requests)
+			expect(r.headers.get("authorization")).toBe("Bearer s3cret");
 	});
 });

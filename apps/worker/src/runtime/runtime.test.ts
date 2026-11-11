@@ -12,8 +12,6 @@ import {
 	type Message,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import type { JsonRpcMessage } from "@earendil-works/pi-mcp";
-import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import {
 	type AgentDefinition,
 	DEFAULT_LIMITS,
@@ -24,7 +22,11 @@ import { zip } from "@orqestra/config/test-zip";
 import type { Transcript, Turn } from "@orqestra/conversations";
 import { memoryRun } from "@orqestra/conversations/testing";
 import { openToolbox } from "@orqestra/tools";
-import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
+import {
+	fakeMcpServer,
+	memoryOrrery,
+	memoryStore,
+} from "@orqestra/tools/testing";
 import { type RuntimeDeps, runAgent } from "./index.ts";
 import { MAX_SUBAGENT_STEPS } from "./tools.ts";
 
@@ -548,38 +550,15 @@ describe("runAgent", () => {
 
 	it("does not fail the Run when two MCP Tools end up with the same name", async () => {
 		// an MCP Server whose Tools "a.b" and "a_b" both become "s__a_b"; each echoes which one ran
-		const { client, server } = createInMemoryTransportPair();
-		server.onMessage(async (message) => {
-			const m = message as {
-				id?: number;
-				method?: string;
-				params?: { name?: string; protocolVersion?: string };
-			};
-			const result =
-				m.method === "initialize"
-					? {
-							protocolVersion: m.params?.protocolVersion,
-							capabilities: { tools: {} },
-							serverInfo: { name: "s", version: "1" },
-						}
-					: m.method === "tools/list"
-						? {
-								tools: ["a.b", "a_b"].map((name) => ({
-									name,
-									inputSchema: { type: "object" },
-								})),
-							}
-						: m.method === "tools/call"
-							? { content: [{ type: "text", text: `ran ${m.params?.name}` }] }
-							: undefined;
-			if (m.id !== undefined && result)
-				await server.send({
-					jsonrpc: "2.0",
-					id: m.id,
-					result,
-				} as JsonRpcMessage);
+		const fake = fakeMcpServer({
+			tools: ["a.b", "a_b"].map((name) => ({
+				name,
+				inputSchema: { type: "object" as const },
+				call: () => ({
+					content: [{ type: "text" as const, text: `ran ${name}` }],
+				}),
+			})),
 		});
-		void server.start();
 		const mcpConfig = {
 			...config,
 			agents: [agent({ id: "mcp", tools: ["mcp:s"] })],
@@ -614,7 +593,7 @@ describe("runAgent", () => {
 			openToolbox: ((services, allowed, options) =>
 				openToolbox(services, allowed, {
 					...options,
-					mcpTransport: () => client,
+					fetch: fake.fetch,
 				})) as typeof openToolbox,
 		});
 
