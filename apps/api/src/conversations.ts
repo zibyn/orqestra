@@ -75,15 +75,9 @@ export const conversationRoutes = (
 		 */
 		.post(
 			"/messages",
-			async ({ user, body }) => {
-				if ((await spendingLimitStatus(user.id))?.reached)
-					throw new ConversationError(
-						"This month's Spending Limit is used up",
-						"text",
-						"spending_limit_reached",
-					);
-				return { conversationId: await conversations.send(user.id, body) };
-			},
+			async ({ user, body }) => ({
+				conversationId: await conversations.send(user.id, body),
+			}),
 			{
 				body: z.object({
 					conversationId: z.uuid().optional(),

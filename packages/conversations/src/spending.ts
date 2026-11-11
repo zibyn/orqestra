@@ -4,13 +4,31 @@ import { limits, usage, user } from "@orqestra/db/schema";
 import { CronExpressionParser } from "cron-parser";
 import { and, eq, gte, sum } from "drizzle-orm";
 
+export const SPENDING_LIMIT_USED_UP = "This month's Spending Limit is used up";
+
 /** A Model request was not sent: its User has used up this month's Spending Limit. */
 export class SpendingLimitReached extends Error {
 	override name = "SpendingLimitReached";
 	constructor() {
-		super("This month's Spending Limit is used up");
+		super(SPENDING_LIMIT_USED_UP);
 	}
 }
+
+/** What each User spent from `start` on, or only `userId` when given; summed over the (user_id, created_at) index. */
+export const spentSince = (start: Date, userId?: string) =>
+	db
+		.select({
+			userId: usage.userId,
+			spent: sum(usage.cost).mapWith(Number).as("spent"),
+		})
+		.from(usage)
+		.where(
+			and(
+				userId === undefined ? undefined : eq(usage.userId, userId),
+				gte(usage.createdAt, start),
+			),
+		)
+		.groupBy(usage.userId);
 
 /** The calendar month `now` falls in, in `timeZone`: from the 1st at midnight to the next 1st, when the limit resets. */
 export function spendingMonth(timeZone: string, now: Date) {
@@ -51,12 +69,9 @@ export async function spendingLimitStatus(userId: string, now = new Date()) {
 			: own.spendingLimit;
 	if (spendingLimit.mode === "unlimited") return null;
 	const { start, resetsAt } = spendingMonth(resetTimeZone, now);
-	// summed on each request over the (user_id, created_at) index; concurrent requests may overshoot, unlocked
-	const [{ spent }] = await db
-		.select({ spent: sum(usage.cost).mapWith(Number) })
-		.from(usage)
-		.where(and(eq(usage.userId, userId), gte(usage.createdAt, start)));
-	const used = spent ?? 0;
+	// summed on each request; concurrent requests may overshoot, unlocked
+	const [mine] = await spentSince(start, userId);
+	const used = mine?.spent ?? 0;
 	return {
 		spent: used,
 		usd: spendingLimit.usd,

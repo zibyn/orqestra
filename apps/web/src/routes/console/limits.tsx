@@ -13,7 +13,8 @@ import {
 	FieldLabel,
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
-import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
+import { Label } from "#/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "#/components/ui/radio-group";
 import { api, ok } from "#/lib/api";
 import { errorText, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
@@ -156,24 +157,21 @@ function LimitsPage() {
 									<FieldLabel id="limit-spending">
 										{m.limit_spending_limit()}
 									</FieldLabel>
-									<ToggleGroup
+									<RadioGroup
 										aria-labelledby="limit-spending"
-										variant="outline"
-										spacing={0}
-										className="w-full"
-										value={[limited ? "limited" : "unlimited"]}
-										// a pressed mode stays pressed: there is always one
-										onValueChange={([mode]) =>
-											mode && setLimited(mode === "limited")
-										}
+										className="flex flex-wrap gap-4"
+										value={limited ? "limited" : "unlimited"}
+										onValueChange={(mode) => setLimited(mode === "limited")}
 									>
-										<ToggleGroupItem value="unlimited" className="flex-1">
+										<Label className="font-normal">
+											<RadioGroupItem value="unlimited" />
 											{m.limit_spending_unlimited()}
-										</ToggleGroupItem>
-										<ToggleGroupItem value="limited" className="flex-1">
+										</Label>
+										<Label className="font-normal">
+											<RadioGroupItem value="limited" />
 											{m.limit_spending_limited()}
-										</ToggleGroupItem>
-									</ToggleGroup>
+										</Label>
+									</RadioGroup>
 									{limited && (
 										<Input
 											type="number"

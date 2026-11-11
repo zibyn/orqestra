@@ -43,6 +43,7 @@ import {
 } from "./runs.ts";
 import { ensureSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
+import { SPENDING_LIMIT_USED_UP, spendingLimitStatus } from "./spending.ts";
 import { tasksOf } from "./tasks.ts";
 import { cancelTimer } from "./timers.ts";
 import {
@@ -106,6 +107,8 @@ export {
 	TimerLimitReached,
 } from "./timers.ts";
 export { UploadTooLarge } from "./uploads.ts";
+export { summarizeUsage, type UsageQuery } from "./usage.ts";
+export { listUsers, rememberUser, setSpendingLimit } from "./users.ts";
 
 // The only module that reads and writes Conversations, their Inbox, messages, Subagents and compactions.
 // The User's side takes the signed-in user's id everywhere: nobody else, Admins included, can see a Conversation.
@@ -402,7 +405,10 @@ export function createConversations({
 			return { name: stored.name };
 		},
 
-		/** Puts a user message in the inbox (starting a Conversation when there is no id) and has the Agent reply. */
+		/**
+		 * Puts a user message in the inbox (starting a Conversation when there is no id) and has the Agent reply.
+		 * Refused once the User's Spending Limit is used up.
+		 */
 		async send(
 			userId: string,
 			input: {
@@ -433,6 +439,12 @@ export function createConversations({
 					"Conversation not found",
 					"conversationId",
 					"not_found",
+				);
+			if ((await spendingLimitStatus(userId))?.reached)
+				throw new ConversationError(
+					SPENDING_LIMIT_USED_UP,
+					"text",
+					"spending_limit_reached",
 				);
 			// the Agent is fixed once a Conversation has messages
 			const agentId = existing?.agentId ?? input.agentId ?? cfg.defaultAgent.id;

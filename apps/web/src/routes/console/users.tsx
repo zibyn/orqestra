@@ -6,6 +6,8 @@ import { ConsolePage } from "#/components/ConsolePage";
 import { Button } from "#/components/ui/button";
 import { FieldError } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
+import { Label } from "#/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "#/components/ui/radio-group";
 import {
 	Table,
 	TableBody,
@@ -14,7 +16,6 @@ import {
 	TableHeader,
 	TableRow,
 } from "#/components/ui/table";
-import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { api, ok } from "#/lib/api";
 import { errorText, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
@@ -147,24 +148,25 @@ function SpendingLimitEditor({
 				void save();
 			}}
 		>
-			<ToggleGroup
+			<RadioGroup
 				aria-label={m.user_spending_limit()}
-				variant="outline"
-				spacing={0}
-				value={[mode]}
-				// a pressed mode stays pressed: there is always one
-				onValueChange={([v]) => v && setMode(v as typeof mode)}
+				className="flex flex-wrap gap-4"
+				value={mode}
+				onValueChange={(v) => setMode(v as typeof mode)}
 			>
-				<ToggleGroupItem value="default">
+				<Label className="font-normal">
+					<RadioGroupItem value="default" />
 					{m.user_spending_default()}
-				</ToggleGroupItem>
-				<ToggleGroupItem value="unlimited">
+				</Label>
+				<Label className="font-normal">
+					<RadioGroupItem value="unlimited" />
 					{m.user_spending_unlimited()}
-				</ToggleGroupItem>
-				<ToggleGroupItem value="limited">
+				</Label>
+				<Label className="font-normal">
+					<RadioGroupItem value="limited" />
 					{m.user_spending_limited_option()}
-				</ToggleGroupItem>
-			</ToggleGroup>
+				</Label>
+			</RadioGroup>
 			{mode === "limited" && (
 				<Input
 					type="number"

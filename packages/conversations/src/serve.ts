@@ -1,10 +1,4 @@
-import {
-	type Api,
-	calculateCost,
-	type Message,
-	type Model,
-	type Usage,
-} from "@earendil-works/pi-ai";
+import type { Api, Message, Model, Usage } from "@earendil-works/pi-ai";
 import {
 	GENERAL_WORKER,
 	modelRef,
@@ -121,12 +115,6 @@ export type RunHandle = {
 	 * Judged as the Run starts, from its top-level Conversation.
 	 */
 	unattended: boolean;
-	/** Whom the Run's Model requests are for: the top-level Conversation's User, a Firing's being its Scheduled Task's. */
-	userId: string;
-	/** The top-level Conversation; the Conversation itself unless it is a Subagent's. */
-	rootId: string;
-	/** The Scheduled Task whose Firing started the top-level Conversation; null otherwise. */
-	scheduledTaskId: string | null;
 	/** The Agent, Model and thinking level replying; a Subagent without instructions of its own gets the general worker's. */
 	turn: Turn;
 	transcript: Transcript;
@@ -161,7 +149,7 @@ export type RunHandle = {
 	finish(outcome?: Ended, options?: { question?: boolean }): Promise<Message[]>;
 	/**
 	 * Records one Model request of the Run as Usage, for `purpose`, from the usage its Provider reported,
-	 * priced at `model`'s price; nothing when the Provider reported none.
+	 * at the cost the Provider reported; nothing when the Provider reported none.
 	 */
 	recordUsage(
 		purpose: UsagePurpose,
@@ -423,10 +411,6 @@ async function open(
 		conversationId,
 		isSubagent: !!sub,
 		unattended,
-		// the same User throughout the tree
-		userId: conv.userId,
-		rootId: conv.rootId,
-		scheduledTaskId: root.scheduledTaskId,
 		turn,
 		transcript: {
 			messages: rows.map((r) => ({
@@ -541,9 +525,8 @@ async function open(
 				purpose,
 				scheduledTaskId: root.scheduledTaskId,
 				...tokens,
-				// pi's own pricing on the request's Model, as every Provider of pi works out `usage.cost`; copied so the reply is left as it was
-				cost: calculateCost(model, { ...reported, cost: { ...reported.cost } })
-					.total,
+				// as the Provider of pi priced it, at the Model's (perhaps custom) price, with pricing like service tiers that recomputing would lose
+				cost: reported.cost.total,
 			});
 		},
 		spendingLimitReached: async () =>

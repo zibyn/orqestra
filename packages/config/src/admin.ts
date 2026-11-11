@@ -36,6 +36,8 @@ import {
 	mcpToolRef,
 	modelRef,
 	type OrqestraConfig,
+	priceInForce,
+	pricesByModel,
 	type SaveErrors,
 	type SearchProviderId,
 	type SearchToolName,
@@ -242,7 +244,7 @@ const providers = ({ write }: Deps) => ({
 			catalogProviders(),
 			db.select().from(provider).orderBy(provider.createdAt),
 			db.select().from(enabledModel),
-			db.select().from(modelPrice),
+			db.select().from(modelPrice).then(pricesByModel),
 		]);
 		return {
 			catalog: catalog.map((p) => ({
@@ -258,19 +260,16 @@ const providers = ({ write }: Deps) => ({
 				// each with the price in force: the Admin's, else the Catalog's (none when the Catalog dropped the Model)
 				enabledModels: enabled
 					.filter((e) => e.providerId === r.id)
-					.map((e) => {
-						const custom = prices.find(
-							(p) => p.providerId === r.id && p.modelId === e.modelId,
-						);
-						if (custom) {
-							const { providerId, modelId, ...cost } = custom;
-							return { id: e.modelId, cost, source: "custom" as const };
-						}
-						const cost = catalog
-							.find((p) => p.id === r.id)
-							?.models.find((m) => m.id === e.modelId)?.cost;
-						return { id: e.modelId, cost, source: "catalog" as const };
-					}),
+					.map((e) => ({
+						id: e.modelId,
+						...priceInForce(
+							prices,
+							modelRef({ provider: r.id, id: e.modelId }),
+							catalog
+								.find((p) => p.id === r.id)
+								?.models.find((m) => m.id === e.modelId)?.cost,
+						),
+					})),
 			})),
 		};
 	},

@@ -1,5 +1,5 @@
 import { Loader2Icon, type LucideIcon, Trash2Icon } from "lucide-react";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { Button } from "#/components/ui/button";
 import {
 	Sheet,
@@ -163,32 +163,43 @@ export function FormSheet({
 	);
 }
 
-/** The body of a `FormSheet`: scrolling fields, then submit, `extra` actions and cancel pinned at the bottom. */
+/**
+ * The body of a `FormSheet`: scrolling fields, then submit, `extra` actions and cancel pinned at the bottom.
+ * `after` scrolls below the fields outside the form, so forms of its own neither nest in it nor submit it.
+ */
 export function SheetForm({
 	onSubmit,
 	busy,
 	submitLabel,
 	extra,
+	after,
 	children,
 }: {
 	onSubmit: () => void;
 	busy: boolean;
 	submitLabel: string;
 	extra?: ReactNode;
+	after?: ReactNode;
 	children: ReactNode;
 }) {
+	const id = useId();
 	return (
-		<form
-			className="flex min-h-0 flex-1 flex-col"
-			onSubmit={(e: FormEvent) => {
-				e.preventDefault();
-				onSubmit();
-			}}
-		>
+		<div className="flex min-h-0 flex-1 flex-col">
 			{/* a container, so the fields lay out by the sheet's width, not the screen's */}
-			<div className="@container flex-1 overflow-y-auto p-4">{children}</div>
+			<div className="@container flex flex-1 flex-col gap-5 overflow-y-auto p-4">
+				<form
+					id={id}
+					onSubmit={(e: FormEvent) => {
+						e.preventDefault();
+						onSubmit();
+					}}
+				>
+					{children}
+				</form>
+				{after}
+			</div>
 			<SheetFooter className="flex-row flex-wrap border-t">
-				<Button type="submit" disabled={busy}>
+				<Button type="submit" form={id} disabled={busy}>
 					{busy && (
 						<Loader2Icon data-icon="inline-start" className="animate-spin" />
 					)}
@@ -199,6 +210,6 @@ export function SheetForm({
 					{m.cancel()}
 				</SheetClose>
 			</SheetFooter>
-		</form>
+		</div>
 	);
 }

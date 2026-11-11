@@ -7,13 +7,17 @@ import {
 	it,
 } from "bun:test";
 import {
+	type Api,
 	type AssistantMessage,
+	type AssistantMessageEventStream,
+	calculateCost,
 	type FauxResponseStep,
 	fauxAssistantMessage,
 	fauxProvider,
 	fauxText,
 	fauxThinking,
 	fauxToolCall,
+	type Model,
 } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/config";
 import type { ConversationEvent } from "@orqestra/conversations";
@@ -53,6 +57,16 @@ const faux = fauxProvider({
 	],
 	tokensPerSecond: 400,
 });
+/** faux reports every request as free: prices its reply at the request's Model's price, as a real Provider of pi does. */
+function withCost(stream: AssistantMessageEventStream, model: Model<Api>) {
+	const push = stream.push.bind(stream);
+	stream.push = (event) => {
+		if (event.type === "done") calculateCost(model, event.message.usage);
+		if (event.type === "error") calculateCost(model, event.error.usage);
+		push(event);
+	};
+	return stream;
+}
 const fauxAgent: AgentDefinition = {
 	id: "faux",
 	name: "Faux",
@@ -187,6 +201,10 @@ async function patch() {
 	loaded.registry.registerProvider({
 		...faux.provider,
 		baseUrl: faux.models[0].baseUrl,
+		stream: (model, ...rest) =>
+			withCost(faux.provider.stream(model, ...rest), model),
+		streamSimple: (model, ...rest) =>
+			withCost(faux.provider.streamSimple(model, ...rest), model),
 	});
 	// faux-1 is loaded from the database while a test configures faux as a Provider
 	loaded.models.push(
@@ -702,9 +720,16 @@ describe.skipIf(!url)(
 					.onConflictDoUpdate({ target: limits.id, set: saved });
 			};
 
-			it("fails a Run whose User has used up their limit, sending no request, and a retry once it is raised succeeds", async () => {
-				await limitTo(0);
-				faux.setResponses([fauxAssistantMessage("Hello")]);
+			// sending is refused once the limit is used up (see the api's tests), so these use it up during the Run
+			it("fails a Run whose User has used up their limit, sending no further request, and a retry once it is raised succeeds", async () => {
+				await limitTo(1);
+				faux.setResponses([
+					async () => {
+						await limitTo(0);
+						return fauxAssistantMessage(fauxToolCall("missing", {}));
+					},
+					fauxAssistantMessage("Hello"),
+				]);
 				const id = await conversations.send(userId, {
 					agentId: "faux",
 					text: "hi",
@@ -715,7 +740,7 @@ describe.skipIf(!url)(
 				);
 				expect(view?.failure).toBe("spending_limit");
 				expect(faux.getPendingResponseCount()).toBe(1);
-				expect(await usageOf(id)).toEqual([]);
+				expect(await usageOf(id)).toHaveLength(1);
 
 				await limitTo(1);
 				faux.setResponses([
@@ -736,9 +761,17 @@ describe.skipIf(!url)(
 					id: userId,
 					name: "U",
 					lastActiveAt: new Date(),
-					spendingLimit: { mode: "limited", usd: 0 },
+					spendingLimit: { mode: "limited", usd: 1 },
 				});
-				faux.setResponses([fauxAssistantMessage("Hello")]);
+				faux.setResponses([
+					async () => {
+						await db
+							.update(user)
+							.set({ spendingLimit: { mode: "limited", usd: 0 } });
+						return fauxAssistantMessage(fauxToolCall("missing", {}));
+					},
+					fauxAssistantMessage("Hello"),
+				]);
 				const id = await conversations.send(userId, {
 					agentId: "faux",
 					text: "hi",

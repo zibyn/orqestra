@@ -187,6 +187,29 @@ export class ConfigError extends Error {
 export const modelRef = (m: { provider: string; id: string }) =>
 	`${m.provider}/${m.id}`;
 
+/** An Admin's prices as stored, keyed as `Settings.modelPrices`. */
+export const pricesByModel = (
+	rows: ({ providerId: string; modelId: string } & Model<Api>["cost"])[],
+): Settings["modelPrices"] =>
+	Object.fromEntries(
+		rows.map(({ providerId, modelId, ...cost }) => [
+			modelRef({ provider: providerId, id: modelId }),
+			cost,
+		]),
+	);
+
+/** The price a Model `ref` is costed at: the Admin's, replacing the Catalog's `catalog` as a whole, else that. */
+export function priceInForce<C>(
+	prices: Settings["modelPrices"],
+	ref: string,
+	catalog: C,
+) {
+	const custom = prices[ref];
+	return custom
+		? { cost: custom, source: "custom" as const }
+		: { cost: catalog, source: "catalog" as const };
+}
+
 // in-memory stores keep pi from reading or writing ~/.pi; no models.json, so only pi's built-in Catalog.
 // Shared by every load, so a Provider registered on it (tests do) survives reloads
 let runtime: Promise<ModelRegistry> | undefined;
@@ -242,7 +265,7 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 				...m,
 				baseUrl: configured.baseUrl || m.baseUrl,
 				// pi prices usage.cost with it, so Usage is costed at the price in force
-				cost: settings.modelPrices[modelRef(m)] ?? m.cost,
+				cost: priceInForce(settings.modelPrices, modelRef(m), m.cost).cost,
 			}));
 	});
 	const known = models.map(modelRef);

@@ -19,6 +19,7 @@ import {
 	loadConfig,
 	modelRef,
 	type OrqestraConfig,
+	pricesByModel,
 	type SearchProviderId,
 	type Settings,
 	toolName,
@@ -101,12 +102,7 @@ async function loadSettings(): Promise<Settings> {
 		enabledModels: enabled.map((m) =>
 			modelRef({ provider: m.providerId, id: m.modelId }),
 		),
-		modelPrices: Object.fromEntries(
-			prices.map(({ providerId, modelId, ...cost }) => [
-				modelRef({ provider: providerId, id: modelId }),
-				cost,
-			]),
-		),
+		modelPrices: pricesByModel(prices),
 		agents,
 		searchProviders: searchProviders.map((p) => ({
 			id: p.id as SearchProviderId,

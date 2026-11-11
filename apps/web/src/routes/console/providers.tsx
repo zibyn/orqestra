@@ -260,7 +260,8 @@ function ModelPrice({
 }) {
 	const router = useRouter();
 	// the prices being edited, as typed; undefined while not editing
-	const [draft, setDraft] = useState<Record<keyof Cost, string>>();
+	const [draft, setDraft] =
+		useState<Record<(typeof costFields)[number][0], string>>();
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 
@@ -314,75 +315,74 @@ function ModelPrice({
 				)}
 			</div>
 			{draft && (
-				<FieldSet className="w-full gap-2">
-					<FieldDescription>{m.model_price_hint()}</FieldDescription>
-					<div className="grid grid-cols-2 gap-2">
-						{costFields.map(([key, label]) => (
-							<Field key={key}>
-								<FieldLabel htmlFor={`${providerId}/${modelId}/${key}`}>
-									{label()}
-								</FieldLabel>
-								<Input
-									id={`${providerId}/${modelId}/${key}`}
-									type="number"
-									min={0}
-									step="any"
-									required
-									value={draft[key]}
-									onChange={(e) =>
-										setDraft({ ...draft, [key]: e.target.value })
-									}
-								/>
-							</Field>
-						))}
-					</div>
-					<div className="flex justify-end gap-2">
-						{custom && (
+				<form
+					onSubmit={(e) => {
+						e.preventDefault();
+						void put({
+							input: +draft.input,
+							output: +draft.output,
+							cacheRead: +draft.cacheRead,
+							cacheWrite: +draft.cacheWrite,
+						});
+					}}
+				>
+					<FieldSet className="w-full gap-2">
+						<FieldDescription>{m.model_price_hint()}</FieldDescription>
+						<div className="grid grid-cols-2 gap-2">
+							{costFields.map(([key, label]) => (
+								<Field key={key}>
+									<FieldLabel htmlFor={`${providerId}/${modelId}/${key}`}>
+										{label()}
+									</FieldLabel>
+									<Input
+										id={`${providerId}/${modelId}/${key}`}
+										type="number"
+										min={0}
+										step="any"
+										required
+										value={draft[key]}
+										onChange={(e) =>
+											setDraft({ ...draft, [key]: e.target.value })
+										}
+									/>
+								</Field>
+							))}
+						</div>
+						<div className="flex justify-end gap-2">
+							{custom && (
+								<Button
+									type="button"
+									size="sm"
+									variant="outline"
+									disabled={busy}
+									onClick={() => void put(null)}
+								>
+									{m.clear_model_price()}
+								</Button>
+							)}
 							<Button
 								type="button"
 								size="sm"
 								variant="outline"
 								disabled={busy}
-								onClick={() => void put(null)}
+								onClick={() => setDraft(undefined)}
 							>
-								{m.clear_model_price()}
+								{m.cancel()}
 							</Button>
-						)}
-						<Button
-							type="button"
-							size="sm"
-							variant="outline"
-							disabled={busy}
-							onClick={() => setDraft(undefined)}
-						>
-							{m.cancel()}
-						</Button>
-						<Button
-							type="button"
-							size="sm"
-							disabled={
-								busy || Object.values(draft).some((v) => v === "" || +v < 0)
-							}
-							onClick={() =>
-								void put({
-									input: +draft.input,
-									output: +draft.output,
-									cacheRead: +draft.cacheRead,
-									cacheWrite: +draft.cacheWrite,
-								})
-							}
-						>
-							{m.save()}
-						</Button>
-					</div>
-				</FieldSet>
+							{/* the inputs' own min and required keep a bad price from saving */}
+							<Button type="submit" size="sm" disabled={busy}>
+								{m.save()}
+							</Button>
+						</div>
+					</FieldSet>
+				</form>
 			)}
 			<FieldError>{error}</FieldError>
 		</div>
 	);
 }
 
-/** Adds a Provider (pick it from `choices`) or edits `existing`; the API key is write-only. `children` go below the fields. */
+/** Adds a Provider (pick it from `choices`) or edits `existing`; the API key is write-only. `children` go below the fields, outside the form. */
 function ProviderForm({
 	choices,
 	existing,
@@ -443,6 +443,7 @@ function ProviderForm({
 			onSubmit={() => void run("save")}
 			busy={busy === "save"}
 			submitLabel={existing ? m.save() : m.add_provider()}
+			after={children}
 			extra={
 				<Button
 					type="button"
@@ -507,7 +508,6 @@ function ProviderForm({
 					) : (
 						<FieldError>{result.text}</FieldError>
 					))}
-				{children}
 			</FieldGroup>
 		</SheetForm>
 	);
