@@ -3,7 +3,13 @@
 /** Held at Orqestra's API in Polaris by Admins; everyone else who may sign in is a Member. */
 export const ADMIN_ENTITLEMENT = "orqestra:admin";
 
-export type User = { id: string; name: string; admin: boolean };
+export type User = {
+	id: string;
+	name: string;
+	// absent when Polaris sends none
+	email?: string;
+	admin: boolean;
+};
 
 /** The signed-in User from the ID token's claims and the access token's Entitlements. */
 export function toUser(
@@ -22,6 +28,7 @@ export function toUser(
 			text(claims.email) ??
 			text(claims.phone_number) ??
 			claims.sub,
+		email: text(claims.email),
 		admin: entitlements.includes(ADMIN_ENTITLEMENT),
 	};
 }

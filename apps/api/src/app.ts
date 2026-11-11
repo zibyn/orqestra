@@ -16,6 +16,7 @@ import { sandboxProvider } from "./sandbox-provider.ts";
 import { scheduledTaskRoutes } from "./scheduled-tasks.ts";
 import { searchProviders } from "./search-providers.ts";
 import { skills } from "./skills.ts";
+import { users } from "./users.ts";
 
 export type { ConversationEvent } from "@orqestra/conversations";
 export type { User };
@@ -89,6 +90,7 @@ export function createApp({
 				.use(documentParser(user))
 				.use(limits(user))
 				.use(agents(user))
+				.use(users(user))
 				.derive(signedInOnly)
 				.get("/session", ({ user }) => user)
 				// a Conversation's live events as server-sent events, until the client goes; see conversations.subscribe

@@ -4,6 +4,7 @@ import { s3Store } from "@orqestra/tools/s3";
 import { z } from "zod";
 import { createApp } from "./app.ts";
 import { polaris } from "./polaris.ts";
+import { rememberUsers } from "./users.ts";
 
 // Validated at startup rather than on the first request
 const env = z
@@ -59,8 +60,10 @@ await config.current().catch((error) => {
 	process.exit(1);
 });
 
+const { session, auth } = polaris(env.data);
 createApp({
-	...polaris(env.data),
+	session: rememberUsers(session),
+	auth,
 	conversations: createConversations({
 		config: config.current,
 		skillFiles,

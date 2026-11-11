@@ -17,6 +17,7 @@ import {
 	PlugIcon,
 	SearchIcon,
 	SettingsIcon,
+	UsersIcon,
 } from "lucide-react";
 import { NavUser } from "#/components/NavUser";
 import {
@@ -64,7 +65,8 @@ type NavItem = {
 		| "/console/skills"
 		| "/console/sandbox"
 		| "/console/parse"
-		| "/console/limits";
+		| "/console/limits"
+		| "/console/users";
 	label: () => string;
 	icon: LucideIcon;
 };
@@ -95,6 +97,10 @@ const nav: { label: () => string; items: NavItem[] }[] = [
 	{
 		label: m.limits,
 		items: [{ to: "/console/limits", label: m.limits, icon: GaugeIcon }],
+	},
+	{
+		label: m.users,
+		items: [{ to: "/console/users", label: m.users, icon: UsersIcon }],
 	},
 ];
 
