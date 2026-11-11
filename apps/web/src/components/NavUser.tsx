@@ -4,6 +4,7 @@ import {
 	BrainIcon,
 	CalendarClockIcon,
 	ChevronsUpDownIcon,
+	CoinsIcon,
 	LogOutIcon,
 	SettingsIcon,
 } from "lucide-react";
@@ -35,7 +36,7 @@ function signOut() {
 	form.submit();
 }
 
-/** The user menu at the foot of a sidebar: theme, language, this browser's Alerts, Memory, /console for Admins, sign out. */
+/** The user menu at the foot of a sidebar: theme, language, this browser's Alerts, Memory, My Usage, /console for Admins, sign out. */
 export function NavUser({ user }: { user: User }) {
 	return (
 		<SidebarMenu>
@@ -66,6 +67,10 @@ export function NavUser({ user }: { user: User }) {
 						<DropdownMenuItem render={<Link to="/memory" />}>
 							<BrainIcon />
 							{m.memory_page()}
+						</DropdownMenuItem>
+						<DropdownMenuItem render={<Link to="/usage" />}>
+							<CoinsIcon />
+							{m.usage_page()}
 						</DropdownMenuItem>
 						<DropdownMenuItem render={<Link to="/tasks" />}>
 							<CalendarClockIcon />
