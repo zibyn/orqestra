@@ -54,7 +54,12 @@ export {
 	skillFiles,
 	toolServiceInput,
 } from "./admin.ts";
-export { connectionStore, userConnections } from "./connections.ts";
+export {
+	connectionStore,
+	deleteConnection,
+	revokeConnections,
+	userConnections,
+} from "./connections.ts";
 
 /** Everything saved in /console, with API keys decrypted. */
 async function loadSettings(): Promise<Settings> {

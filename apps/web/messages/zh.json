@@ -438,5 +438,12 @@
   "connections_state_invalid": "这次登录已失效或不是你发起的，请重新连接。",
   "connections_issuer_mismatch": "登录结果不是来自这个服务的授权服务器，已忽略。请重新连接。",
   "connections_denied": "登录被取消或拒绝，没有连接。",
-  "connections_failed": "登录没有完成，没有连接。请重试。"
+  "connections_failed": "登录没有完成，没有连接。请重试。",
+  "connections_disconnect": "断开",
+  "connections_disconnect_confirm": "断开 {server}？断开后 Agent 不再拿到这个服务的 Tools。",
+  "mcp_connected_users": "{count} 个 User 已连接",
+  "mcp_connected_user": "User",
+  "mcp_connected_at": "连接时间",
+  "mcp_connection_status": "状态",
+  "mcp_connected_users_hint": "看不到令牌，也不能替 User 断开。"
 }

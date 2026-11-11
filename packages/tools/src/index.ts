@@ -229,6 +229,8 @@ export {
 	type OAuthDiscoveryStep,
 	PENDING_TTL_MS,
 	type PendingAuthorization,
+	REVOKE_TIMEOUT_MS,
+	revokeConnection,
 	type StartConnectionError,
 	type StoredConnection,
 	startConnection,

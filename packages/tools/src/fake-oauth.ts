@@ -3,8 +3,9 @@
 /**
  * `resource`'s origin serves its Protected Resource Metadata naming `issuer` as its authorization server; every other origin is an
  * authorization server whose issuer is that origin, so moving `issuer` moves the server. `cimd` and `registration` say whether it
- * supports Client ID Metadata Documents and dynamic registration. `authorize` plays the User approving an authorization URL.
- * `registered` lists the client_ids it handed out.
+ * supports Client ID Metadata Documents and dynamic registration; `revocation` whether it has a revocation endpoint (RFC 7009) and
+ * whether that fails. `authorize` plays the User approving an authorization URL. `registered` lists the client_ids it handed out,
+ * `revoked` the revocation requests it received.
  */
 export function fakeAuthorizationServer({
 	resource = "https://mcp.example.com/mcp",
@@ -24,6 +25,8 @@ export function fakeAuthorizationServer({
 		cimd: false,
 		registration: true,
 		registered: [] as string[],
+		revocation: "ok" as "ok" | "fails" | false,
+		revoked: [] as { token: string; hint: string | null; clientId: string }[],
 		/** The redirect's query after the User approves `url`: `code`, `state`, and `iss` as RFC 9207 has it. */
 		authorize(url: string) {
 			const q = new URL(url).searchParams;
@@ -68,7 +71,21 @@ export function fakeAuthorizationServer({
 					code_challenge_methods_supported: ["S256"],
 					authorization_response_iss_parameter_supported: true,
 					client_id_metadata_document_supported: as.cimd,
+					...(as.revocation && {
+						revocation_endpoint: `${origin}/revoke`,
+					}),
 				});
+			if (pathname === "/revoke" && as.revocation) {
+				if (as.revocation === "fails")
+					return Response.json({ error: "server_error" }, { status: 503 });
+				const form = new URLSearchParams(String(init?.body));
+				as.revoked.push({
+					token: form.get("token") ?? "",
+					hint: form.get("token_type_hint"),
+					clientId: clientIdOf(form, init),
+				});
+				return new Response(null, { status: 200 });
+			}
 			if (pathname === "/register" && as.registration) {
 				const body = JSON.parse(String(init?.body));
 				const client_id = `${origin}/client-${++n}`;
@@ -78,10 +95,7 @@ export function fakeAuthorizationServer({
 			if (pathname === "/token") {
 				const form = new URLSearchParams(String(init?.body));
 				const issued = codes.get(form.get("code") ?? "");
-				const basic = new Headers(init?.headers).get("authorization");
-				const clientId =
-					form.get("client_id") ??
-					(basic && atob(basic.replace(/^Basic /, "")).split(":")[0]);
+				const clientId = clientIdOf(form, init);
 				const challenge = Buffer.from(
 					await crypto.subtle.digest(
 						"SHA-256",
@@ -91,7 +105,7 @@ export function fakeAuthorizationServer({
 				if (
 					!issued ||
 					issued.challenge !== challenge ||
-					decodeURIComponent(clientId ?? "") !== issued.clientId ||
+					clientId !== issued.clientId ||
 					form.get("redirect_uri") !== issued.redirectUri
 				)
 					return Response.json({ error: "invalid_grant" }, { status: 400 });
@@ -108,4 +122,13 @@ export function fakeAuthorizationServer({
 		},
 	};
 	return as;
+}
+
+/** The client a token or revocation request authenticates as: in the form, or by HTTP Basic. */
+function clientIdOf(form: URLSearchParams, init?: RequestInit) {
+	const basic = new Headers(init?.headers).get("authorization");
+	return decodeURIComponent(
+		form.get("client_id") ??
+			(basic ? atob(basic.replace(/^Basic /, "")).split(":")[0] : ""),
+	);
 }

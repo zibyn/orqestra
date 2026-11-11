@@ -27,6 +27,11 @@ import {
 import { and, desc, eq, max, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
+	clearConnections,
+	connectedUsers,
+	revokeConnections,
+} from "./connections.ts";
+import {
 	agentDefinition,
 	agentId,
 	catalogProviders,
@@ -417,9 +422,23 @@ const searchProviders = ({ current, write }: Deps) => ({
 		),
 });
 
+/** A stored MCP Server's pre-registered Client, its Secret decrypted. */
+const storedClient = (row: typeof mcpServer.$inferSelect) =>
+	row.oauthClientId
+		? {
+				client_id: row.oauthClientId,
+				client_secret: row.oauthClientSecret
+					? decryptSecret(row.oauthClientSecret)
+					: undefined,
+			}
+		: undefined;
+
 const mcpServers = ({ write }: Deps) => ({
 	async list() {
-		const rows = await db.select().from(mcpServer).orderBy(mcpServer.createdAt);
+		const [rows, connected] = await Promise.all([
+			db.select().from(mcpServer).orderBy(mcpServer.createdAt),
+			connectedUsers(),
+		]);
 		return rows.map((r) => ({
 			id: r.id,
 			name: r.name,
@@ -434,13 +453,18 @@ const mcpServers = ({ write }: Deps) => ({
 				name: h.name,
 				readable: secretReadable(h.value),
 			})),
+			// the Admin sees who relies on it, but cannot disconnect them
+			...(r.auth === "oauth" && { connections: connected[r.id] ?? [] }),
 		}));
 	},
 
-	/** Once saved, also the connection test's result; `fetch` makes the test's requests. */
+	/**
+	 * Once saved, also the connection test's result; `fetch` makes the test's requests and revocations. A new auth mode, URL or
+	 * pre-registered Client ends every Connection to it, revoked in the background once committed.
+	 */
 	async save(
 		input: z.infer<typeof mcpServerInput>,
-		{ fetch }: { fetch?: Fetch } = {},
+		{ fetch, orqestraUrl }: { fetch?: Fetch; orqestraUrl?: string } = {},
 	): Promise<{ errors: SaveErrors; test?: McpTestResult }> {
 		if (!mcpServerId.safeParse(input.id).success)
 			return { errors: { id: { code: "id_invalid" } } };
@@ -495,12 +519,25 @@ const mcpServers = ({ write }: Deps) => ({
 				null,
 			headers,
 		};
-		await write((tx) =>
-			tx
+		const oldClient = stored && storedClient(stored);
+		// Connections made for another setup must never reach the new one
+		const reset =
+			stored &&
+			(stored.auth !== input.auth ||
+				stored.url !== input.url ||
+				stored.oauthClientId !== oauthClientId ||
+				(!!oauthClientId &&
+					!!input.oauthClientSecret &&
+					input.oauthClientSecret !== oldClient?.client_secret));
+		const cleared = await write(async (tx) => {
+			await tx
 				.insert(mcpServer)
 				.values({ id: input.id, ...values })
-				.onConflictDoUpdate({ target: mcpServer.id, set: values }),
-		);
+				.onConflictDoUpdate({ target: mcpServer.id, set: values });
+			return reset ? clearConnections(tx, input.id, oldClient) : [];
+		});
+		// shortcut: in the background so the save does not wait on authorization servers; lost if the process exits first
+		if (cleared.length) void revokeConnections(cleared, { fetch, orqestraUrl });
 		// saved either way, so the Admin can fix the URL or headers later
 		return {
 			errors: {},
@@ -526,15 +563,30 @@ const mcpServers = ({ write }: Deps) => ({
 		if (!updated.length) throw new Error("MCP Server not found");
 	},
 
-	/** Also removes it from every Agent Definition. */
-	delete: (id: string) =>
-		write(async (tx) => {
+	/** Also removes it from every Agent Definition, and ends every Connection to it, revoked in the background once committed. */
+	async delete(
+		id: string,
+		{ fetch, orqestraUrl }: { fetch?: Fetch; orqestraUrl?: string } = {},
+	) {
+		const cleared = await write(async (tx) => {
 			const ref = mcpToolRef(id);
+			const [stored] = await tx
+				.select()
+				.from(mcpServer)
+				.where(eq(mcpServer.id, id))
+				.for("update");
+			// their tokens taken before the cascade would delete them
+			const cleared = stored
+				? await clearConnections(tx, id, storedClient(stored))
+				: [];
 			await tx.delete(mcpServer).where(eq(mcpServer.id, id));
 			await tx.execute(
 				sql`update ${agent} set definition = jsonb_set(definition, '{tools}', (definition->'tools') - ${ref}::text) where definition->'tools' @> ${JSON.stringify([ref])}::jsonb`,
 			);
-		}),
+			return cleared;
+		});
+		if (cleared.length) void revokeConnections(cleared, { fetch, orqestraUrl });
+	},
 });
 
 /** A version's files, paths relative to the Skill's folder; for Runs, by the `versionId` of `current().skills`. */

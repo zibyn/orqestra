@@ -7,6 +7,7 @@ import {
 	PlugIcon,
 	PlusIcon,
 	TriangleAlertIcon,
+	UsersIcon,
 	XIcon,
 } from "lucide-react";
 import { useState } from "react";
@@ -38,10 +39,19 @@ import {
 } from "#/components/ui/field";
 import { Input } from "#/components/ui/input";
 import { Switch } from "#/components/ui/switch";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "#/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { api, ok } from "#/lib/api";
 import { errorText, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
+import { getLocale } from "#/paraglide/runtime";
 
 const getMcpServers = () => ok(api().api["mcp-servers"].get());
 const saveMcpServer = (
@@ -169,6 +179,9 @@ function McpServers() {
 							</Alert>
 						)}
 						{tested?.id === s.id && <McpTestOutcome result={tested.result} />}
+						{!!s.connections?.length && (
+							<ConnectedUsers connections={s.connections} />
+						)}
 					</Item>
 				))}
 			</ItemList>
@@ -453,6 +466,59 @@ function McpServerForm({
 }
 
 /** The Tools a just-saved MCP Server offers, or why connecting to it failed. */
+/** 「N 个 User 已连接」: who relies on a per-User OAuth MCP Server; never their tokens, and no disconnecting them. */
+function ConnectedUsers({
+	connections,
+}: {
+	connections: NonNullable<McpServer["connections"]>;
+}) {
+	const [open, setOpen] = useState(false);
+	return (
+		<Collapsible open={open} onOpenChange={setOpen}>
+			<CollapsibleTrigger className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+				<ChevronDownIcon
+					className={`size-4 transition-transform ${open ? "" : "-rotate-90"}`}
+				/>
+				<UsersIcon className="size-4" />
+				{m.mcp_connected_users({ count: connections.length })}
+			</CollapsibleTrigger>
+			<CollapsibleContent className="flex flex-col gap-2 pt-2">
+				<Table>
+					<TableHeader>
+						<TableRow>
+							<TableHead>{m.mcp_connected_user()}</TableHead>
+							<TableHead>{m.mcp_connected_at()}</TableHead>
+							<TableHead>{m.mcp_connection_status()}</TableHead>
+						</TableRow>
+					</TableHeader>
+					<TableBody>
+						{connections.map((c) => (
+							<TableRow key={`${c.name} ${c.connectedAt}`}>
+								<TableCell>{c.name}</TableCell>
+								<TableCell className="text-muted-foreground">
+									{new Date(c.connectedAt).toLocaleString(getLocale())}
+								</TableCell>
+								<TableCell>
+									{c.status === "connected" ? (
+										<Badge variant="outline">{m.connection_connected()}</Badge>
+									) : (
+										<Badge variant="destructive">
+											{m.connection_needs_reconnect()}
+										</Badge>
+									)}
+								</TableCell>
+							</TableRow>
+						))}
+					</TableBody>
+				</Table>
+				<p className="text-xs text-muted-foreground">
+					{m.mcp_connected_users_hint()}
+				</p>
+			</CollapsibleContent>
+		</Collapsible>
+	);
+}
+
 function McpTestOutcome({ result }: { result: McpTestResult }) {
 	if (!result.ok) {
 		const message = result.step
