@@ -37,6 +37,36 @@ export const lockRoot = (tx: Tx, conversationId: string) =>
 		sql`select 1 from ${conversation} where ${conversation.id} = (select ${conversation.rootId} from ${conversation} where ${conversation.id} = ${conversationId}) for update`,
 	);
 
+/** Subagents and Background Calls a tree's Agents may start, or Subagents continue, in all since the User's last message to its root, so Notifications cannot keep them delegating forever. */
+export const MAX_SUBAGENTS_PER_USER_MESSAGE = 16;
+
+/** Starting or continuing these Subagents, or starting a Background Call, would spend more than the budget since the User's last message; `used` were already. */
+export class BudgetExceeded extends Error {
+	override name = "BudgetExceeded";
+	constructor(
+		readonly used: number,
+		readonly max = MAX_SUBAGENTS_PER_USER_MESSAGE,
+	) {
+		super(`${used} of ${max} subagents used since the user's last message`);
+	}
+}
+
+/**
+ * Under the root's lock: spends `more` of the tree's budget of Subagents started or continued once finished and of Background Calls started, since the User's last message.
+ * Throws, spending nothing, when it would run out.
+ */
+export async function spend(tx: Tx, rootId: string, more: number) {
+	const [{ used }] = await tx
+		.update(conversation)
+		.set({
+			subagentsSinceUser: sql`${conversation.subagentsSinceUser} + ${more}`,
+		})
+		.where(eq(conversation.id, rootId))
+		.returning({ used: conversation.subagentsSinceUser });
+	if (used > MAX_SUBAGENTS_PER_USER_MESSAGE)
+		throw new BudgetExceeded(used - more);
+}
+
 /** The root of a Conversation's tree, whose page shows the whole tree; undefined when it is gone. */
 export const rootOf = async (conversationId: string) =>
 	(

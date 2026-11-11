@@ -197,11 +197,11 @@ export const STEP_LIMIT =
 const NOTIFIED =
 	"Each subagent's final answer comes to you by itself as a <task-notification>, once it finishes: do not poll. Until the results you need are in, you may tell the user what you are doing and end your reply.";
 
-/** What the model is told when its Subagent request is refused. */
-function refusal(error: unknown) {
+/** What the model is told when its Subagent request or Background Call is refused. */
+export function refusal(error: unknown) {
 	if (error instanceof BudgetExceeded)
 		return new Error(
-			`Since the user's last message at most ${error.max} subagents may be started or continued, and ${error.used} have been: do the rest of the work yourself.`,
+			`Since the user's last message at most ${error.max} subagents and background calls may be started, or subagents continued, and ${error.used} have been: do the rest of the work yourself.`,
 		);
 	if (
 		error instanceof NoSuchSubagent ||
