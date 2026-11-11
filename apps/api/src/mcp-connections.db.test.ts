@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { config } from "@orqestra/config/live";
+import { config, connectionStore } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { user as userRecord } from "@orqestra/db/schema";
@@ -316,6 +316,22 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 			"off",
 		]);
 		expect((await listed("u1"))[1].disabled).toBe(true);
+	});
+
+	it("reconnects a Connection that needs it, replacing its tokens", async () => {
+		await save({});
+		await callback("u1", as.authorize((await start("u1")).href));
+		const before = await connectionStore.connection("u1", "github");
+		await connectionStore.lockConnection("u1", "github", (_, change) =>
+			change({ status: "needs_reconnect" }),
+		);
+		expect((await listed("u1"))[0].status).toBe("needs_reconnect");
+
+		const back = await callback("u1", as.authorize((await start("u1")).href));
+		expect(back.location).toBe("/connections?connected=github");
+		expect((await listed("u1"))[0].status).toBe("connected");
+		const after = await connectionStore.connection("u1", "github");
+		expect(after?.tokens?.access_token).not.toBe(before?.tokens?.access_token);
 	});
 
 	it("shows each User only their own Connections, and none signed out", async () => {

@@ -248,6 +248,7 @@ export function memoryConnections() {
 		string,
 		Awaited<ReturnType<ConnectionStore["registeredClient"]>>
 	>();
+	const locks = new Map<string, Promise<unknown>>();
 	const store: ConnectionStore = {
 		connection: async (userId, serverId) =>
 			connections.get(`${userId} ${serverId}`),
@@ -258,6 +259,25 @@ export function memoryConnections() {
 				status: "connected",
 				connectedAt: new Date(),
 			});
+		},
+		lockConnection: (userId, serverId, fn) => {
+			const key = `${userId} ${serverId}`;
+			const held = (locks.get(key) ?? Promise.resolve())
+				.catch(() => {})
+				.then(() =>
+					fn(connections.get(key), async (change) => {
+						const c = connections.get(key);
+						if (!c) return;
+						connections.set(
+							key,
+							"tokens" in change
+								? { ...c, tokens: change.tokens, scope: change.scope ?? null }
+								: { ...c, ...change },
+						);
+					}),
+				);
+			locks.set(key, held);
+			return held;
 		},
 		addPending: async (p) => {
 			for (const [state, q] of pending)
@@ -273,6 +293,9 @@ export function memoryConnections() {
 		registeredClient: async (serverId) => clients.get(serverId),
 		saveRegisteredClient: async (serverId, client) => {
 			clients.set(serverId, client);
+		},
+		deleteRegisteredClient: async (serverId) => {
+			clients.delete(serverId);
 		},
 	};
 	return Object.assign(store, { connections });
