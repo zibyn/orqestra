@@ -102,7 +102,19 @@ async function callWithTasks(
 		});
 		// settled before the connection closes, which would otherwise cancel it
 		await execution.result().catch(() => {});
-		return handoff(reference as SerializedTaskReference);
+		const ref = reference as SerializedTaskReference;
+		try {
+			return await handoff(ref);
+		} catch (error) {
+			// refused (the budget is spent): nothing tracks the task, so it must not run on
+			await session
+				.task(ref.taskId)
+				.cancel()
+				.catch((e) =>
+					console.error(`could not cancel MCP task ${ref.taskId}`, e),
+				);
+			throw error;
+		}
 	}
 	const outcome = await execution.result();
 	if (outcome.status === "completed") return toolResult(outcome.result);

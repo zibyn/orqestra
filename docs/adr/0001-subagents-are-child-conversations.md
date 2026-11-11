@@ -28,3 +28,7 @@ Now a Subagent is a **child Conversation** with Runs of its own, the way Claude 
 ## Amendment (2026-11-10): nesting allowed
 
 Subagents may now start Subagents, down to a maximum depth the Admin sets in the console's Limits (default 2, from 1 to 3; 1 is the old behaviour); at the deepest level the Subagent Tools are withdrawn. The budget of starts and continuations and the limit of Subagents running at once are counted across the whole tree, on its root, and only a User message to the root renews the budget. A Subagent that still has Subagents running or queued is itself still running and sends no Notification until they have all ended. A stop, by the User or by `subagent_stop`, stops the whole subtree below the stopped Conversation. Subagents still cannot set Timers. See issue #59.
+
+## Amendment (2026-11-11): Background Calls spend the same budget
+
+A Background Call wakes its Conversation with a Notification just as a Subagent does, so starting one spends the same budget: the same count on the tree's root, the same limit, renewed only by a User message to the root. A call the MCP Server puts in the background once the budget is spent is cancelled at once and fails as a Tool error, worded as for a refused Subagent. See issue #99.

@@ -51,6 +51,7 @@ import {
 	notify,
 	STOP_CHANNEL,
 	SUBAGENT_RUNS_QUEUE,
+	spend,
 	stopSubagents,
 	subagentOf,
 } from "./runs.ts";
@@ -62,19 +63,6 @@ import { storeAttachment, sweepUnsentAttachments } from "./uploads.ts";
 
 /** Tasks one start of Subagents may hand out. */
 export const MAX_SUBAGENT_TASKS = 8;
-/** Subagents a tree's Agents may start or continue in all since the User's last message to its root, so Notifications cannot keep them delegating forever. */
-export const MAX_SUBAGENTS_PER_USER_MESSAGE = 16;
-
-/** Starting or continuing these Subagents would spend more than the budget since the User's last message; `used` were already. */
-export class BudgetExceeded extends Error {
-	override name = "BudgetExceeded";
-	constructor(
-		readonly used: number,
-		readonly max = MAX_SUBAGENTS_PER_USER_MESSAGE,
-	) {
-		super(`${used} of ${max} subagents used since the user's last message`);
-	}
-}
 export class NoSuchSubagent extends Error {
 	override name = "NoSuchSubagent";
 	constructor(readonly number: number) {
@@ -232,22 +220,6 @@ export type ServeOptions = {
 
 /** Runs in this process, by Conversation id, so a stop request can abort them from the start (compaction included). */
 const active = new Map<string, AbortController>();
-
-/**
- * Under the root's lock: spends `more` of the tree's budget of Subagents started, or continued once finished, since the User's last message.
- * Throws, spending nothing, when it would run out.
- */
-async function spend(tx: Tx, rootId: string, more: number) {
-	const [{ used }] = await tx
-		.update(conversation)
-		.set({
-			subagentsSinceUser: sql`${conversation.subagentsSinceUser} + ${more}`,
-		})
-		.where(eq(conversation.id, rootId))
-		.returning({ used: conversation.subagentsSinceUser });
-	if (used > MAX_SUBAGENTS_PER_USER_MESSAGE)
-		throw new BudgetExceeded(used - more);
-}
 
 /**
  * Ends a stopped Run, which stops the Subagents under it too:

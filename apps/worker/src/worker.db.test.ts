@@ -36,7 +36,9 @@ const { asc, eq, sql } = await import("drizzle-orm");
 const { limits, usage, user } = await import("@orqestra/db/schema");
 const { config, skillFiles } = await import("@orqestra/config/live");
 const { DEFAULT_LIMITS } = await import("@orqestra/config");
-const { createConversations } = await import("@orqestra/conversations");
+const { createConversations, MAX_SUBAGENTS_PER_USER_MESSAGE } = await import(
+	"@orqestra/conversations"
+);
 const { startAgentWorker } = await import("./worker.ts");
 const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
@@ -1296,6 +1298,65 @@ describe.skipIf(!url)(
 				);
 				expect(view?.backgroundCalls[0].status).toBe("completed");
 				expect(cancels()).toEqual([]);
+			});
+
+			it(`cancels a call put in the background once the tree's budget of ${MAX_SUBAGENTS_PER_USER_MESSAGE} is spent, until the User writes again`, async () => {
+				let refused: unknown;
+				let renewed: unknown;
+				script({
+					parent: [
+						fauxAssistantMessage(
+							Array.from({ length: MAX_SUBAGENTS_PER_USER_MESSAGE + 1 }, () =>
+								fauxToolCall("slow__crunch", {}),
+							),
+						),
+						(context) => {
+							refused = context.messages;
+							return fauxAssistantMessage("Out of budget");
+						},
+						crunch(),
+						(context) => {
+							renewed = context.messages.at(-1);
+							return fauxAssistantMessage("Crunching again");
+						},
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "mcp",
+					text: "crunch it all",
+				});
+				const spent = await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant",
+				);
+				expect(spent?.backgroundCalls.length).toBe(
+					MAX_SUBAGENTS_PER_USER_MESSAGE,
+				);
+				expect(
+					slow.requests.filter((r) => r.method === "tasks/cancel").length,
+				).toBe(1);
+				expect(JSON.stringify(refused)).toContain(
+					`at most ${MAX_SUBAGENTS_PER_USER_MESSAGE} subagents and background calls`,
+				);
+
+				await conversations.send(userId, {
+					conversationId: id,
+					text: "once more",
+				});
+				const again = await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant" &&
+						v.backgroundCalls.length === MAX_SUBAGENTS_PER_USER_MESSAGE + 1,
+				);
+				expect(again?.backgroundCalls.length).toBe(
+					MAX_SUBAGENTS_PER_USER_MESSAGE + 1,
+				);
+				expect(JSON.stringify(renewed)).toContain("background");
+				expect(JSON.stringify(renewed)).not.toContain("at most");
 			});
 
 			it("keeps tracking a call across a worker restart", async () => {

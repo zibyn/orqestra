@@ -23,6 +23,7 @@ import {
 	rootOf,
 	runQueue,
 	saved,
+	spend,
 } from "./runs.ts";
 
 // A Background Call is its `background_call` row: polled by delayed jobs that carry only its id, one at a time,
@@ -50,14 +51,16 @@ const schedule = (id: string, jobId: string, delay: number) =>
 
 /**
  * Under the root's lock: starts tracking a Tool call of the Conversation's Agent that its MCP Server put in the background,
- * and queues its first poll. Returns its id.
+ * spending one of the tree's budget, and queues its first poll. Returns its id; throws BudgetExceeded, tracking nothing.
  */
 export async function startBackgroundCall(
 	conversationId: string,
 	call: BackgroundCallStart,
 ) {
+	const rootId = await rootOf(conversationId);
 	const row = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
+		if (rootId) await spend(tx, rootId, 1);
 		const [row] = await tx
 			.insert(backgroundCall)
 			.values({
@@ -77,7 +80,6 @@ export async function startBackgroundCall(
 	await schedule(row.id, row.jobId, DEFAULT_POLL_MS).catch((error) =>
 		console.error(`could not queue Background Call ${row.id}'s poll`, error),
 	);
-	const rootId = await rootOf(conversationId);
 	if (rootId) await saved(rootId);
 	return row.id;
 }

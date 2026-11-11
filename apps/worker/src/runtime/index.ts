@@ -20,6 +20,7 @@ import {
 	draftTool,
 	MAX_SUBAGENT_STEPS,
 	questionTool,
+	refusal,
 	relay,
 	STEP_LIMIT,
 	subagentTools,
@@ -71,7 +72,12 @@ export async function runAgent(
 		signal,
 		backgroundCall:
 			background &&
-			(async (call) => backgrounded(await background.start(call))),
+			(async (call) =>
+				backgrounded(
+					await background.start(call).catch((error) => {
+						throw refusal(error);
+					}),
+				)),
 		files: store && {
 			store,
 			attachment: (name) => run.attachment(name),
