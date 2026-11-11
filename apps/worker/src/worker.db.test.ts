@@ -752,6 +752,53 @@ describe.skipIf(!url)(
 				faux.setResponses([]);
 			});
 
+			it("skips a Firing due once the limit is used up, and fails one whose Run uses it up midway", async () => {
+				const fireNow = (name: string) =>
+					conversations.tasks.create(userId, {
+						name,
+						prompt: "Summarize the news",
+						agentId: "faux",
+						model: "faux/faux-1",
+						thinking: "off",
+						schedule: {
+							kind: "once",
+							at: new Date(Date.now() + 300).toISOString(),
+						},
+						endsAt: null,
+						timeZone: "UTC",
+						incognito: false,
+						alertOnComplete: false,
+						enabled: true,
+					});
+				const firstFiring = async (taskId: string) =>
+					(await conversations.tasks.get(userId, taskId))?.firings[0];
+
+				faux.setResponses([
+					async () => {
+						// used up by this step, so the next is refused
+						await limitTo(0);
+						return fauxAssistantMessage(fauxToolCall("missing", {}));
+					},
+				]);
+				const midwayId = await fireNow("Midway");
+				const midway = await waitFor(
+					() => firstFiring(midwayId),
+					(f) => f?.outcome === "failed",
+				);
+				expect(midway?.reason).toBeNull();
+
+				const skippedId = await fireNow("Skipped");
+				const skipped = await waitFor(
+					() => firstFiring(skippedId),
+					(f) => !!f,
+				);
+				expect(skipped).toMatchObject({
+					outcome: "skipped",
+					reason: "spending_limit",
+					conversationId: null,
+				});
+			});
+
 			it("leaves the title for a Turn that ends once the limit allows, without failing the Run", async () => {
 				faux.setResponses([
 					async () => {

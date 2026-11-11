@@ -81,6 +81,7 @@ const REASONS: Record<string, () => string> = {
 	previous_running: m.firing_previous_running,
 	agent_unavailable: m.firing_agent_unavailable,
 	model_disabled: m.firing_model_disabled,
+	spending_limit: m.firing_spending_limit,
 };
 
 /** Creates (from a draft, if given) or edits a task, its Firings listed below; the server checks it again. */

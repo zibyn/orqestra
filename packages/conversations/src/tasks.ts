@@ -25,6 +25,7 @@ import {
 	runQueue,
 	unschedule,
 } from "./runs.ts";
+import { spendingLimitStatus } from "./spending.ts";
 
 /** A Scheduled Task as the User saves it. */
 export type TaskInput = {
@@ -256,6 +257,11 @@ export async function fire(
 			.limit(1);
 		if (previous?.status === "running") {
 			await record({ outcome: "skipped", reason: "previous_running" });
+			return {};
+		}
+		// skipped rather than failed, so a month's end does not auto-pause it; one used up mid-Run fails as usual
+		if ((await spendingLimitStatus(task.userId, now))?.reached) {
+			await record({ outcome: "skipped", reason: "spending_limit" });
 			return {};
 		}
 		const turn = resolveTurn(cfg, task.agentId);

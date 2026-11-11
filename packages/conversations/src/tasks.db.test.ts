@@ -13,6 +13,7 @@ const url = process.env.TEST_DATABASE_URL;
 if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
+const { limits } = await import("@orqestra/db/schema");
 const { createConversations, TaskError } = await import("./index.ts");
 
 const faux = fauxProvider({
@@ -102,7 +103,9 @@ describe.skipIf(!url)(
 		beforeEach(async () => {
 			config = base;
 			handler = (run) => reply(run);
-			await db.execute(sql`truncate conversation, scheduled_task cascade`);
+			await db.execute(
+				sql`truncate conversation, scheduled_task, limits cascade`,
+			);
 		});
 
 		it("fires a one-time task into a new Conversation: the prompt as the User's message sent by the task, in an Unattended Run; then it is finished", async () => {
@@ -170,6 +173,51 @@ describe.skipIf(!url)(
 				"skipped",
 			]);
 			expect(done?.firings[0].reason).toBe("previous_running");
+		});
+
+		/** The default Spending Limit, straight into the table; null is unlimited. */
+		const limitTo = async (usd: number | null) => {
+			const saved = {
+				...DEFAULT_LIMITS,
+				spendingLimit:
+					usd === null
+						? { mode: "unlimited" as const }
+						: { mode: "limited" as const, usd },
+			};
+			await db
+				.insert(limits)
+				.values({ id: 1, ...saved })
+				.onConflictDoUpdate({ target: limits.id, set: saved });
+		};
+
+		it("skips a Firing due once its User's Spending Limit is used up, starting no Conversation; skipped ones neither count as failed nor clear the count", async () => {
+			let n = 0;
+			handler = async () => {
+				// the second failure uses up the limit, so the Firings after it are skipped
+				if (++n === 2) await limitTo(0);
+				throw new Error("boom");
+			};
+			const id = await tasks.create(ada, input());
+			const spent = (t: Awaited<ReturnType<typeof task>>) =>
+				t?.firings.filter((f) => f.reason === "spending_limit") ?? [];
+			const skipped = spent(
+				await waitFor(
+					() => task(id),
+					(t) => spent(t).length === 3,
+				),
+			);
+			expect(skipped.map((f) => [f.outcome, f.conversationId])).toEqual(
+				Array(3).fill(["skipped", null]),
+			);
+			expect((await task(id))?.state).toBe("active");
+			await limitTo(null);
+			const done = await waitFor(
+				() => task(id),
+				(t) => t?.state === "auto_paused",
+			);
+			expect(done?.firings.filter((f) => f.outcome === "failed")).toHaveLength(
+				3,
+			);
 		});
 
 		it("auto-pauses after three failed Firings in a row; a partial or a Question clears the count", async () => {

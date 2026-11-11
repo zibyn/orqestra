@@ -155,7 +155,7 @@ export const firing = pgTable(
 		firedAt: timestamp("fired_at").defaultNow().notNull(),
 		// running until the first Run of its Conversation ends, then how that Run ended
 		outcome: text("outcome").$type<FiringOutcome>().notNull(),
-		// why it was skipped or failed before starting a Conversation: previous_running, agent_unavailable or model_disabled
+		// why it was skipped or failed before starting a Conversation: previous_running, spending_limit, agent_unavailable or model_disabled
 		reason: text("reason"),
 		// null when it was skipped, or failed before starting one
 		conversationId: uuid("conversation_id").references(() => conversation.id, {
