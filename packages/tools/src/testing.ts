@@ -1,5 +1,11 @@
 // An orrery client and object storage kept in memory, and a scripted MCP Server, for testing what uses Sandboxes,
 // Attachments and MCP Servers without an orrery, S3 or a real MCP Server.
+
+import type {
+	ConnectionStore,
+	PendingAuthorization,
+	StoredConnection,
+} from "./oauth.ts";
 import {
 	type Exec,
 	type Frame,
@@ -232,4 +238,42 @@ export function memoryStore() {
 		},
 	};
 	return { store, objects };
+}
+
+/** Connections, pending authorizations and registered Clients kept in memory; `connections` holds them by `${userId} ${serverId}`. */
+export function memoryConnections() {
+	const connections = new Map<string, StoredConnection>();
+	const pending = new Map<string, PendingAuthorization>();
+	const clients = new Map<
+		string,
+		Awaited<ReturnType<ConnectionStore["registeredClient"]>>
+	>();
+	const store: ConnectionStore = {
+		connection: async (userId, serverId) =>
+			connections.get(`${userId} ${serverId}`),
+		saveConnection: async (userId, serverId, c) => {
+			connections.set(`${userId} ${serverId}`, {
+				...c,
+				scope: c.scope ?? null,
+				status: "connected",
+				connectedAt: new Date(),
+			});
+		},
+		addPending: async (p) => {
+			for (const [state, q] of pending)
+				if (q.userId === p.userId && q.serverId === p.serverId)
+					pending.delete(state);
+			pending.set(p.state, p);
+		},
+		takePending: async (state) => {
+			const p = pending.get(state);
+			pending.delete(state);
+			return p;
+		},
+		registeredClient: async (serverId) => clients.get(serverId),
+		saveRegisteredClient: async (serverId, client) => {
+			clients.set(serverId, client);
+		},
+	};
+	return Object.assign(store, { connections });
 }

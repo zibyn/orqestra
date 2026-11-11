@@ -31,6 +31,7 @@ import { memoryRun } from "@orqestra/conversations/testing";
 import { openToolbox } from "@orqestra/tools";
 import {
 	fakeMcpServer,
+	memoryConnections,
 	memoryOrrery,
 	memoryStore,
 } from "@orqestra/tools/testing";
@@ -613,6 +614,58 @@ describe("runAgent", () => {
 		expect(roles(m.saved)).toEqual(["assistant", "toolResult", "assistant"]);
 		expect(JSON.stringify(m.saved[1])).toContain("ran a.b");
 		expect(m.over).toBe(true);
+	});
+
+	it("gives a Subagent the Tools of a per-User OAuth MCP Server its User connected to, with their token", async () => {
+		const fake = fakeMcpServer({
+			tools: [{ name: "echo", inputSchema: { type: "object" } }],
+		});
+		const oauthConfig = {
+			...config,
+			agents: [agent({ id: "gh", tools: ["mcp:gh"] })],
+			mcpServers: {
+				gh: {
+					name: "GH",
+					url: "https://gh.example.com/mcp",
+					auth: "oauth" as const,
+					headers: {},
+				},
+			},
+		};
+		const connections = memoryConnections();
+		// the Subagent's Run is its top-level Conversation's User's
+		const m = memoryRun({
+			transcript: transcript(user("use it")),
+			turn: resolveTurn(oauthConfig, "gh") as Turn,
+			isSubagent: true,
+		});
+		await connections.saveConnection(m.run.userId, "gh", {
+			tokens: { access_token: "ada-token", token_type: "Bearer" },
+			issuer: "https://as.example.com",
+		});
+		let offered = "";
+		script([
+			(context) => {
+				offered = JSON.stringify(context.messages);
+				return fauxAssistantMessage("Done");
+			},
+		]);
+		await runAgent(m.run, {
+			config: oauthConfig,
+			streamSimple,
+			skillFiles: noSkillFiles,
+			connections,
+			openToolbox: ((services, allowed, options) =>
+				openToolbox(services, allowed, {
+					...options,
+					fetch: fake.fetch,
+				})) as typeof openToolbox,
+		});
+
+		expect(offered).toContain("gh__echo");
+		expect(fake.requests[0].headers.get("authorization")).toBe(
+			"Bearer ada-token",
+		);
 	});
 });
 
