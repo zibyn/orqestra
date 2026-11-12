@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { openToolbox, type ToolService } from "./index.ts";
+import { builtinTools, type ToolService } from "./index.ts";
 import type { SearchProviderId, ToolName } from "./refs.ts";
 
 const officialUrl = {
@@ -37,15 +37,10 @@ async function call(
 	fetch: ReturnType<typeof respond>["fetch"],
 	params: Record<string, unknown>,
 ) {
-	const box = await openToolbox(
-		{ tools: { [name]: service }, mcpServers: {} },
-		[name],
-		{ signal: never, fetch },
-	);
-	const tool = box.tools.find((t) => t.name === name);
+	const tools = builtinTools({ tools: { [name]: service } }, [name], { fetch });
+	const tool = tools.find((t) => t.name === name);
 	if (!tool) throw new Error(`no ${name} Tool`);
 	const result = await tool.execute("1", params as never, never);
-	await box.close();
 	const [content] = result.content;
 	return content.type === "text" ? content.text : "";
 }
@@ -203,19 +198,19 @@ describe("scrape", () => {
 	});
 });
 
-describe("openToolbox", () => {
-	it("offers only the built-in Tools the Agent allows that have a Search Provider", async () => {
-		const box = await openToolbox(
-			{ tools: { search: official("tavily") }, mcpServers: {} },
+describe("builtinTools", () => {
+	it("offers only the built-in Tools the Agent allows that have a Search Provider", () => {
+		const box = builtinTools(
+			{ tools: { search: official("tavily") } },
 			["search", "scrape"],
-			{ signal: never },
+			{},
 		);
-		expect(box.tools.map((t) => t.name)).toEqual(["search"]);
-		const none = await openToolbox(
-			{ tools: { search: official("tavily") }, mcpServers: {} },
+		expect(box.map((t) => t.name)).toEqual(["search"]);
+		const none = builtinTools(
+			{ tools: { search: official("tavily") } },
 			["scrape"],
-			{ signal: never },
+			{},
 		);
-		expect(none.tools).toEqual([]);
+		expect(none).toEqual([]);
 	});
 });

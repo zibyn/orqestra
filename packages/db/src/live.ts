@@ -41,11 +41,13 @@ async function listen(db: Db, channel: string, onNotify: () => void) {
 		subscribers.delete(onNotify);
 		if (subscribers.size) return;
 		channels.delete(channel);
-		// no UNLISTEN: a NOTIFY on a channel without subscribers is ignored, and lives closing at once
-		// would race it against the release; decided before awaiting, so only the last one releases
-		if (channels.size) return;
-		listeners.delete(db);
-		(await client).release(true);
+		// decided before awaiting, so two lives closing at once release the connection once
+		const last = !channels.size;
+		if (last) listeners.delete(db);
+		const cl = await client;
+		if (last) cl.release(true);
+		// the last close may release the connection meanwhile, which ends its LISTENs too
+		else await cl.query(`UNLISTEN ${channel}`).catch(() => {});
 	};
 }
 

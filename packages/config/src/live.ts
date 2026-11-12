@@ -1,19 +1,17 @@
-import type { Db } from "@orqestra/db";
+import { type Db, db as globalDb } from "@orqestra/db";
 import { live } from "@orqestra/db/live";
 import {
 	agent,
 	enabledModel,
 	limits,
-	mcpServer,
 	modelPrice,
 	provider,
-	skill,
-	skillVersion,
 } from "@orqestra/db/schema";
 import { decryptSecret, encryptionKey } from "@orqestra/db/secret";
+import { loadMcpServers } from "@orqestra/mcp";
+import { createSkills, skillFiles as filesOf } from "@orqestra/skills";
 import { createTools, type ToolConfig } from "@orqestra/tools/live";
-import { eq } from "drizzle-orm";
-import { admin, limitsInput, storedClient } from "./admin.ts";
+import { admin, forgetSkill, limitsInput } from "./admin.ts";
 import {
 	loadConfig,
 	modelRef,
@@ -25,12 +23,25 @@ import {
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
 
+export {
+	connectionStore,
+	deleteConnection,
+	type McpTestResult,
+	mcpServerEnabledInput,
+	mcpServerInput,
+	revokeConnections,
+} from "@orqestra/mcp";
+export {
+	SkillNotFound,
+	skillCreateInput,
+	skillCurrentInput,
+	skillEditInput,
+	skillEnabledInput,
+} from "@orqestra/skills";
 export type {
 	DocumentParserTestResult,
-	McpTestResult,
 	SandboxTestResult,
 } from "@orqestra/tools";
-// shortcut: re-exported until #122 deletes @orqestra/config; import them from @orqestra/tools/live
 export {
 	documentParserInput,
 	sandboxProviderInput,
@@ -40,47 +51,26 @@ export {
 export {
 	agentInput,
 	limitsInput,
-	mcpServerEnabledInput,
-	mcpServerInput,
 	modelEnabledInput,
 	modelPriceInput,
 	providerInput,
 	providerTestInput,
-	SkillNotFound,
-	skillCreateInput,
-	skillCurrentInput,
-	skillEditInput,
-	skillEnabledInput,
-	skillFiles,
 } from "./admin.ts";
-export {
-	connectionStore,
-	deleteConnection,
-	revokeConnections,
-	userConnections,
-} from "./connections.ts";
+
+/** A Skill version's files, read from the global db. */
+export const skillFiles = (versionId: number) => filesOf(globalDb, versionId);
+export { userConnections } from "./connections.ts";
 
 /** Everything saved in /console, with API keys decrypted. */
 async function loadSettings(db: Db): Promise<Settings> {
 	const key = encryptionKey();
-	const [providers, enabled, prices, mcpServers, agents, skills, [saved]] =
+	const [providers, enabled, prices, mcpServers, agents, [saved]] =
 		await Promise.all([
 			db.select().from(provider),
 			db.select().from(enabledModel),
 			db.select().from(modelPrice),
-			db.select().from(mcpServer).orderBy(mcpServer.createdAt),
+			loadMcpServers(db, key),
 			db.select().from(agent).orderBy(agent.createdAt),
-			db
-				.select({
-					name: skill.name,
-					enabled: skill.enabled,
-					versionId: skillVersion.id,
-					description: skillVersion.description,
-					disableModelInvocation: skillVersion.disableModelInvocation,
-				})
-				.from(skill)
-				.innerJoin(skillVersion, eq(skill.currentVersionId, skillVersion.id))
-				.orderBy(skill.name),
 			db.select().from(limits),
 		]);
 	return {
@@ -94,25 +84,15 @@ async function loadSettings(db: Db): Promise<Settings> {
 		),
 		modelPrices: pricesByModel(prices),
 		agents,
-		mcpServers: mcpServers.map((s) => ({
-			id: s.id,
-			name: s.name,
-			url: s.url,
-			enabled: s.enabled,
-			auth: s.auth,
-			oauthClient: storedClient(s, key) ?? null,
-			headers: s.headers.map((h) => ({
-				name: h.name,
-				value: decryptSecret(h.value, key),
-			})),
-		})),
-		skills,
+		mcpServers,
 		// a stored row, read again by limitsInput so a bad one fails the load like a bad Agent Definition
 		limits: saved && limitsInput.parse(saved),
 	};
 }
 
-const logWarnings = (config: Omit<OrqestraConfig, keyof ToolConfig>) => {
+const logWarnings = (
+	config: Omit<OrqestraConfig, keyof ToolConfig | "skills">,
+) => {
 	for (const a of config.agents) {
 		for (const ref of a.unavailableModels)
 			console.warn(`Agent "${a.id}": Model "${ref}" is not available`);
@@ -133,24 +113,42 @@ export function createConfig(db: Db) {
 		channel: CONFIG_CHANNEL,
 		load: () => loadSettings(db).then(loadConfig).then(logWarnings),
 	});
-	// shortcut: the Tools' config is loaded by @orqestra/tools and merged in until #122 deletes @orqestra/config
+	// shortcut: the Skills keep their own snapshot, put in here until #131 gives Turn resolution the Skills itself
+	const skills = createSkills(db);
+	// shortcut: so do the Tools' services and Sandbox Provider, until #122 deletes @orqestra/config
 	const tools = createTools(db);
-	let merged: { c: object; t: object; config: OrqestraConfig } | undefined;
-	/** The same object while neither snapshot changes, as a single snapshot was. */
-	const current = async (): Promise<OrqestraConfig> => {
-		const [c, t] = await Promise.all([config.current(), tools.current()]);
-		if (merged?.c !== c || merged.t !== t)
-			merged = { c, t, config: { ...c, ...t } };
-		return merged.config;
+	let last:
+		| { c: object; s: object; t: object; merged: OrqestraConfig }
+		| undefined;
+	const current = async () => {
+		const [c, s, t] = await Promise.all([
+			config.current(),
+			skills.current(),
+			tools.current(),
+		]);
+		// the same object while none reloads, as a snapshot is
+		if (last?.c !== c || last.s !== s || last.t !== t)
+			last = { c, s, t, merged: { ...c, ...t, skills: s } };
+		return last.merged;
 	};
 	return {
 		...config,
 		current,
-		close: () => Promise.all([config.close(), tools.close()]).then(() => {}),
+		close: async () => {
+			await Promise.all([config.close(), skills.close(), tools.close()]);
+		},
 		...admin({ current, write: config.write }),
 		searchProviders: tools.searchProviders,
 		sandboxProvider: tools.sandboxProvider,
 		documentParser: tools.documentParser,
+		skills: {
+			...skills,
+			/** Also removes it from every Agent Definition. */
+			delete: async (name: string) => {
+				await skills.delete(name);
+				await forgetSkill(config, name);
+			},
+		},
 	};
 }
 

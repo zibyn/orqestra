@@ -14,6 +14,7 @@
     "@orqestra/config": "workspace:*",
     "@orqestra/conversations": "workspace:*",
     "@orqestra/db": "workspace:*",
+    "@orqestra/mcp": "workspace:*",
     "@orqestra/memory": "workspace:*",
     "@orqestra/tools": "workspace:*",
     "@zibyn/polaris": "^0.1.3",

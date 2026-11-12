@@ -1,9 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { connectionStore, createConfig } from "@orqestra/config/live";
+import { createConfig } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { user as userRecord } from "@orqestra/db/schema";
-import { fakeAuthorizationServer } from "@orqestra/tools/testing";
+import { connectionStore } from "@orqestra/mcp";
+import { fakeAuthorizationServer } from "@orqestra/mcp/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 

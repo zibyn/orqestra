@@ -92,16 +92,23 @@ describe.skipIf(!url)("live (Postgres)", () => {
 		}
 	});
 
-	it("closes lives of different channels at once", async () => {
-		const pool = drizzle(url as string, { schema });
+	it("closes lives of two channels at once, and listens again after", async () => {
+		const own = drizzle(url as string, { schema });
 		try {
-			const lives = ["live_test", "live_test_other"].map((channel) =>
-				live(pool, { channel, load: ids }),
+			const lives = ["live_test_a", "live_test_b"].map((channel) =>
+				live(own, { channel, load: ids }),
 			);
 			await Promise.all(lives.map((l) => l.current()));
 			await Promise.all(lives.map((l) => l.close()));
+			const again = live(own, { channel: "live_test_a", load: ids });
+			await again.current();
+			await again.write((tx) =>
+				tx.insert(provider).values({ id: "a", apiKey: "k" }),
+			);
+			expect(await again.current()).toEqual(["a"]);
+			await again.close();
 		} finally {
-			await pool.$client.end();
+			await own.$client.end();
 		}
 	});
 

@@ -23,14 +23,13 @@ import {
 } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/config";
 import type { ConversationEvent } from "@orqestra/conversations";
-import { openToolbox } from "@orqestra/tools";
 import {
 	fakeAuthorizationServer,
 	fakeMcpServer,
 	memoryConnections,
-	memoryOrrery,
-	memoryStore,
-} from "@orqestra/tools/testing";
+} from "@orqestra/mcp/testing";
+import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
+import { openToolbox } from "./runtime/toolbox.ts";
 
 // the push service, as web-push reaches it from @orqestra/conversations: each Alert recorded
 const pushed: { status: string; url: string }[] = [];

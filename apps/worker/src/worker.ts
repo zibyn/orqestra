@@ -5,8 +5,9 @@ import {
 	type RunHandle,
 	SpendingLimitReached,
 } from "@orqestra/conversations";
-import { type ObjectStore, openToolbox } from "@orqestra/tools";
+import type { ObjectStore } from "@orqestra/tools";
 import { type RuntimeDeps, runAgent } from "./runtime/index.ts";
+import { openToolbox } from "./runtime/toolbox.ts";
 
 /** Runs at most `max` functions at once, the rest in call order; one aborted while waiting leaves the queue and rejects. */
 export function limiter(max: number) {

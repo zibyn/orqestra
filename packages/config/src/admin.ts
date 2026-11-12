@@ -7,48 +7,34 @@ import {
 	modelPrice,
 	provider,
 	skill,
-	skillFile,
-	skillVersion,
 } from "@orqestra/db/schema";
 import { decryptSecret, sealSecret, secretReadable } from "@orqestra/db/secret";
 import {
-	availableTools,
-	type McpTestResult,
+	deleteMcpServer,
+	mcpServerAdmin,
 	type OrqestraReach,
-	probeMcpServer,
-} from "@orqestra/tools";
-import { and, desc, eq, max, sql } from "drizzle-orm";
-import { z } from "zod";
-import {
-	clearConnections,
-	connectedUsers,
 	revokeConnections,
-} from "./connections.ts";
+} from "@orqestra/mcp";
+import { availableTools } from "@orqestra/tools";
+import { and, eq, sql } from "drizzle-orm";
+import { z } from "zod";
 import {
 	agentDefinition,
 	agentId,
 	catalogProviders,
 	DEFAULT_LIMITS,
 	definitionIssues,
-	mcpServerId,
 	mcpToolRef,
 	modelRef,
 	type OrqestraConfig,
 	priceInForce,
 	pricesByModel,
 	type SaveErrors,
-	type SkillFile,
 	spendingLimit,
 	testConnection,
 	timeZone,
 	turnSkills,
 } from "./index.ts";
-import {
-	checkSkill,
-	parseSkillZip,
-	type SkillFiles,
-	skillName,
-} from "./skill-zip.ts";
 
 // What Admins edit in /console, by GLOSSARY entity: inputs, rules across fields and entities, and the management views.
 // Secrets only go in; a view tells whether they can still be decrypted.
@@ -88,54 +74,6 @@ export const modelPriceInput = z.object({
 		})
 		.nullable(),
 });
-export const mcpServerInput = z.object({
-	// checked in save, so a bad id lands on the id field
-	id: z.string(),
-	create: z.boolean(),
-	name: z.string().trim().min(1),
-	url: httpUrl,
-	enabled: z.boolean(),
-	// a Client pre-registered with the authorization server, making it per-User OAuth; blank: none
-	oauthClientId: z.string().trim().optional(),
-	// blank keeps the stored secret
-	oauthClientSecret: z.string().trim().optional(),
-	headers: z.array(
-		z.object({
-			name: z.string().trim().min(1),
-			// blank keeps the stored value of the header with this name
-			value: z.string().trim().optional(),
-		}),
-	),
-});
-export const mcpServerEnabledInput = z.object({
-	id: mcpServerId,
-	enabled: z.boolean(),
-});
-export const skillEnabledInput = z.object({
-	name: z.string(),
-	enabled: z.boolean(),
-});
-export const skillCurrentInput = z.object({
-	name: z.string(),
-	versionId: z.number().int(),
-});
-export const skillCreateInput = z.object({
-	name: z.string(),
-	description: z.string(),
-});
-export const skillEditInput = z.object({
-	name: z.string(),
-	base: z.number().int(),
-	// without `text`: kept as it is in version `base`
-	files: z.array(z.object({ path: z.string(), text: z.string().optional() })),
-});
-/** A Skill or version gone since the console loaded it; `field` is the input naming it. */
-export class SkillNotFound extends Error {
-	constructor(readonly field: "name" | "versionId" | "base") {
-		super(field === "name" ? "Skill not found" : "Skill version not found");
-	}
-}
-
 const count = z.number().int().positive();
 export const limitsInput = z.object({
 	maxScheduledTasksPerUser: count,
@@ -166,9 +104,6 @@ export const agentInput = z.object({
 // null keeps following the Catalog's
 const customBaseUrl = (url: string, fallback: string) =>
 	url.replace(/\/+$/, "") === fallback.replace(/\/+$/, "") ? null : url;
-
-// RFC 7230 token
-const headerName = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 const catalogProvider = async (id: string) =>
 	(await catalogProviders()).find((p) => p.id === id);
@@ -322,165 +257,14 @@ const providers = ({ write }: Deps) => ({
 	},
 });
 
-/** A stored MCP Server's pre-registered Client, its Secret decrypted. */
-/** The MCP Server's pre-registered Client, its secret decrypted (undefined when it no longer decrypts). */
-export const storedClient = (
-	row: Pick<
-		typeof mcpServer.$inferSelect,
-		"oauthClientId" | "oauthClientSecret"
-	>,
-	key?: Buffer,
-) =>
-	row.oauthClientId
-		? {
-				client_id: row.oauthClientId,
-				client_secret:
-					(row.oauthClientSecret &&
-						decryptSecret(row.oauthClientSecret, key)) ||
-					undefined,
-			}
-		: undefined;
-
-const mcpServers = ({ write }: Deps) => ({
-	async list() {
-		const [rows, connected] = await Promise.all([
-			db.select().from(mcpServer).orderBy(mcpServer.createdAt),
-			connectedUsers(),
-		]);
-		return rows.map((r) => ({
-			id: r.id,
-			name: r.name,
-			url: r.url,
-			enabled: r.enabled,
-			auth: r.auth,
-			oauthClientId: r.oauthClientId,
-			oauthClientSecret: r.oauthClientSecret
-				? { readable: secretReadable(r.oauthClientSecret) }
-				: null,
-			headers: r.headers.map((h) => ({
-				name: h.name,
-				readable: secretReadable(h.value),
-			})),
-			// the Admin sees who relies on it, but cannot disconnect them
-			...(r.auth === "oauth" && { connections: connected[r.id] ?? [] }),
-		}));
-	},
-
-	/**
-	 * Tests it first, which finds how it is signed in to (see probeMcpServer); once saved, also the test's result. `fetch` makes the
-	 * test's requests and revocations. A new auth mode, URL or pre-registered Client ends every Connection to it, revoked in the
-	 * background once committed.
-	 */
-	async save(
-		input: z.infer<typeof mcpServerInput>,
-		{ fetch }: Pick<OrqestraReach, "fetch"> = {},
-	): Promise<{ errors: SaveErrors; test?: McpTestResult }> {
-		if (!mcpServerId.safeParse(input.id).success)
-			return { errors: { id: { code: "id_invalid" } } };
-		const stored = await db.query.mcpServer.findFirst({
-			where: eq(mcpServer.id, input.id),
-		});
-		if (input.create && stored) return { errors: { id: { code: "id_taken" } } };
-		if (!input.create && !stored)
-			return { errors: { id: { code: "not_found" } } };
-		const headers = [];
-		const plain: Record<string, string> = {};
-		const seen = new Set<string>();
-		for (const h of input.headers) {
-			const header = h.name;
-			if (!headerName.test(header))
-				return { errors: { headers: { code: "header_invalid", header } } };
-			if (seen.has(header.toLowerCase()))
-				return { errors: { headers: { code: "header_twice", header } } };
-			// each User's Connection authorizes a server with a pre-registered Client
-			if (input.oauthClientId && header.toLowerCase() === "authorization")
-				return { errors: { headers: { code: "header_reserved", header } } };
-			seen.add(header.toLowerCase());
-			const kept = h.value
-				? undefined
-				: stored?.headers.find((s) => s.name === header)?.value;
-			const value = h.value || (kept && decryptSecret(kept));
-			if (!value)
-				return {
-					errors: { headers: { code: "header_value_missing", header } },
-				};
-			headers.push({
-				name: header,
-				value: sealSecret(h.value, kept) as string,
-			});
-			plain[header] = value;
-		}
-		const oauthClientId = input.oauthClientId || null;
-		const { auth: found, test } = await probeMcpServer(
-			{ url: input.url, headers: plain, preRegistered: !!oauthClientId },
-			{ fetch },
-		);
-		// one that did not answer keeps how it was signed in to, and its Connections
-		const auth = found ?? stored?.auth ?? "shared";
-		const values = {
-			name: input.name,
-			url: input.url,
-			enabled: input.enabled,
-			auth,
-			oauthClientId,
-			// a secret belongs to its Client: none without one
-			oauthClientSecret:
-				(oauthClientId &&
-					sealSecret(
-						input.oauthClientSecret,
-						stored?.oauthClientSecret ?? undefined,
-					)) ||
-				null,
-			headers,
-		};
-		const oldClient = stored && storedClient(stored);
-		// Connections made for another setup must never reach the new one
-		const reset =
-			stored &&
-			(stored.auth !== auth ||
-				stored.url !== input.url ||
-				stored.oauthClientId !== oauthClientId ||
-				(!!oauthClientId &&
-					!!input.oauthClientSecret &&
-					input.oauthClientSecret !== oldClient?.client_secret));
-		const cleared = await write(async (tx) => {
-			await tx
-				.insert(mcpServer)
-				.values({ id: input.id, ...values })
-				.onConflictDoUpdate({ target: mcpServer.id, set: values });
-			return reset ? clearConnections(tx, input.id, oldClient) : [];
-		});
-		// shortcut: in the background so the save does not wait on authorization servers; lost if the process exits first
-		if (cleared.length) void revokeConnections(cleared, { fetch });
-		// saved either way, so the Admin can fix the URL or headers later
-		return { errors: {}, test };
-	},
-
-	async setEnabled(id: string, enabled: boolean) {
-		const updated = await write((tx) =>
-			tx
-				.update(mcpServer)
-				.set({ enabled })
-				.where(eq(mcpServer.id, id))
-				.returning({ id: mcpServer.id }),
-		);
-		if (!updated.length) throw new Error("MCP Server not found");
-	},
+const mcpServers = (deps: Deps) => ({
+	...mcpServerAdmin(deps),
 
 	/** Also removes it from every Agent Definition, and ends every Connection to it, revoked in the background once committed. */
 	async delete(id: string, { fetch }: Pick<OrqestraReach, "fetch"> = {}) {
-		const cleared = await write(async (tx) => {
+		const cleared = await deps.write(async (tx) => {
 			const ref = mcpToolRef(id);
-			const [stored] = await tx
-				.select()
-				.from(mcpServer)
-				.where(eq(mcpServer.id, id))
-				.for("update");
-			// their tokens taken before the cascade would delete them
-			const cleared = stored
-				? await clearConnections(tx, id, storedClient(stored))
-				: [];
-			await tx.delete(mcpServer).where(eq(mcpServer.id, id));
+			const cleared = await deleteMcpServer(tx, id);
 			await tx.execute(
 				sql`update ${agent} set definition = jsonb_set(definition, '{tools}', (definition->'tools') - ${ref}::text) where definition->'tools' @> ${JSON.stringify([ref])}::jsonb`,
 			);
@@ -488,211 +272,6 @@ const mcpServers = ({ write }: Deps) => ({
 		});
 		if (cleared.length) void revokeConnections(cleared, { fetch });
 	},
-});
-
-/** A version's files, paths relative to the Skill's folder; for Runs, by the `versionId` of `current().skills`. */
-export const skillFiles = (versionId: number) =>
-	db
-		.select({ path: skillFile.path, content: skillFile.content })
-		.from(skillFile)
-		.where(eq(skillFile.versionId, versionId))
-		.orderBy(skillFile.path);
-
-/** Adds the Skill as its new current version, adding the Skill itself when it is new; one that exists needs `replace`. */
-async function addVersion(
-	tx: Tx,
-	{ name, description, disableModelInvocation, files }: SkillFiles,
-	replace: boolean,
-): Promise<SaveErrors> {
-	const inserted = await tx
-		.insert(skill)
-		.values({ name })
-		.onConflictDoNothing()
-		.returning({ name: skill.name });
-	if (!inserted.length && !replace) return { name: { code: "skill_exists" } };
-	// locks the Skill, so two saves cannot take the same number
-	await tx
-		.select({ name: skill.name })
-		.from(skill)
-		.where(eq(skill.name, name))
-		.for("update");
-	const [{ last }] = await tx
-		.select({ last: max(skillVersion.number) })
-		.from(skillVersion)
-		.where(eq(skillVersion.skillName, name));
-	const [version] = await tx
-		.insert(skillVersion)
-		.values({
-			skillName: name,
-			number: (last ?? 0) + 1,
-			description,
-			disableModelInvocation,
-		})
-		.returning({ id: skillVersion.id });
-	await tx
-		.insert(skillFile)
-		.values(files.map((f) => ({ versionId: version.id, ...f })));
-	await tx
-		.update(skill)
-		.set({ currentVersionId: version.id })
-		.where(eq(skill.name, name));
-	return {};
-}
-
-function asText(content: Uint8Array) {
-	try {
-		const text = new TextDecoder("utf-8", { fatal: true }).decode(content);
-		return text.includes("\0") ? undefined : text;
-	} catch {
-		return undefined;
-	}
-}
-
-const skills = ({ write }: Deps) => ({
-	/** Every Skill with its versions, newest first; `description` is the current version's. */
-	async list() {
-		const [skills, versions] = await Promise.all([
-			db.select().from(skill).orderBy(skill.name),
-			db
-				.select({
-					id: skillVersion.id,
-					skillName: skillVersion.skillName,
-					number: skillVersion.number,
-					description: skillVersion.description,
-					createdAt: skillVersion.createdAt,
-				})
-				.from(skillVersion)
-				.orderBy(desc(skillVersion.number)),
-		]);
-		return skills.map((s) => {
-			const own = versions.filter((v) => v.skillName === s.name);
-			return {
-				name: s.name,
-				enabled: s.enabled,
-				currentVersionId: s.currentVersionId,
-				description:
-					own.find((v) => v.id === s.currentVersionId)?.description ?? "",
-				versions: own.map(({ skillName: _, ...v }) => v),
-			};
-		});
-	},
-
-	/** Adds the zip as a new current version; one whose name exists needs `replace`. `name` is set once the zip is valid. */
-	async upload(
-		zip: Uint8Array,
-		replace: boolean,
-	): Promise<{ errors: SaveErrors; name?: string }> {
-		const parsed = parseSkillZip(zip);
-		if ("error" in parsed) return { errors: { file: parsed.error } };
-		const { name } = parsed.skill;
-		const errors = await write((tx) => addVersion(tx, parsed.skill, replace));
-		return { errors, name };
-	},
-
-	/** A new Skill written in the console: its first version is a SKILL.md with only the frontmatter. */
-	async create(
-		name: string,
-		description: string,
-	): Promise<{ errors: SaveErrors }> {
-		// checked before it goes into the YAML, where a line break could add keys
-		if (!skillName.test(name))
-			return { errors: { name: { code: "skill_name_invalid" } } };
-		// a JSON string is a YAML double-quoted scalar
-		const md = `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n`;
-		const checked = checkSkill(
-			[{ path: "SKILL.md", content: new TextEncoder().encode(md) }],
-			name,
-		);
-		if ("error" in checked)
-			return {
-				errors: {
-					[checked.error.code === "skill_description_invalid"
-						? "description"
-						: "name"]: checked.error,
-				},
-			};
-		return {
-			errors: await write((tx) => addVersion(tx, checked.skill, false)),
-		};
-	},
-
-	/** A version's files for the console editor: `text` only for those that are UTF-8 text, the rest can only be kept or dropped. */
-	files: async (versionId: number) =>
-		(await skillFiles(versionId)).map(({ path, content }) => {
-			const text = asText(content);
-			return {
-				path,
-				size: content.length,
-				...(text !== undefined && { text }),
-			};
-		}),
-
-	/** Saves the Skill's files as a new current version: those with `text` as written, those without kept as they are in version `base`. */
-	async edit(
-		name: string,
-		base: number,
-		files: { path: string; text?: string }[],
-	): Promise<{ errors: SaveErrors }> {
-		const [version] = await db
-			.select({ id: skillVersion.id })
-			.from(skillVersion)
-			.where(and(eq(skillVersion.id, base), eq(skillVersion.skillName, name)));
-		if (!version) throw new SkillNotFound("base");
-		const old = new Map(
-			(await skillFiles(base)).map((f) => [f.path, f.content]),
-		);
-		const contents: SkillFile[] = [];
-		for (const { path, text } of files) {
-			const kept = old.get(path);
-			// the console shows a binary file without its bytes, so text for it would replace it unseen
-			if (text !== undefined && kept && asText(kept) === undefined)
-				return { errors: { file: { code: "skill_file_binary", path } } };
-			const content =
-				text === undefined ? kept : new TextEncoder().encode(text);
-			if (!content) return { errors: { file: { code: "not_found" } } };
-			contents.push({ path, content });
-		}
-		const checked = checkSkill(contents, name);
-		if ("error" in checked) return { errors: { file: checked.error } };
-		return { errors: await write((tx) => addVersion(tx, checked.skill, true)) };
-	},
-
-	async setEnabled(name: string, enabled: boolean) {
-		const updated = await write((tx) =>
-			tx
-				.update(skill)
-				.set({ enabled })
-				.where(eq(skill.name, name))
-				.returning({ name: skill.name }),
-		);
-		if (!updated.length) throw new SkillNotFound("name");
-	},
-
-	/** Agents use this version from their next Run on; it must be one of the Skill's. */
-	async setCurrent(name: string, versionId: number) {
-		const updated = await write((tx) =>
-			tx
-				.update(skill)
-				.set({ currentVersionId: versionId })
-				.where(
-					and(
-						eq(skill.name, name),
-						sql`exists (select 1 from ${skillVersion} where ${skillVersion.id} = ${versionId} and ${skillVersion.skillName} = ${name})`,
-					),
-				)
-				.returning({ name: skill.name }),
-		);
-		if (!updated.length) throw new SkillNotFound("versionId");
-	},
-
-	/** Also deletes its versions and removes it from every Agent Definition. */
-	delete: (name: string) =>
-		write(async (tx) => {
-			await tx.delete(skill).where(eq(skill.name, name));
-			await tx.execute(
-				sql`update ${agent} set definition = jsonb_set(definition, '{skills}', (definition->'skills') - ${name}::text) where definition->'skills' @> ${JSON.stringify([name])}::jsonb`,
-			);
-		}),
 });
 
 // one row, with a fixed id
@@ -817,5 +396,12 @@ export const admin = (deps: Deps) => ({
 	mcpServers: mcpServers(deps),
 	limits: limitsOf(deps),
 	agents: agents(deps),
-	skills: skills(deps),
 });
+
+/** Removes a deleted Skill from every Agent Definition. */
+export const forgetSkill = ({ write }: Pick<Deps, "write">, name: string) =>
+	write((tx) =>
+		tx.execute(
+			sql`update ${agent} set definition = jsonb_set(definition, '{skills}', (definition->'skills') - ${name}::text) where definition->'skills' @> ${JSON.stringify([name])}::jsonb`,
+		),
+	);

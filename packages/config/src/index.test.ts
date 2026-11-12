@@ -2,13 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	catalogProviders,
 	GENERAL_WORKER,
-	invokedSkill,
 	loadConfig,
-	parseSkillBlock,
 	resolveThinking,
 	resolveTurn,
 	type Settings,
-	skillBlock,
 	turnSkills,
 } from "./index";
 
@@ -41,7 +38,6 @@ const deepseek = (
 		definition,
 	})),
 	mcpServers: [],
-	skills: [],
 });
 const withAgents = (agents: Record<string, unknown>, enabled?: string[]) =>
 	deepseek(enabled, {}, agents);
@@ -266,9 +262,7 @@ describe("loadConfig", () => {
 	});
 
 	describe("Skills", () => {
-		const skill = (name: string, enabled = true) => ({
-			name,
-			enabled,
+		const skill = (name: string) => ({
 			versionId: 1,
 			description: `${name} things`,
 			disableModelInvocation: false,
@@ -291,8 +285,9 @@ describe("loadConfig", () => {
 					}),
 					plain: agentWith({ default: false }),
 				}),
-				skills: [skill("pdf"), skill("off", false), skill("unused")],
 			})),
+			// the Skills' snapshot: "off" is disabled
+			skills: { pdf: skill("pdf"), unused: skill("unused") },
 			sandboxProvider,
 		});
 
@@ -526,39 +521,5 @@ describe("resolveTurn", () => {
 
 	it("returns nothing once the Agent is removed from config, so the Conversation is read-only", async () => {
 		expect(resolveTurn(await load(), "deleted-agent")).toBeUndefined();
-	});
-});
-
-describe("a message that invokes a Skill", () => {
-	it("reads back as the Skill's name and the User's own text", () => {
-		expect(
-			parseSkillBlock(
-				skillBlock("pdf", "Use pypdf.\n\n</skill>?", "merge them"),
-			),
-		).toEqual({ name: "pdf", text: "merge them" });
-		expect(parseSkillBlock(skillBlock("pdf", "Use pypdf.", ""))).toEqual({
-			name: "pdf",
-			text: "",
-		});
-	});
-
-	it("is any other message when written by hand", () => {
-		expect(parseSkillBlock('<skill name="pdf">hi</skill>')).toBeUndefined();
-		expect(parseSkillBlock("/skill:pdf merge them")).toBeUndefined();
-	});
-});
-
-describe("a User's text that invokes a Skill", () => {
-	it("names the Skill and what follows it", () => {
-		expect(invokedSkill("/skill:pdf  merge\nthem ")).toEqual({
-			name: "pdf",
-			args: "merge\nthem",
-		});
-		expect(invokedSkill("/skill:pdf")).toEqual({ name: "pdf", args: "" });
-	});
-
-	it("is none unless the text starts with /skill:", () => {
-		expect(invokedSkill("use /skill:pdf")).toBeUndefined();
-		expect(invokedSkill("/skill:")).toBeUndefined();
 	});
 });

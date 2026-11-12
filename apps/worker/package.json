@@ -19,6 +19,7 @@
     "@orqestra/config": "workspace:*",
     "@orqestra/conversations": "workspace:*",
     "@orqestra/db": "workspace:*",
+    "@orqestra/mcp": "workspace:*",
     "@orqestra/memory": "workspace:*",
     "@orqestra/tools": "workspace:*"
   },

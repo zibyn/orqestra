@@ -7,7 +7,8 @@ import {
 } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { backgroundCall, conversation, message } from "@orqestra/db/schema";
-import { fakeMcpServer, memoryStore } from "@orqestra/tools/testing";
+import { fakeMcpServer } from "@orqestra/mcp/testing";
+import { memoryStore } from "@orqestra/tools/testing";
 import { eq, sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 

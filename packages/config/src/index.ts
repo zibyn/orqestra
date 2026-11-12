@@ -9,12 +9,10 @@ import {
 	type ModelThinkingLevel,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import {
-	ModelRegistry,
-	ModelRuntime,
-	stripFrontmatter,
-} from "@earendil-works/pi-coding-agent";
-import type { McpServer } from "@orqestra/tools";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+// types only: importing @orqestra/mcp would open the database before a test points DATABASE_URL at its own
+import type { McpServer, McpServerSettings } from "@orqestra/mcp";
+import type { SkillInfo } from "@orqestra/skills";
 import type { ToolConfig } from "@orqestra/tools/live";
 import type { z } from "zod";
 import {
@@ -25,6 +23,7 @@ import {
 	type ToolRef,
 } from "./shared.ts";
 
+export { type SkillInfo, skillInstructions } from "@orqestra/skills";
 export * from "./shared.ts";
 
 export type ThinkingLevel = ModelThinkingLevel;
@@ -71,30 +70,9 @@ export interface Settings {
 	modelPrices: Record<string, Model<Api>["cost"]>;
 	/** Agent Definitions as stored, validated by `loadConfig`. */
 	agents: { id: string; definition: unknown }[];
-	/** A header `value` is undefined when it cannot be decrypted. */
-	mcpServers: {
-		id: string;
-		name: string;
-		url: string;
-		enabled: boolean;
-		auth: "shared" | "oauth";
-		/** `client_secret` is undefined when there is none or it cannot be decrypted. */
-		oauthClient?: {
-			client_id: string;
-			client_secret: string | undefined;
-		} | null;
-		headers: { name: string; value: string | undefined }[];
-	}[];
+	mcpServers: McpServerSettings;
 	/** Omitted when none were saved: DEFAULT_LIMITS. */
 	limits?: Limits;
-	/** Every Skill with its current version. */
-	skills: {
-		name: string;
-		enabled: boolean;
-		versionId: number;
-		description: string;
-		disableModelInvocation: boolean;
-	}[];
 }
 
 /** The Limits an Admin sets in /console/limits; durations in seconds. */
@@ -129,14 +107,6 @@ export const DEFAULT_LIMITS: Limits = {
 	resetTimeZone: "UTC",
 	backgroundCallMaxDuration: 24 * 60 * 60,
 };
-
-/** A Skill Runs can use; read its files with `skillFiles(versionId)`. */
-export interface SkillInfo {
-	/** The current version when the config was loaded. */
-	versionId: number;
-	description: string;
-	disableModelInvocation: boolean;
-}
 
 /** With the Tools' services and Sandbox Provider, which @orqestra/tools loads. */
 export interface OrqestraConfig extends ToolConfig {
@@ -239,7 +209,7 @@ export async function catalogProviders() {
  */
 export async function loadConfig(
 	settings: Settings,
-): Promise<Omit<OrqestraConfig, keyof ToolConfig>> {
+): Promise<Omit<OrqestraConfig, keyof ToolConfig | "skills">> {
 	const registry = await catalogRegistry();
 	const enabled = new Set(settings.enabledModels);
 	const models = (await catalogProviders()).flatMap((p) => {
@@ -334,10 +304,6 @@ export async function loadConfig(
 		if (enabled) mcpServers[id] = allMcpServers[id];
 	}
 
-	const skills: OrqestraConfig["skills"] = {};
-	for (const { name, enabled, ...skill } of settings.skills)
-		if (enabled) skills[name] = skill;
-
 	return {
 		registry,
 		models,
@@ -345,7 +311,6 @@ export async function loadConfig(
 		defaultAgent: defaults[0],
 		mcpServers,
 		allMcpServers,
-		skills,
 		limits: settings.limits ?? DEFAULT_LIMITS,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);
@@ -480,7 +445,3 @@ export const turnSkills = (
 				return skill ? [{ name, ...skill }] : [];
 			})
 		: [];
-
-/** A SKILL.md's instructions, without its frontmatter. */
-export const skillInstructions = (skillMd: string) =>
-	stripFrontmatter(skillMd).trim();
