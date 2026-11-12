@@ -1,4 +1,4 @@
-import type { Db } from "@orqestra/db";
+import { type Db, db as globalDb } from "@orqestra/db";
 import { live } from "@orqestra/db/live";
 import {
 	agent,
@@ -10,13 +10,17 @@ import {
 	provider,
 	sandboxProvider,
 	searchProvider,
-	skill,
-	skillVersion,
 } from "@orqestra/db/schema";
 import { decryptSecret, encryptionKey } from "@orqestra/db/secret";
+import { createSkills, skillFiles as filesOf } from "@orqestra/skills";
 import { availableTools } from "@orqestra/tools";
-import { eq } from "drizzle-orm";
-import { admin, limitsInput, servedBy, storedClient } from "./admin.ts";
+import {
+	admin,
+	forgetSkill,
+	limitsInput,
+	servedBy,
+	storedClient,
+} from "./admin.ts";
 import {
 	loadConfig,
 	modelRef,
@@ -30,6 +34,13 @@ import {
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
 
+export {
+	SkillNotFound,
+	skillCreateInput,
+	skillCurrentInput,
+	skillEditInput,
+	skillEnabledInput,
+} from "@orqestra/skills";
 export type {
 	DocumentParserTestResult,
 	McpTestResult,
@@ -45,16 +56,13 @@ export {
 	modelPriceInput,
 	providerInput,
 	providerTestInput,
-	SkillNotFound,
 	sandboxProviderInput,
 	searchProviderInput,
-	skillCreateInput,
-	skillCurrentInput,
-	skillEditInput,
-	skillEnabledInput,
-	skillFiles,
 	toolServiceInput,
 } from "./admin.ts";
+
+/** A Skill version's files, read from the global db. */
+export const skillFiles = (versionId: number) => filesOf(globalDb, versionId);
 export {
 	connectionStore,
 	deleteConnection,
@@ -73,7 +81,6 @@ async function loadSettings(db: Db): Promise<Settings> {
 		served,
 		mcpServers,
 		agents,
-		skills,
 		[sandbox],
 		[saved],
 		[parser],
@@ -85,17 +92,6 @@ async function loadSettings(db: Db): Promise<Settings> {
 		servedBy(db),
 		db.select().from(mcpServer).orderBy(mcpServer.createdAt),
 		db.select().from(agent).orderBy(agent.createdAt),
-		db
-			.select({
-				name: skill.name,
-				enabled: skill.enabled,
-				versionId: skillVersion.id,
-				description: skillVersion.description,
-				disableModelInvocation: skillVersion.disableModelInvocation,
-			})
-			.from(skill)
-			.innerJoin(skillVersion, eq(skill.currentVersionId, skillVersion.id))
-			.orderBy(skill.name),
 		db.select().from(sandboxProvider),
 		db.select().from(limits),
 		db.select().from(documentParser),
@@ -129,7 +125,6 @@ async function loadSettings(db: Db): Promise<Settings> {
 				value: decryptSecret(h.value, key),
 			})),
 		})),
-		skills,
 		// a stored row, read again by limitsInput so a bad one fails the load like a bad Agent Definition
 		limits: saved && limitsInput.parse(saved),
 		sandboxProvider: sandbox && {
@@ -147,7 +142,7 @@ async function loadSettings(db: Db): Promise<Settings> {
 	};
 }
 
-const logWarnings = (config: OrqestraConfig) => {
+const logWarnings = (config: Omit<OrqestraConfig, "skills">) => {
 	for (const a of config.agents) {
 		for (const ref of a.unavailableModels)
 			console.warn(`Agent "${a.id}": Model "${ref}" is not available`);
@@ -174,7 +169,32 @@ export function createConfig(db: Db) {
 		channel: CONFIG_CHANNEL,
 		load: () => loadSettings(db).then(loadConfig).then(logWarnings),
 	});
-	return { ...config, ...admin(config) };
+	// shortcut: the Skills keep their own snapshot, put in here until #131 gives Turn resolution the Skills itself
+	const skills = createSkills(db);
+	let last: { c: object; s: object; merged: OrqestraConfig } | undefined;
+	const current = async () => {
+		const [c, s] = await Promise.all([config.current(), skills.current()]);
+		// the same object while neither reloads, as a snapshot is
+		if (last?.c !== c || last.s !== s)
+			last = { c, s, merged: { ...c, skills: s } };
+		return last.merged;
+	};
+	return {
+		...config,
+		current,
+		close: async () => {
+			await Promise.all([config.close(), skills.close()]);
+		},
+		...admin({ current, write: config.write }),
+		skills: {
+			...skills,
+			/** Also removes it from every Agent Definition. */
+			delete: async (name: string) => {
+				await skills.delete(name);
+				await forgetSkill(config, name);
+			},
+		},
+	};
 }
 
 export type Config = ReturnType<typeof createConfig>;
