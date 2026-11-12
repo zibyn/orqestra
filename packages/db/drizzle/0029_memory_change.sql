@@ -13,7 +13,7 @@ CREATE TABLE "memory_change" (
 --> statement-breakpoint
 ALTER TABLE "memory_change" ADD CONSTRAINT "memory_change_conversation_id_conversation_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversation"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "memory_change" ADD CONSTRAINT "memory_change_before_conversation_id_conversation_id_fk" FOREIGN KEY ("before_conversation_id") REFERENCES "public"."conversation"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
--- Backfill from the Memory Tool results not yet undone (ADR 0010): what each call left is memory_write's `after`, memory_edit's `before` with `old`
+-- Backfill from the Memory Tool results not yet undone (ADR 0011): what each call left is memory_write's `after`, memory_edit's `before` with `old`
 -- (which occurred once) replaced, and nothing for memory_delete
 INSERT INTO "memory_change" ("conversation_id", "tool_call_id", "user_id", "path", "before", "before_conversation_id", "after")
 SELECT "m"."conversation_id", "m"."message"->>'toolCallId', "c"."user_id", "d"->>'path',

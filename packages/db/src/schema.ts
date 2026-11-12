@@ -384,7 +384,7 @@ export const memory = pgTable(
 	(table) => [unique().on(table.userId, table.path)],
 );
 
-// One change an Agent's Memory Tool call made (ADR 0010), written with it, so the User can undo it from the Conversation; goes with the Conversation, the Memory stays
+// One change an Agent's Memory Tool call made (ADR 0011), written with it, so the User can undo it from the Conversation; goes with the Conversation, the Memory stays
 export const memoryChange = pgTable(
 	"memory_change",
 	{

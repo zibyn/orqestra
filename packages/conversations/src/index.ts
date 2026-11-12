@@ -41,6 +41,7 @@ import {
 	endBackgroundCallsOf,
 	runningCalls,
 } from "./background-calls.ts";
+import { ConversationError } from "./errors.ts";
 import {
 	AGENT_RUNS_QUEUE,
 	conversationChannel,
@@ -55,20 +56,19 @@ import {
 	stopFiring,
 	stopSubagents,
 } from "./runs.ts";
-import { ensureSandbox } from "./sandbox.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
 import { SPENDING_LIMIT_USED_UP, spendingLimitStatus } from "./spending.ts";
 import { tasksOf } from "./tasks.ts";
 import { cancelTimer } from "./timers.ts";
 import {
-	copyAttachments,
 	deleteObjects,
+	sendAttachments,
 	storeAttachment,
 	sweepUnsentAttachments,
-	uploadPath,
 } from "./uploads.ts";
 
 export { MAX_UPLOAD_BYTES } from "@orqestra/config";
+export { ConversationError } from "./errors.ts";
 export {
 	MAX_RECALL_RESULTS,
 	MAX_SNIPPET,
@@ -120,18 +120,6 @@ export { listUsers, rememberUser, setSpendingLimit } from "./users.ts";
 
 // The only module that reads and writes Conversations, their Inbox, messages, Subagents and compactions.
 // The User's side takes the signed-in user's id everywhere: nobody else, Admins included, can see a Conversation.
-
-/** A request the User may not make as it stands; `field` and `code` say why, for the api's error body. */
-export class ConversationError extends Error {
-	override name = "ConversationError";
-	constructor(
-		message: string,
-		readonly field: string,
-		readonly code: string,
-	) {
-		super(message);
-	}
-}
 
 const owned = (userId: string, id: string) =>
 	db.query.conversation.findFirst({
@@ -465,12 +453,6 @@ export function createConversations({
 				incognito?: boolean;
 			},
 		) {
-			const names = [...new Set(input.attachments)];
-			const notAttachment = new ConversationError(
-				"Not an attachment's name",
-				"attachments",
-				"not_attachment",
-			);
 			const cfg = await config();
 			const existing = input.conversationId
 				? await owned(userId, input.conversationId)
@@ -505,60 +487,16 @@ export function createConversations({
 					"agent_not_pickable",
 				);
 			const content = await expandSkill(cfg, turn.agent, input.text);
-			// marked sent before they are copied, so the sweep cannot delete one on its way into the Sandbox
-			const rows =
-				existing && names.length
-					? await db.transaction(async (tx) => {
-							const found = await tx
-								.select()
-								.from(attachment)
-								.where(
-									and(
-										eq(attachment.conversationId, existing.id),
-										inArray(attachment.name, names),
-									),
-								)
-								.for("update");
-							// a name never stored, swept, or unsafe (stored names are safe) is refused
-							if (found.length !== names.length) throw notAttachment;
-							await tx
-								.update(attachment)
-								.set({ sent: true })
-								.where(
-									inArray(
-										attachment.id,
-										found.map((r) => r.id),
-									),
-								);
-							return found;
-						})
-					: [];
-			if (rows.length !== names.length) throw notAttachment;
-			const attachments = names.map((name) => ({
-				name,
-				path: uploadPath(name),
-			}));
-			const provider = cfg.sandboxProvider;
-			if (existing && rows.length && provider) {
-				// orrery's 65-second request timeout is too short to copy 50 MB
-				const client = orrery({ ...provider, timeoutMs: 10 * 60_000 });
-				try {
-					const sandbox = await ensureSandbox(existing.id, client, provider);
-					await copyAttachments(store, client, sandbox.id, rows);
-				} catch (error) {
-					// not sent after all: those that were unsent are the sweep's again
-					await db
-						.update(attachment)
-						.set({ sent: false })
-						.where(
-							inArray(
-								attachment.id,
-								rows.filter((r) => !r.sent).map((r) => r.id),
-							),
-						);
-					throw error;
-				}
-			}
+			const attached = await sendAttachments(
+				{ store, orrery },
+				existing?.id,
+				input.attachments ?? [],
+				{
+					sandboxProvider: cfg.sandboxProvider,
+					// as the toolbox offers Parse: listed by the Agent and served by a Document Parser
+					parse: turn.agent.tools.includes("parse") && !!cfg.tools.parse,
+				},
+			);
 
 			const conversationId = await db.transaction(async (tx) => {
 				let id = existing?.id;
@@ -583,25 +521,15 @@ export function createConversations({
 				}
 				await tx.insert(inbox).values({
 					conversationId: id,
-					message: attachments.length
+					message: attached
 						? {
 								role: "user",
 								content: [
 									{ type: "text", text: content },
-									{
-										type: "text",
-										text: provider
-											? `\n\nAttached files, in your Sandbox:\n${attachments.map((a) => `- ${a.path}`).join("\n")}`
-											: `\n\nAttached files${
-													// as the toolbox offers Parse: listed by the Agent and served by a Document Parser
-													turn.agent.tools.includes("parse") && cfg.tools.parse
-														? ", which the Parse tool reads by name"
-														: ""
-												}:\n${names.map((name) => `- ${name}`).join("\n")}`,
-									},
+									{ type: "text", text: attached.text },
 								],
 								// the User sees their names in place of the second text
-								attachments,
+								attachments: attached.attachments,
 								timestamp: Date.now(),
 							}
 						: { role: "user", content, timestamp: Date.now() },
