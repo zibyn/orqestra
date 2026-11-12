@@ -92,6 +92,19 @@ describe.skipIf(!url)("live (Postgres)", () => {
 		}
 	});
 
+	it("closes lives of different channels on one pool at once", async () => {
+		const pool = drizzle(url as string, { schema });
+		const lives = ["live_test_a", "live_test_b"].map((channel) =>
+			live(pool, { channel, load: async () => 1 }),
+		);
+		try {
+			await Promise.all(lives.map((l) => l.current()));
+			await Promise.all(lives.map((l) => l.close()));
+		} finally {
+			await pool.$client.end();
+		}
+	});
+
 	it("does not reload when the write rolls back", async () => {
 		const l = open(ids);
 		await l.current();

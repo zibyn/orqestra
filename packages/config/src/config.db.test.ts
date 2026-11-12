@@ -7,7 +7,7 @@ if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
 const { createConfig } = await import("./live.ts");
-const { catalogProviders, turnSkills } = await import("./index.ts");
+const { turnSkills } = await import("./index.ts");
 const { availableTools } = await import("@orqestra/tools");
 const { skillFiles, limitsInput } = await import("./live.ts");
 const { zip } = await import("./test-zip.ts");
@@ -57,54 +57,6 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 	afterAll(async () => {
 		await reset();
 		await config.close();
-	});
-
-	describe("Providers", () => {
-		it("requires an API key on the first save", async () => {
-			const result = await config.providers.save({
-				id: "deepseek",
-				apiKey: "",
-				baseUrl: "https://api.deepseek.com",
-			});
-			expect(result.errors).toEqual({ apiKey: { code: "api_key_required" } });
-			expect((await config.providers.list()).configured).toEqual([]);
-		});
-
-		it("stores no baseUrl when it is the Catalog's, and keeps the key when left blank", async () => {
-			const catalog = (await catalogProviders()).find(
-				(p) => p.id === "deepseek",
-			);
-			const baseUrl = `${catalog?.baseUrl}/`;
-			expect(
-				await config.providers.save({ id: "deepseek", apiKey: "sk", baseUrl }),
-			).toEqual({ errors: {} });
-			expect(
-				await config.providers.save({ id: "deepseek", apiKey: "", baseUrl }),
-			).toEqual({ errors: {} });
-			expect((await config.providers.list()).configured).toEqual([
-				{
-					id: "deepseek",
-					baseUrl: null,
-					keyReadable: true,
-					enabledModels: [],
-				},
-			]);
-		});
-
-		it("refuses to enable a Model that is not in the Catalog", async () => {
-			await config.providers.save({
-				id: "deepseek",
-				apiKey: "sk",
-				baseUrl: "http://10.0.0.1",
-			});
-			await expect(
-				config.providers.setModelEnabled({
-					providerId: "deepseek",
-					modelId: "gone",
-					enabled: true,
-				}),
-			).rejects.toThrow(/not in the Catalog/);
-		});
 	});
 
 	describe("Search Providers", () => {

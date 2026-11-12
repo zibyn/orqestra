@@ -46,6 +46,8 @@ async function listen(db: Db, channel: string, onNotify: () => void) {
 			await cl.query(`UNLISTEN ${channel}`);
 			return;
 		}
+		// lives closing at once each see no channel left; only the first releases
+		if (listeners.get(db) !== l) return;
 		listeners.delete(db);
 		cl.release(true);
 	};

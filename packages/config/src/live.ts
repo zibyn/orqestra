@@ -3,25 +3,21 @@ import { live } from "@orqestra/db/live";
 import {
 	agent,
 	documentParser,
-	enabledModel,
 	limits,
 	mcpServer,
-	modelPrice,
-	provider,
 	sandboxProvider,
 	searchProvider,
 	skill,
 	skillVersion,
 } from "@orqestra/db/schema";
 import { decryptSecret, encryptionKey } from "@orqestra/db/secret";
+import { createModels, type ModelSettings } from "@orqestra/models";
 import { availableTools } from "@orqestra/tools";
 import { eq } from "drizzle-orm";
 import { admin, limitsInput, servedBy, storedClient } from "./admin.ts";
 import {
-	loadConfig,
-	modelRef,
 	type OrqestraConfig,
-	pricesByModel,
+	resolveConfig,
 	type SearchProviderId,
 	type Settings,
 	toolName,
@@ -30,6 +26,13 @@ import {
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
 
+// shortcut: re-exported until callers import them from @orqestra/models (#122)
+export {
+	modelEnabledInput,
+	modelPriceInput,
+	providerInput,
+	providerTestInput,
+} from "@orqestra/models";
 export type {
 	DocumentParserTestResult,
 	McpTestResult,
@@ -41,10 +44,6 @@ export {
 	limitsInput,
 	mcpServerEnabledInput,
 	mcpServerInput,
-	modelEnabledInput,
-	modelPriceInput,
-	providerInput,
-	providerTestInput,
 	SkillNotFound,
 	sandboxProviderInput,
 	searchProviderInput,
@@ -62,13 +61,12 @@ export {
 	userConnections,
 } from "./connections.ts";
 
-/** Everything saved in /console, with API keys decrypted. */
-async function loadSettings(db: Db): Promise<Settings> {
+/** Everything saved in /console but what the models package loads, with API keys decrypted. */
+async function loadSettings(
+	db: Db,
+): Promise<Omit<Settings, keyof ModelSettings>> {
 	const key = encryptionKey();
 	const [
-		providers,
-		enabled,
-		prices,
 		searchProviders,
 		served,
 		mcpServers,
@@ -78,9 +76,6 @@ async function loadSettings(db: Db): Promise<Settings> {
 		[saved],
 		[parser],
 	] = await Promise.all([
-		db.select().from(provider),
-		db.select().from(enabledModel),
-		db.select().from(modelPrice),
 		db.select().from(searchProvider),
 		servedBy(db),
 		db.select().from(mcpServer).orderBy(mcpServer.createdAt),
@@ -101,15 +96,6 @@ async function loadSettings(db: Db): Promise<Settings> {
 		db.select().from(documentParser),
 	]);
 	return {
-		providers: providers.map((p) => ({
-			id: p.id,
-			apiKey: decryptSecret(p.apiKey, key),
-			baseUrl: p.baseUrl,
-		})),
-		enabledModels: enabled.map((m) =>
-			modelRef({ provider: m.providerId, id: m.modelId }),
-		),
-		modelPrices: pricesByModel(prices),
 		agents,
 		searchProviders: searchProviders.map((p) => ({
 			id: p.id as SearchProviderId,
@@ -170,11 +156,43 @@ const logWarnings = (config: OrqestraConfig) => {
  * The api and the worker each create one at startup.
  */
 export function createConfig(db: Db) {
-	const config = live(db, {
+	const models = createModels(db);
+	const settings = live(db, {
 		channel: CONFIG_CHANNEL,
-		load: () => loadSettings(db).then(loadConfig).then(logWarnings),
+		load: () => loadSettings(db),
 	});
-	return { ...config, ...admin(config) };
+	// resolved again only when either snapshot was reloaded
+	let last:
+		| { from: [unknown, unknown]; config: Promise<OrqestraConfig> }
+		| undefined;
+	const current = async () => {
+		const [s, m] = await Promise.all([settings.current(), models.current()]);
+		if (last?.from[0] !== s || last.from[1] !== m) {
+			const next = Promise.resolve().then(() =>
+				logWarnings(resolveConfig(s, m)),
+			);
+			const previous = last?.config;
+			// as live does: a failed reload keeps the previous config
+			last = {
+				from: [s, m],
+				config: previous
+					? next.catch((error) => {
+							console.error(`${CONFIG_CHANNEL}: reload failed`, error);
+							return previous;
+						})
+					: next,
+			};
+		}
+		return last.config;
+	};
+	const { write } = settings;
+	return {
+		current,
+		write,
+		close: () => Promise.all([settings.close(), models.close()]),
+		...admin({ current, write }),
+		providers: models.providers,
+	};
 }
 
 export type Config = ReturnType<typeof createConfig>;
