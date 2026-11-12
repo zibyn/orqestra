@@ -1,6 +1,6 @@
 import { searchProviderId } from "@orqestra/config";
 import {
-	config,
+	type Config,
 	searchProviderInput,
 	toolServiceInput,
 } from "@orqestra/config/live";
@@ -11,7 +11,7 @@ import type { SignedIn } from "./app.ts";
 import { saved } from "./saved.ts";
 
 // Search Providers and which one serves each Tool, edited by Admins in /console/search. API keys only go in.
-export const searchProviders = (signedIn: SignedIn) =>
+export const searchProviders = (signedIn: SignedIn, config: Config) =>
 	new Elysia({ prefix: "/search-providers" })
 		.use(signedIn)
 		.derive(adminOnly)

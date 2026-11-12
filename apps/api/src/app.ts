@@ -1,3 +1,4 @@
+import type { Config } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import type { OrqestraReach } from "@orqestra/tools";
 import { Elysia } from "elysia";
@@ -56,12 +57,14 @@ export function createApp({
 	session,
 	auth,
 	conversations,
+	config,
 	orqestraUrl = "http://localhost",
 	fetch,
 }: {
 	session: Session;
 	auth: Auth;
 	conversations: Conversations;
+	config: Config;
 	// tests that connect no User may leave orqestraUrl out
 } & OrqestraReach) {
 	const user = signedIn(session);
@@ -85,18 +88,18 @@ export function createApp({
 					});
 				})
 				.use(user)
-				.use(skills(user))
+				.use(skills(user, config))
 				.use(conversationRoutes(user, conversations))
 				.use(scheduledTaskRoutes(user, conversations))
 				.use(pushRoutes(user, conversations))
-				.use(providers(user))
-				.use(searchProviders(user))
-				.use(mcpServers(user, conversations, { orqestraUrl, fetch }))
-				.use(connectionRoutes(user, { orqestraUrl, fetch }))
-				.use(sandboxProvider(user))
-				.use(documentParser(user))
-				.use(limits(user))
-				.use(agents(user))
+				.use(providers(user, config))
+				.use(searchProviders(user, config))
+				.use(mcpServers(user, config, conversations, { orqestraUrl, fetch }))
+				.use(connectionRoutes(user, config, { orqestraUrl, fetch }))
+				.use(sandboxProvider(user, config))
+				.use(documentParser(user, config))
+				.use(limits(user, config))
+				.use(agents(user, config))
 				.use(users(user))
 				.use(usageRoutes(user))
 				.derive(signedInOnly)

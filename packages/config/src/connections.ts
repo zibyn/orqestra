@@ -8,6 +8,7 @@ import {
 	mcpServer,
 	user,
 } from "@orqestra/db/schema";
+import { decryptSecret, encryptSecret } from "@orqestra/db/secret";
 import {
 	type ConnectionStore,
 	type ConnectionTokens,
@@ -20,7 +21,6 @@ import {
 } from "@orqestra/tools";
 import { and, eq, lt, or, sql } from "drizzle-orm";
 import { mcpToolRef, type OrqestraConfig } from "./index.ts";
-import { decryptSecret, encryptSecret } from "./secret.ts";
 
 const sealed = (value: unknown) => encryptSecret(JSON.stringify(value));
 const opened = <T>(stored: string): T | undefined => {

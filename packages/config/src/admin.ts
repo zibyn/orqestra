@@ -1,4 +1,4 @@
-import { db, type Tx } from "@orqestra/db";
+import { type Db, db, type Tx } from "@orqestra/db";
 import {
 	agent,
 	documentParser,
@@ -14,6 +14,7 @@ import {
 	skillVersion,
 	toolService,
 } from "@orqestra/db/schema";
+import { decryptSecret, sealSecret, secretReadable } from "@orqestra/db/secret";
 import {
 	availableTools,
 	type DocumentParserTestResult,
@@ -56,7 +57,6 @@ import {
 	timeZone,
 	turnSkills,
 } from "./index.ts";
-import { decryptSecret, sealSecret, secretReadable } from "./secret.ts";
 import {
 	checkSkill,
 	parseSkillZip,
@@ -245,8 +245,8 @@ async function saveKeyed(
 }
 
 /** Which Search Provider serves each Tool; null when none is picked. */
-export async function servedBy() {
-	const served = await db.select().from(toolService);
+export async function servedBy(from: Db = db) {
+	const served = await from.select().from(toolService);
 	const by = (tool: SearchToolName) =>
 		(served.find((s) => s.tool === tool)?.searchProviderId ??
 			null) as SearchProviderId | null;

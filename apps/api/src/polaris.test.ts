@@ -1,5 +1,6 @@
 // Polaris' SDK is written for Node: this runs it on Bun against a fake issuer, from sign-in through a refresh.
 import { afterAll, describe, expect, it } from "bun:test";
+import type { Config } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { createApp } from "./app.ts";
@@ -67,6 +68,7 @@ const issuer = `http://localhost:${server.port}`;
 afterAll(() => server.stop(true));
 
 const app = createApp({
+	config: {} as Config,
 	...polaris({
 		ORQESTRA_URL: "http://orqestra.test",
 		POLARIS_ISSUER: issuer,

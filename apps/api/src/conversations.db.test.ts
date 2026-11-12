@@ -8,6 +8,7 @@ import {
 } from "bun:test";
 import { fauxProvider } from "@earendil-works/pi-ai";
 import type { AgentDefinition, OrqestraConfig } from "@orqestra/config";
+import { createConfig } from "@orqestra/config/live";
 import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { memoryStore } from "@orqestra/tools/testing";
@@ -51,6 +52,7 @@ const bob: User = { id: "bob", name: "Bob", admin: false };
 /** The app, every request signed in as user. */
 function app(user: User | null) {
 	const api = createApp({
+		config: createConfig(db),
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(),
 		conversations,

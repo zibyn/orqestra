@@ -7,7 +7,8 @@ const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
 const { conversation } = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
-const { config, skillFiles } = await import("@orqestra/config/live");
+const { createConfig, skillFiles } = await import("@orqestra/config/live");
+const config = createConfig(db);
 const { createConversations } = await import("@orqestra/conversations");
 const { createApp } = await import("./app.ts");
 
@@ -21,6 +22,7 @@ const conversations = createConversations({
 function app(user: typeof ada | null, cookies: string[] = []) {
 	const session: Session = async () => ({ user, cookies });
 	const api = createApp({
+		config: config,
 		session,
 		auth: () => new Response(null, { status: 404 }),
 		conversations,

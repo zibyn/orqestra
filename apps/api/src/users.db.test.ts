@@ -6,6 +6,7 @@ import {
 	it,
 	setSystemTime,
 } from "bun:test";
+import { createConfig } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { sql } from "drizzle-orm";
@@ -25,6 +26,7 @@ const admin: User = {
 /** A request to the api as user, its session read the way production reads Polaris'. */
 async function call(user: User, path: string, put?: unknown) {
 	const api = createApp({
+		config: createConfig(db),
 		session: rememberUsers(async () => ({ user, cookies: [] })),
 		auth: () => new Response(null, { status: 404 }),
 		conversations: {} as Conversations,

@@ -1,5 +1,5 @@
 import { agentId } from "@orqestra/config";
-import { agentInput, config } from "@orqestra/config/live";
+import { agentInput, type Config } from "@orqestra/config/live";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { adminOnly } from "./admin.ts";
@@ -7,7 +7,7 @@ import type { SignedIn } from "./app.ts";
 import { saved } from "./saved.ts";
 
 // Agent Definitions, edited by Admins in /console/agents.
-export const agents = (signedIn: SignedIn) =>
+export const agents = (signedIn: SignedIn, config: Config) =>
 	new Elysia({ prefix: "/agents" })
 		.use(signedIn)
 		.derive(adminOnly)

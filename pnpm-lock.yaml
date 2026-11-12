@@ -256,6 +256,9 @@ importers:
       '@orqestra/conversations':
         specifier: workspace:*
         version: link:../../packages/conversations
+      '@orqestra/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@orqestra/memory':
         specifier: workspace:*
         version: link:../../packages/memory
@@ -263,9 +266,6 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tools
     devDependencies:
-      '@orqestra/db':
-        specifier: workspace:*
-        version: link:../../packages/db
       '@types/bun':
         specifier: latest
         version: 1.4.4
@@ -380,6 +380,9 @@ importers:
       typescript:
         specifier: ^6.0.2
         version: 6.0.3
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
   packages/memory:
     dependencies:

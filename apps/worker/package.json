@@ -18,11 +18,11 @@
     "@opentelemetry/sdk-trace": "^3.1.1",
     "@orqestra/config": "workspace:*",
     "@orqestra/conversations": "workspace:*",
+    "@orqestra/db": "workspace:*",
     "@orqestra/memory": "workspace:*",
     "@orqestra/tools": "workspace:*"
   },
   "devDependencies": {
-    "@orqestra/db": "workspace:*",
     "@types/bun": "latest",
     "drizzle-orm": "^0.45.4",
     "typescript": "^6.0.2"

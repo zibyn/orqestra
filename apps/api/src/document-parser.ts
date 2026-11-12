@@ -1,11 +1,11 @@
-import { config, documentParserInput } from "@orqestra/config/live";
+import { type Config, documentParserInput } from "@orqestra/config/live";
 import { Elysia } from "elysia";
 import { adminOnly } from "./admin.ts";
 import type { SignedIn } from "./app.ts";
 import { saved } from "./saved.ts";
 
 // The Document Parser (MinerU), edited by Admins in /console/parse. The key only goes in.
-export const documentParser = (signedIn: SignedIn) =>
+export const documentParser = (signedIn: SignedIn, config: Config) =>
 	new Elysia({ prefix: "/document-parser" })
 		.use(signedIn)
 		.derive(adminOnly)

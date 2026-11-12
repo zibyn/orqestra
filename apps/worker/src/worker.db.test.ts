@@ -55,7 +55,8 @@ const { asc, eq, sql } = await import("drizzle-orm");
 const { limits, pushSubscription, usage, user } = await import(
 	"@orqestra/db/schema"
 );
-const { config, skillFiles } = await import("@orqestra/config/live");
+const { createConfig, skillFiles } = await import("@orqestra/config/live");
+const config = createConfig(db);
 const { DEFAULT_LIMITS } = await import("@orqestra/config");
 const { createConversations, MAX_SUBAGENTS_PER_USER_MESSAGE } = await import(
 	"@orqestra/conversations"

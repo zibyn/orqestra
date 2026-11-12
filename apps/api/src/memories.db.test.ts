@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
+import { createConfig } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { memory } from "@orqestra/db/schema";
@@ -13,6 +14,7 @@ const bob: User = { id: "bob", name: "Bob", admin: false };
 /** A request to the api as user, or signed out with null. */
 function call(user: User | null, method: string, path: string, body?: unknown) {
 	const api = createApp({
+		config: createConfig(db),
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(null, { status: 404 }),
 		conversations: {} as Conversations,

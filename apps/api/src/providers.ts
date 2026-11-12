@@ -1,5 +1,5 @@
 import {
-	config,
+	type Config,
 	modelEnabledInput,
 	modelPriceInput,
 	providerInput,
@@ -11,7 +11,7 @@ import type { SignedIn } from "./app.ts";
 import { saved } from "./saved.ts";
 
 // Providers and enabled Models, edited by Admins in /console/providers. API keys only go in, never back out.
-export const providers = (signedIn: SignedIn) =>
+export const providers = (signedIn: SignedIn, config: Config) =>
 	new Elysia({ prefix: "/providers" })
 		.use(signedIn)
 		.derive(adminOnly)

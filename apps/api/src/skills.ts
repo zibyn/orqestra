@@ -1,5 +1,5 @@
 import {
-	config,
+	type Config,
 	SkillNotFound,
 	skillCreateInput,
 	skillCurrentInput,
@@ -32,7 +32,7 @@ const tooLarge = () =>
 const nameParams = z.object({ name: z.string() });
 
 /** Skills, managed by Admins in the console. */
-export const skills = (signedIn: SignedIn) =>
+export const skills = (signedIn: SignedIn, config: Config) =>
 	new Elysia({ prefix: "/skills" })
 		.use(signedIn)
 		.derive(adminOnly)

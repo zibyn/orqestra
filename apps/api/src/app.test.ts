@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { Config } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { createApp, type Session } from "./app.ts";
 
@@ -16,7 +17,12 @@ function app(user: typeof ada | null, cookies: string[] = []) {
 			headers: { "set-cookie": "polaris.tx=t; Path=/" },
 		});
 	// no route here reaches Conversations; the *.db.test.ts use the real ones
-	const api = createApp({ session, auth, conversations: {} as Conversations });
+	const api = createApp({
+		session,
+		auth,
+		conversations: {} as Conversations,
+		config: {} as Config,
+	});
 	// handle needs its app as this
 	return { handle: (request: Request) => api.handle(request), reads };
 }
