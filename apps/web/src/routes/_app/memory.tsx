@@ -1,4 +1,9 @@
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import {
+	createFileRoute,
+	getRouteApi,
+	Link,
+	useRouter,
+} from "@tanstack/react-router";
 import { BrainIcon } from "lucide-react";
 import { useState } from "react";
 import {
@@ -10,6 +15,7 @@ import {
 	SheetForm,
 	useSheet,
 } from "#/components/ConsolePage";
+import { TaskForm } from "#/components/TaskForm";
 import { Alert, AlertDescription } from "#/components/ui/alert";
 import { Button } from "#/components/ui/button";
 import {
@@ -24,9 +30,11 @@ import { Switch } from "#/components/ui/switch";
 import { Textarea } from "#/components/ui/textarea";
 import { api, ok } from "#/lib/api";
 import { errorText } from "#/lib/save-errors";
+import type { TaskDraft } from "#/lib/tasks";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
 
+const appRoute = getRouteApi("/_app");
 const memoryApi = () => api().api.memories;
 const getMemories = () => ok(memoryApi().get());
 
@@ -38,9 +46,13 @@ export const Route = createFileRoute("/_app/memory")({
 type Data = Awaited<ReturnType<typeof getMemories>>;
 type Memory = Data["memories"][number];
 
-/** The signed-in User's Memories: filter, view and edit, delete one or all, and the memory master switch. */
+/** The signed-in User's Memories: filter, view and edit, delete one or all, the memory master switch, and a Scheduled Task to tidy them. */
 function MemoryPage() {
 	const { memories, on, limits } = Route.useLoaderData();
+	const { agents } = appRoute.useLoaderData();
+	// only an Agent with memory on can tidy the Memories
+	const tidiers = agents.filter((a) => a.pickable && a.memory);
+	const tidy = useSheet<TaskDraft>();
 	const router = useRouter();
 	const sheet = useSheet<Memory>();
 	const [filter, setFilter] = useState("");
@@ -83,6 +95,29 @@ function MemoryPage() {
 							/>
 							<Label htmlFor="memory-on">{m.memory_on()}</Label>
 						</div>
+						{!!tidiers.length && (
+							<Button
+								variant="outline"
+								disabled={!!busy || !on}
+								onClick={() =>
+									tidy.show({
+										name: m.memory_consolidate_name(),
+										prompt: m.memory_consolidate_prompt(),
+										agentId: tidiers[0].id,
+										model: tidiers[0].defaultModel,
+										thinking:
+											tidiers[0].models.find(
+												(x) => x.ref === tidiers[0].defaultModel,
+											)?.thinking.default ?? "off",
+										schedule: { kind: "cron", expr: "0 4 * * *" },
+										endsAt: null,
+										incognito: false,
+									})
+								}
+							>
+								{m.memory_consolidate()}
+							</Button>
+						)}
 						<Button
 							variant="outline"
 							disabled={!!busy || !memories.length}
@@ -173,6 +208,11 @@ function MemoryPage() {
 							limits={limits}
 							onSaved={sheet.close}
 						/>
+					)}
+				</FormSheet>
+				<FormSheet open={tidy.open} onClose={tidy.close} title={m.task_new()}>
+					{tidy.item && (
+						<TaskForm draft={tidy.item} agents={tidiers} onSaved={tidy.close} />
 					)}
 				</FormSheet>
 			</ConsolePage>

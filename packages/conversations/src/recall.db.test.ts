@@ -128,6 +128,28 @@ describe.skipIf(!url)("Recall (Postgres)", () => {
 		expect(some.map((f) => f.at.getUTCDate())).toEqual([5, 4, 3]);
 	});
 
+	it("lists the past Conversations had in a time, latest first, by their last message then", async () => {
+		const other = await newConversation("u1", { title: "Recipes" });
+		const incognito = await newConversation("u1", { incognito: true });
+		const theirs = await newConversation("u2");
+		const day = (d: number) => new Date(Date.UTC(2026, 0, d));
+		await say(past, user("one"), day(1));
+		await say(past, user("three"), day(3));
+		await say(other, user("two"), day(2));
+		await say(other, user("five"), day(5));
+		await say(current, user("now"), day(3));
+		await say(incognito, user("hidden"), day(3));
+		await say(theirs, user("not mine"), day(3));
+		const mine = recallOf("u1", current);
+		expect(await mine.list({ after: day(2), before: day(4) })).toEqual([
+			{ conversationId: past, title: "Trip planning", at: day(3) },
+			{ conversationId: other, title: "Recipes", at: day(2) },
+		]);
+		expect(
+			(await mine.list({ after: day(4) })).map((c) => c.conversationId),
+		).toEqual([other]);
+	});
+
 	it("opens one of the User's past Conversations, and none of anyone else's", async () => {
 		await say(past, user("where to?"), new Date("2026-01-01T00:00:00Z"));
 		await say(past, assistant("Lisbon"), new Date("2026-01-01T00:01:00Z"));

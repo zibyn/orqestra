@@ -179,8 +179,12 @@ The list of a User's Memories, one line each with its path and description, that
 _Avoid_: Memory file, summary, profile
 
 **Recall**:
-The Tool that finds a User's past Conversations by keyword and opens them, so an Agent can use what was said before even if no Memory holds it. It comes and goes with memory, and never finds an Incognito Conversation.
+The Tool that finds a User's past Conversations by keyword, lists those had in a span of time, and opens them, so an Agent can use what was said before even if no Memory holds it, and check what a Memory was written from. It comes and goes with memory, and never finds an Incognito Conversation.
 _Avoid_: Search (that is the web), history search, chat search
+
+**Memory Tidying**:
+A Scheduled Task the User sets up from their Memory page, by default every night, whose Agent reads the Conversations had since it last ran and holds them against the Memories: recording what lasts, correcting what later Conversations contradict, merging and deleting. It is an ordinary Scheduled Task with an Agent that uses memory, so each Firing is a Conversation the User sees and its changes can be undone there like any other.
+_Avoid_: Dreaming, consolidation job, memory maintenance
 
 **Incognito Conversation**:
 A Conversation the User starts with memory off: its Agent neither reads nor writes Memories nor uses Recall, and Recall never finds it. It is chosen when the Conversation starts and cannot be changed afterwards; otherwise it is an ordinary Conversation.

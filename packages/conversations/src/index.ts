@@ -255,6 +255,8 @@ export function createConversations({
 					description: a.description,
 					default: a.default,
 					pickable: a.pickable,
+					// whether it can tidy the User's Memories, as their Memory page's consolidation task needs
+					memory: a.memory,
 					defaultModel: a.defaultModel,
 					// the User may invoke those the Agent may not
 					skills: turnSkills(cfg, a).map(({ name, description }) => ({

@@ -9,6 +9,7 @@ import {
 	isNotNull,
 	isNull,
 	lte,
+	max,
 	ne,
 	sql,
 } from "drizzle-orm";
@@ -33,6 +34,11 @@ export type Recall = {
 		keyword: string,
 		range?: { after?: Date; before?: Date },
 	): Promise<Recalled[]>;
+	/** The Conversations with messages sent between `after` and `before`, latest first, each with its last such message's time. */
+	list(range: {
+		after?: Date;
+		before?: Date;
+	}): Promise<Omit<Recalled, "snippet">[]>;
 	/** The text of a Conversation's messages, in order; undefined when it is not one `search` could find. */
 	open(conversationId: string): Promise<
 		| {
@@ -99,6 +105,28 @@ export function recallOf(userId: string, conversationId: string): Recall {
 				...r,
 				snippet: snippet(text ?? "", keyword),
 			}));
+		},
+		list: async ({ after, before }) => {
+			const at = max(message.createdAt);
+			return db
+				.select({
+					conversationId: conversation.id,
+					title: conversation.title,
+					at: sql<Date>`${at}`.mapWith(message.createdAt),
+				})
+				.from(message)
+				.innerJoin(conversation, eq(message.conversationId, conversation.id))
+				.where(
+					and(
+						past,
+						isNotNull(message.text),
+						after && gte(message.createdAt, after),
+						before && lte(message.createdAt, before),
+					),
+				)
+				.groupBy(conversation.id)
+				.orderBy(desc(at))
+				.limit(MAX_RECALL_RESULTS);
 		},
 		open: async (id) => {
 			if (!UUID.test(id)) return undefined;

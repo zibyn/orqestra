@@ -1125,6 +1125,7 @@ describe("runAgent with memory", () => {
 		expect(missed.isError).toBe(true);
 		expect(JSON.stringify(missed.content)).toContain("not found");
 		expect(JSON.stringify(read.content)).toContain("ticket 37");
+		expect(JSON.stringify(read.content)).toContain('conversation=\\"memory\\"');
 		expect(JSON.stringify(grep.content)).toContain("prefs/language");
 		expect(del.isError).toBe(false);
 		expect([...m.memories.values()]).toMatchObject([
@@ -1235,7 +1236,7 @@ describe("runAgent with memory", () => {
 		expect(tools(context)).not.toContain('"recall"');
 	});
 
-	it("searches the User's past Conversations by keyword and time with Recall, and opens one", async () => {
+	it("searches the User's past Conversations by keyword and time with Recall, lists them by time, and opens one", async () => {
 		const searched: unknown[] = [];
 		const at = new Date("2026-03-01T10:00:00Z");
 		const recall = {
@@ -1244,6 +1245,10 @@ describe("runAgent with memory", () => {
 				return [
 					{ conversationId: "c1", title: "杭州", at, snippet: "去杭州出差" },
 				];
+			},
+			list: async (range: object) => {
+				searched.push({ range });
+				return [{ conversationId: "c1", title: "杭州", at }];
 			},
 			open: async (id: string) =>
 				id === "c1"
@@ -1266,6 +1271,7 @@ describe("runAgent with memory", () => {
 				fauxToolCall("recall", { conversation: "c1" }),
 				fauxToolCall("recall", { conversation: "c2" }),
 				fauxToolCall("recall", {}),
+				fauxToolCall("recall", { after: "2026-02-01" }),
 			]),
 			fauxAssistantMessage("done"),
 		]);
@@ -1280,14 +1286,18 @@ describe("runAgent with memory", () => {
 					before: new Date("2026-12-31T23:59:59Z"),
 				},
 			},
+			{ range: { after: new Date("2026-02-01T00:00:00Z"), before: undefined } },
 		]);
-		const [search, open, missing, neither] = results(m);
+		const [search, open, missing, neither, listed] = results(m);
 		expect(JSON.stringify(search.content)).toContain("c1");
 		expect(JSON.stringify(search.content)).toContain("去杭州出差");
 		expect(JSON.stringify(search.content)).toContain("2026-03-01T10:00:00");
 		expect(JSON.stringify(open.content)).toContain("好的");
 		expect(missing.isError).toBe(true);
 		expect(neither.isError).toBe(true);
+		expect(JSON.stringify(listed.content)).toContain(
+			'id=\\"c1\\" title=\\"杭州\\" last_message=\\"2026-03-01T10:00:00.000Z\\"',
+		);
 	});
 });
 

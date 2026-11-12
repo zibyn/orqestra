@@ -54,7 +54,11 @@ export function memoryRun({
 	timerRings = Number.POSITIVE_INFINITY,
 	memories = [],
 	memoryOff = false,
-	recall = { search: async () => [], open: async () => undefined },
+	recall = {
+		search: async () => [],
+		list: async () => [],
+		open: async () => undefined,
+	},
 	attachments = {},
 }: {
 	transcript: Transcript;
