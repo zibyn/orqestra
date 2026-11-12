@@ -41,13 +41,11 @@ async function listen(db: Db, channel: string, onNotify: () => void) {
 		subscribers.delete(onNotify);
 		if (subscribers.size) return;
 		channels.delete(channel);
-		const cl = await client;
-		if (channels.size) {
-			await cl.query(`UNLISTEN ${channel}`);
-			return;
-		}
+		// no UNLISTEN: a NOTIFY on a channel without subscribers is ignored, and lives closing at once
+		// would race it against the release; decided before awaiting, so only the last one releases
+		if (channels.size) return;
 		listeners.delete(db);
-		cl.release(true);
+		(await client).release(true);
 	};
 }
 

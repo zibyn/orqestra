@@ -14,15 +14,13 @@ import {
 	ModelRuntime,
 	stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
-import type { McpServer, SandboxProvider, ToolServices } from "@orqestra/tools";
+import type { McpServer } from "@orqestra/tools";
+import type { ToolConfig } from "@orqestra/tools/live";
 import type { z } from "zod";
 import {
 	agentDefinition,
 	definitionIssues,
-	type SearchProviderId,
-	type SearchToolName,
 	type SpendingLimit,
-	searchProviders,
 	searchToolNames,
 	type ToolRef,
 } from "./shared.ts";
@@ -73,20 +71,6 @@ export interface Settings {
 	modelPrices: Record<string, Model<Api>["cost"]>;
 	/** Agent Definitions as stored, validated by `loadConfig`. */
 	agents: { id: string; definition: unknown }[];
-	/** `apiKey` is undefined when the stored key cannot be decrypted; `baseUrl` null means the official one. */
-	searchProviders: {
-		id: SearchProviderId;
-		apiKey: string | undefined;
-		baseUrl: string | null;
-	}[];
-	/** The Search Provider picked for each Tool. */
-	servedBy: Record<SearchToolName, SearchProviderId | null>;
-	/** Omitted when none is configured; `apiKey` is null when none is stored, undefined when it cannot be decrypted. */
-	documentParser?: {
-		enabled: boolean;
-		url: string;
-		apiKey: string | null | undefined;
-	};
 	/** A header `value` is undefined when it cannot be decrypted. */
 	mcpServers: {
 		id: string;
@@ -101,14 +85,6 @@ export interface Settings {
 		} | null;
 		headers: { name: string; value: string | undefined }[];
 	}[];
-	/** Omitted when none is configured; `token` is undefined when it cannot be decrypted, `snapshot` null means orrery's default. */
-	sandboxProvider?: {
-		url: string;
-		token: string | undefined;
-		snapshot: string | null;
-		cpu: number;
-		memory: number;
-	};
 	/** Omitted when none were saved: DEFAULT_LIMITS. */
 	limits?: Limits;
 	/** Every Skill with its current version. */
@@ -162,23 +138,20 @@ export interface SkillInfo {
 	disableModelInvocation: boolean;
 }
 
-export interface OrqestraConfig {
+/** With the Tools' services and Sandbox Provider, which @orqestra/tools loads. */
+export interface OrqestraConfig extends ToolConfig {
 	/** pi's Catalog runtime; stream through `streamSimple` so the configured key is used. */
 	registry: ModelRegistry;
 	/** Enabled Models of configured Providers, with the Provider's baseUrl applied. */
 	models: Model<Api>[];
 	agents: AgentDefinition[];
 	defaultAgent: AgentDefinition;
-	/** Tools with a usable Search Provider or Document Parser; the others are unavailable. */
-	tools: ToolServices["tools"];
 	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
 	mcpServers: Record<string, McpServer>;
 	/** Every MCP Server whose headers decrypt, disabled ones included, by id: what deleting one cancels its Background Calls with. */
 	allMcpServers: Record<string, McpServer>;
 	/** Enabled Skills, by name; the others are unavailable. */
 	skills: Record<string, SkillInfo>;
-	/** Undefined when none is configured or its token cannot be decrypted: every Skill is then unavailable. */
-	sandboxProvider?: SandboxProvider;
 	limits: Limits;
 	/** pi's streamSimple with the Provider's configured API key. */
 	streamSimple: StreamSimple;
@@ -261,10 +234,12 @@ export async function catalogProviders() {
 }
 
 /**
- * Resolves the stored Agent Definitions against the configured Providers, Models and Search Providers.
+ * Resolves the stored Agent Definitions against the configured Providers and Models.
  * Throws a ConfigError naming each bad Agent and field; a Model that is not available only warns.
  */
-export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
+export async function loadConfig(
+	settings: Settings,
+): Promise<Omit<OrqestraConfig, keyof ToolConfig>> {
 	const registry = await catalogRegistry();
 	const enabled = new Set(settings.enabledModels);
 	const models = (await catalogProviders()).flatMap((p) => {
@@ -333,24 +308,6 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 	if (errors.length)
 		throw new ConfigError(`Invalid configuration:\n  ${errors.join("\n  ")}`);
 
-	const tools: OrqestraConfig["tools"] = {};
-	for (const tool of searchToolNames) {
-		const picked = settings.servedBy[tool];
-		const stored = settings.searchProviders.find((p) => p.id === picked);
-		if (picked && stored?.apiKey)
-			tools[tool] = {
-				provider: picked,
-				apiKey: stored.apiKey,
-				baseUrl:
-					stored.baseUrl ||
-					searchProviders.find((p) => p.id === picked)?.baseUrl ||
-					"",
-			};
-	}
-	const parser = settings.documentParser;
-	if (parser?.enabled && parser.apiKey !== undefined)
-		tools.parse = { baseUrl: parser.url, apiKey: parser.apiKey ?? "" };
-
 	const mcpServers: OrqestraConfig["mcpServers"] = {};
 	const allMcpServers: OrqestraConfig["allMcpServers"] = {};
 	for (const {
@@ -380,21 +337,15 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 	const skills: OrqestraConfig["skills"] = {};
 	for (const { name, enabled, ...skill } of settings.skills)
 		if (enabled) skills[name] = skill;
-	const stored = settings.sandboxProvider;
-	const sandboxProvider = stored?.token
-		? { ...stored, token: stored.token, snapshot: stored.snapshot ?? undefined }
-		: undefined;
 
 	return {
 		registry,
 		models,
 		agents,
 		defaultAgent: defaults[0],
-		tools,
 		mcpServers,
 		allMcpServers,
 		skills,
-		sandboxProvider,
 		limits: settings.limits ?? DEFAULT_LIMITS,
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);

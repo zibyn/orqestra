@@ -1,10 +1,6 @@
 // No Node imports: browser code can use this module (as @orqestra/config/shared)
 import type { Message } from "@earendil-works/pi-ai";
-import {
-	searchProviders,
-	searchToolNames,
-	toolNames,
-} from "@orqestra/tools/refs";
+import { toolName } from "@orqestra/tools/refs";
 import { z } from "zod";
 
 export {
@@ -14,10 +10,13 @@ export {
 	mcpToolRef,
 	type SearchProviderId,
 	type SearchToolName,
+	searchProviderId,
 	searchProviders,
+	searchToolName,
 	searchToolNames,
 	type ToolName,
 	type ToolRef,
+	toolName,
 } from "@orqestra/tools/refs";
 
 /** Every thinking level pi knows; which ones a Model offers is narrowed by `resolveThinking`. */
@@ -66,10 +65,6 @@ export const messageText = (message: Message) =>
 	typeof message.content === "string"
 		? message.content
 		: message.content.map((c) => (c.type === "text" ? c.text : "")).join("");
-
-export const toolName = z.enum(toolNames);
-export const searchToolName = z.enum(searchToolNames);
-export const searchProviderId = z.enum(searchProviders.map((p) => p.id));
 
 /** An Agent's id, used in `conversation.agent_id`. */
 export const agentId = z

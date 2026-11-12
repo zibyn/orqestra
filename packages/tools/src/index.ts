@@ -34,12 +34,6 @@ export {
 	type ParseFiles,
 	testDocumentParser,
 } from "./parse.ts";
-export type {
-	SearchProviderId,
-	SearchToolName,
-	ToolName,
-	ToolRef,
-} from "./refs.ts";
 
 /** A Tool's Search Provider and its decrypted key. */
 export interface ToolService {

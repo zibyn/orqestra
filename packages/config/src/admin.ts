@@ -1,29 +1,21 @@
-import { type Db, db, type Tx } from "@orqestra/db";
+import { db, type Tx } from "@orqestra/db";
 import {
 	agent,
-	documentParser,
 	enabledModel,
 	limits,
 	mcpServer,
 	modelPrice,
 	provider,
-	sandboxProvider,
-	searchProvider,
 	skill,
 	skillFile,
 	skillVersion,
-	toolService,
 } from "@orqestra/db/schema";
 import { decryptSecret, sealSecret, secretReadable } from "@orqestra/db/secret";
 import {
 	availableTools,
-	type DocumentParserTestResult,
 	type McpTestResult,
 	type OrqestraReach,
 	probeMcpServer,
-	type SandboxTestResult,
-	testDocumentParser,
-	testSandboxProvider,
 } from "@orqestra/tools";
 import { and, desc, eq, max, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -38,7 +30,6 @@ import {
 	catalogProviders,
 	DEFAULT_LIMITS,
 	definitionIssues,
-	isMineruNet,
 	mcpServerId,
 	mcpToolRef,
 	modelRef,
@@ -46,12 +37,7 @@ import {
 	priceInForce,
 	pricesByModel,
 	type SaveErrors,
-	type SearchProviderId,
-	type SearchToolName,
 	type SkillFile,
-	searchProviders as searchProviderCatalog,
-	searchProviderId,
-	searchToolName,
 	spendingLimit,
 	testConnection,
 	timeZone,
@@ -102,24 +88,6 @@ export const modelPriceInput = z.object({
 		})
 		.nullable(),
 });
-export const searchProviderInput = z.object({
-	id: searchProviderId,
-	// blank keeps the stored key
-	apiKey: z.string().trim().optional(),
-	// the official one, or a self-hosted service or reverse proxy
-	baseUrl: httpUrl,
-});
-export const toolServiceInput = z.object({
-	tool: searchToolName,
-	provider: searchProviderId.nullable(),
-});
-export const documentParserInput = z.object({
-	enabled: z.boolean(),
-	// mineru.net, or a self-hosted MinerU
-	url: httpUrl,
-	// blank keeps the stored key
-	apiKey: z.string().trim().optional(),
-});
 export const mcpServerInput = z.object({
 	// checked in save, so a bad id lands on the id field
 	id: z.string(),
@@ -168,16 +136,6 @@ export class SkillNotFound extends Error {
 	}
 }
 
-export const sandboxProviderInput = z.object({
-	url: httpUrl,
-	// blank keeps the stored token
-	token: z.string().trim().optional(),
-	// blank: orrery's default Platform Snapshot
-	snapshot: z.string().trim(),
-	cpu: z.number().positive(),
-	/** Bytes. */
-	memory: z.number().int().positive(),
-});
 const count = z.number().int().positive();
 export const limitsInput = z.object({
 	maxScheduledTasksPerUser: count,
@@ -205,7 +163,7 @@ export const agentInput = z.object({
 	definition: z.unknown(),
 });
 
-// null keeps following the default one (the Catalog's, or the official one)
+// null keeps following the Catalog's
 const customBaseUrl = (url: string, fallback: string) =>
 	url.replace(/\/+$/, "") === fallback.replace(/\/+$/, "") ? null : url;
 
@@ -221,10 +179,10 @@ const notInCatalog = (id: string): never => {
 const storedProvider = (id: string) =>
 	db.query.provider.findFirst({ where: eq(provider.id, id) });
 
-/** Saves a Provider or a Search Provider: a blank key keeps the stored one, the default baseUrl is stored as null (it follows the default). */
+/** Saves a Provider: a blank key keeps the stored one, the default baseUrl is stored as null (it follows the default). */
 async function saveKeyed(
 	write: Deps["write"],
-	table: typeof provider | typeof searchProvider,
+	table: typeof provider,
 	input: { id: string; apiKey?: string; baseUrl: string },
 	defaultBaseUrl: string,
 ): Promise<{ errors: SaveErrors }> {
@@ -242,15 +200,6 @@ async function saveKeyed(
 			.onConflictDoUpdate({ target: table.id, set: { apiKey, baseUrl } }),
 	);
 	return { errors: {} };
-}
-
-/** Which Search Provider serves each Tool; null when none is picked. */
-export async function servedBy(from: Db = db) {
-	const served = await from.select().from(toolService);
-	const by = (tool: SearchToolName) =>
-		(served.find((s) => s.tool === tool)?.searchProviderId ??
-			null) as SearchProviderId | null;
-	return { search: by("search"), scrape: by("scrape") };
 }
 
 const providers = ({ write }: Deps) => ({
@@ -371,53 +320,6 @@ const providers = ({ write }: Deps) => ({
 		);
 		return { errors: {} };
 	},
-});
-
-const searchProviders = ({ current, write }: Deps) => ({
-	/** Configured Search Providers, which one serves each Tool, and the Tools that are available. */
-	async list() {
-		const [rows, served, loaded] = await Promise.all([
-			db.select().from(searchProvider).orderBy(searchProvider.createdAt),
-			servedBy(),
-			current(),
-		]);
-		return {
-			configured: rows.map((r) => ({
-				id: r.id,
-				keyReadable: secretReadable(r.apiKey),
-				baseUrl: r.baseUrl,
-			})),
-			servedBy: served,
-			/** Tools with a usable Search Provider. */
-			available: availableTools(loaded).filter(
-				(t): t is SearchToolName => searchToolName.safeParse(t).success,
-			),
-		};
-	},
-
-	async save(
-		input: z.infer<typeof searchProviderInput>,
-	): Promise<{ errors: SaveErrors }> {
-		const official =
-			searchProviderCatalog.find((p) => p.id === input.id)?.baseUrl ?? "";
-		return saveKeyed(write, searchProvider, input, official);
-	},
-
-	/** Tools it served become unavailable until another is picked. */
-	delete: (id: string) =>
-		write((tx) => tx.delete(searchProvider).where(eq(searchProvider.id, id))),
-
-	/** Picks the Search Provider for a Tool; null leaves it unavailable. */
-	serve: (tool: SearchToolName, providerId: string | null) =>
-		write((tx) =>
-			tx
-				.insert(toolService)
-				.values({ tool, searchProviderId: providerId })
-				.onConflictDoUpdate({
-					target: toolService.tool,
-					set: { searchProviderId: providerId },
-				}),
-		),
 });
 
 /** A stored MCP Server's pre-registered Client, its Secret decrypted. */
@@ -793,101 +695,6 @@ const skills = ({ write }: Deps) => ({
 		}),
 });
 
-// Orrery is the only Sandbox Provider, so its one row has a fixed id
-const ORRERY = "orrery";
-
-const sandboxProviders = ({ write }: Deps) => ({
-	/** The configured one, or null; the token only goes in. */
-	async get() {
-		const row = await db.query.sandboxProvider.findFirst();
-		return row
-			? {
-					url: row.url,
-					tokenReadable: secretReadable(row.token),
-					snapshot: row.snapshot,
-					cpu: row.cpu,
-					memory: row.memory,
-				}
-			: null;
-	},
-
-	/** Once saved, also the connection test's result. */
-	async save(
-		input: z.infer<typeof sandboxProviderInput>,
-	): Promise<{ errors: SaveErrors; test?: SandboxTestResult }> {
-		const stored = await db.query.sandboxProvider.findFirst();
-		const token = sealSecret(input.token, stored?.token);
-		const plain = input.token || (stored && decryptSecret(stored.token));
-		if (!token || !plain)
-			return { errors: { token: { code: "token_required" } } };
-		const values = {
-			url: input.url,
-			token,
-			snapshot: input.snapshot || null,
-			cpu: input.cpu,
-			memory: input.memory,
-		};
-		await write((tx) =>
-			tx
-				.insert(sandboxProvider)
-				.values({ id: ORRERY, ...values })
-				.onConflictDoUpdate({ target: sandboxProvider.id, set: values }),
-		);
-		// saved either way, so the Admin can fix the address or token later
-		return {
-			errors: {},
-			test: await testSandboxProvider({ url: input.url, token: plain }),
-		};
-	},
-
-	/** Every Skill becomes unavailable; Sandboxes already in orrery are left there. */
-	delete: () => write((tx) => tx.delete(sandboxProvider)),
-});
-
-// MinerU is the only Document Parser, so its one row has a fixed id
-const MINERU = "mineru";
-
-const documentParsers = ({ write }: Deps) => ({
-	/** The configured one, or null; the key only goes in, `keyReadable` null when none is stored. */
-	async get() {
-		const row = await db.query.documentParser.findFirst();
-		return row
-			? {
-					enabled: row.enabled,
-					url: row.url,
-					keyReadable: row.apiKey === null ? null : secretReadable(row.apiKey),
-				}
-			: null;
-	},
-
-	/** Once saved, also the connection test's result. The key is required for mineru.net, optional for a self-hosted MinerU. */
-	async save(
-		input: z.infer<typeof documentParserInput>,
-	): Promise<{ errors: SaveErrors; test?: DocumentParserTestResult }> {
-		const stored = await db.query.documentParser.findFirst();
-		const apiKey =
-			sealSecret(input.apiKey, stored?.apiKey ?? undefined) ?? null;
-		const plain = input.apiKey || (apiKey && decryptSecret(apiKey)) || "";
-		if (isMineruNet(input.url) && !plain)
-			return { errors: { apiKey: { code: "api_key_required" } } };
-		const values = { enabled: input.enabled, url: input.url, apiKey };
-		await write((tx) =>
-			tx
-				.insert(documentParser)
-				.values({ id: MINERU, ...values })
-				.onConflictDoUpdate({ target: documentParser.id, set: values }),
-		);
-		// saved either way, so the Admin can fix the address or key later
-		return {
-			errors: {},
-			test: await testDocumentParser({ baseUrl: input.url, apiKey: plain }),
-		};
-	},
-
-	/** Parse becomes unavailable; parses already cached stay with their Attachments. */
-	delete: () => write((tx) => tx.delete(documentParser)),
-});
-
 // one row, with a fixed id
 const limitsOf = ({ write }: Deps) => ({
 	/** As saved, or the defaults. */
@@ -1007,10 +814,7 @@ const agents = ({ current, write }: Deps) => ({
 
 export const admin = (deps: Deps) => ({
 	providers: providers(deps),
-	searchProviders: searchProviders(deps),
 	mcpServers: mcpServers(deps),
-	sandboxProvider: sandboxProviders(deps),
-	documentParser: documentParsers(deps),
 	limits: limitsOf(deps),
 	agents: agents(deps),
 	skills: skills(deps),
