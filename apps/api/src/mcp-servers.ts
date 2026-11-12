@@ -17,7 +17,7 @@ import { saved } from "./saved.ts";
 export const mcpServers = (
 	signedIn: SignedIn,
 	config: Config,
-	conversations: Pick<Conversations, "deletingMcpServer">,
+	conversations: Pick<Conversations, "deleteMcpServer">,
 	/** Where the callback names Orqestra, and what the test and revocations reach servers with. */
 	reach: OrqestraReach & { orqestraUrl: string },
 ) =>
@@ -42,12 +42,11 @@ export const mcpServers = (
 			},
 			{ body: mcpServerEnabledInput },
 		)
-		// Also removes it from every Agent Definition and ends its Connections, and cancels its Background Calls first, while it can still be asked
+		// Also cancels its Background Calls, ends its Connections and removes it from every Agent Definition
 		.delete(
 			"/:id",
 			async ({ params }) => {
-				await conversations.deletingMcpServer(params.id);
-				await config.mcpServers.delete(params.id, reach);
+				await conversations.deleteMcpServer(params.id);
 			},
 			{ params: z.object({ id: mcpServerId }) },
 		);

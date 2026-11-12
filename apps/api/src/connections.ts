@@ -1,4 +1,4 @@
-import { type Config, userConnections } from "@orqestra/config/live";
+import type { Config } from "@orqestra/config/live";
 import {
 	clientMetadataDocument,
 	connectionStatus,
@@ -48,9 +48,7 @@ export const connectionRoutes = (
 			return redirect(`/connections?${to}`, 302);
 		})
 		.derive(signedInOnly)
-		.get("/", async ({ user }) =>
-			userConnections(user.id, await config.current()),
-		)
+		.get("/", ({ user }) => config.agents.userConnections(user.id))
 		// the authorization URL, for the User to open in a popup
 		.post(
 			"/:serverId",

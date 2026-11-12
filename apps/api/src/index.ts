@@ -74,6 +74,8 @@ createApp({
 		skillFiles,
 		store,
 		connections: connectionStore,
+		mcpServers: config,
+		agents: config.agents,
 	}),
 }).listen(3001);
 console.log("api listening on 3001");

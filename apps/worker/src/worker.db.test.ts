@@ -83,6 +83,9 @@ const conversations = createConversations({
 	skillFiles,
 	fetch: (input, init) => fetchFake(input, init),
 	connections,
+	// the fake MCP Servers are only in the snapshot, so deleting one writes nothing
+	mcpServers: { write: async () => [] as never },
+	agents: { forget: async () => {} },
 });
 const faux = fauxProvider({
 	provider: "faux",
@@ -2144,7 +2147,7 @@ describe.skipIf(!url)(
 
 				it("as failed, cancelling it, when an Admin deletes its MCP Server", async () => {
 					const id = await backgrounded();
-					await conversations.deletingMcpServer("slow");
+					await conversations.deleteMcpServer("slow");
 					expect(await woken(id, "failed")).toContain("deleted");
 					expect(cancels()).toBe(1);
 				});
@@ -2162,7 +2165,7 @@ describe.skipIf(!url)(
 					);
 					delete loaded.mcpServers.slow;
 					try {
-						await conversations.deletingMcpServer("slow");
+						await conversations.deleteMcpServer("slow");
 						expect(await woken(id, "failed")).toContain("deleted");
 						expect(cancels()).toBe(1);
 					} finally {

@@ -2,6 +2,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import {
 	type AgentDefinition,
 	invokedSkill,
+	mcpToolRef,
 	modelRef,
 	type OrqestraConfig,
 	resolveThinking,
@@ -12,7 +13,7 @@ import {
 	type ThinkingLevel,
 	turnSkills,
 } from "@orqestra/config";
-import { db } from "@orqestra/db";
+import { db, type Tx } from "@orqestra/db";
 import {
 	attachment,
 	backgroundCall,
@@ -23,7 +24,12 @@ import {
 	subagent,
 	timer,
 } from "@orqestra/db/schema";
-import type { ConnectionStore, Fetch } from "@orqestra/mcp";
+import {
+	type ConnectionStore,
+	deleteMcpServer,
+	type Fetch,
+	revokeConnections,
+} from "@orqestra/mcp";
 import { type Undone, undoChange } from "@orqestra/memory";
 import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -142,6 +148,8 @@ export function createConversations({
 	store,
 	fetch,
 	connections,
+	mcpServers,
+	agents,
 }: {
 	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
 	config: () => Promise<OrqestraConfig>;
@@ -155,6 +163,10 @@ export function createConversations({
 	fetch?: Fetch;
 	/** The Users' Connections, which Background Calls of per-User OAuth MCP Servers are cancelled with. */
 	connections?: ConnectionStore;
+	/** Where an MCP Server is deleted: a transaction, after which every process reloads them. Only the api's deletes one. */
+	mcpServers?: { write: <T>(fn: (tx: Tx) => Promise<T>) => Promise<T> };
+	/** What forgets a deleted MCP Server in every Agent Definition. Only the api's deletes one. */
+	agents?: { forget: (ref: { tool: `mcp:${string}` }) => Promise<unknown> };
 }) {
 	const mcp = { fetch, connections };
 	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
@@ -665,9 +677,20 @@ export function createConversations({
 			return true;
 		},
 
-		/** Before an Admin deletes an MCP Server: its Background Calls are cancelled and end failed. */
-		deletingMcpServer: (mcpServerId: string) =>
-			endBackgroundCallsOf(config, mcpServerId, mcp),
+		/**
+		 * Deletes an MCP Server at an Admin's request: cancels its Background Calls while it can still be asked, ending them failed,
+		 * deletes it with its Connections (revoked in the background once committed), then removes it from every Agent Definition.
+		 */
+		async deleteMcpServer(mcpServerId: string) {
+			if (!mcpServers || !agents)
+				throw new Error("createConversations got no mcpServers and agents");
+			await endBackgroundCallsOf(config, mcpServerId, mcp);
+			const cleared = await mcpServers.write((tx) =>
+				deleteMcpServer(tx, mcpServerId),
+			);
+			if (cleared.length) void revokeConnections(cleared, { fetch });
+			await agents.forget({ tool: mcpToolRef(mcpServerId) });
+		},
 
 		/** Cancels the Conversation's Timer at the User's request. False when the Conversation is not the user's. */
 		async cancelTimer(userId: string, id: string) {

@@ -13,7 +13,8 @@ const LAYERS = {
 	"@orqestra/models": 1,
 	"@orqestra/skills": 1,
 	"@orqestra/tools": 1,
-	"@orqestra/config": 2, // shortcut: sits between tools and conversations until #122 deletes it
+	"@orqestra/agents": 2,
+	"@orqestra/config": 2.5, // shortcut: sits between agents and conversations until #132 deletes it
 	"@orqestra/conversations": 3,
 	"@orqestra/api": 4,
 	"@orqestra/worker": 4,

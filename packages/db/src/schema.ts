@@ -669,7 +669,7 @@ export const documentParser = pgTable("document_parser", {
 // Agent Definitions edited by Admins in /console/agents; `conversation.agent_id` refers to the id, so it never changes
 export const agent = pgTable("agent", {
 	id: text("id").primaryKey(),
-	// @orqestra/config's agentDefinition, validated on save and on load
+	// @orqestra/agents' agentDefinition, validated on save and on load
 	definition: jsonb("definition").notNull(),
 	createdAt: timestamp("created_at").defaultNow().notNull(),
 });

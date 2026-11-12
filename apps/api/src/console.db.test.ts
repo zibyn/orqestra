@@ -227,6 +227,8 @@ describe.skipIf(!url)("the console through the api", () => {
 				config: config.current,
 				skillFiles: async () => [],
 				fetch: fake.fetch,
+				mcpServers: config,
+				agents: config.agents,
 			}),
 		});
 		const url = "http://127.0.0.1:9/mcp";

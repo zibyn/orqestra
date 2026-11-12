@@ -1,10 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { createConfig } from "@orqestra/config/live";
-import type { Conversations } from "@orqestra/conversations";
+import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { user as userRecord } from "@orqestra/db/schema";
 import { connectionStore } from "@orqestra/mcp";
 import { fakeAuthorizationServer } from "@orqestra/mcp/testing";
+import { memoryStore } from "@orqestra/tools/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 
@@ -34,9 +35,15 @@ const app = (orqestraUrl: string) =>
 			cookies: [],
 		}),
 		auth: () => new Response(null, { status: 404 }),
-		conversations: {
-			deletingMcpServer: async () => {},
-		} as unknown as Conversations,
+		conversations: createConversations({
+			store: memoryStore().store,
+			config: config.current,
+			skillFiles: async () => [],
+			fetch: (input, init) => as.fetch(input, init),
+			connections: connectionStore,
+			mcpServers: config,
+			agents: config.agents,
+		}),
 		orqestraUrl,
 		// looked up per request, so each test's fake is used
 		fetch: (input, init) => as.fetch(input, init),

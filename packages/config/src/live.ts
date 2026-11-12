@@ -1,7 +1,7 @@
+import { createAgents } from "@orqestra/agents/live";
 import { type Db, db as globalDb } from "@orqestra/db";
 import { live } from "@orqestra/db/live";
 import {
-	agent,
 	documentParser,
 	limits,
 	sandboxProvider,
@@ -12,7 +12,7 @@ import { loadMcpServers } from "@orqestra/mcp";
 import { createModels, type ModelSettings } from "@orqestra/models";
 import { createSkills, skillFiles as filesOf } from "@orqestra/skills";
 import { availableTools } from "@orqestra/tools";
-import { admin, forgetSkill, limitsInput, servedBy } from "./admin.ts";
+import { admin, limitsInput, servedBy } from "./admin.ts";
 import {
 	type OrqestraConfig,
 	resolveConfig,
@@ -24,6 +24,8 @@ import {
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
 
+// shortcut: re-exported until callers import it from @orqestra/agents/live (#132)
+export { agentInput } from "@orqestra/agents/live";
 export {
 	connectionStore,
 	deleteConnection,
@@ -51,7 +53,6 @@ export type {
 	SandboxTestResult,
 } from "@orqestra/tools";
 export {
-	agentInput,
 	documentParserInput,
 	limitsInput,
 	sandboxProviderInput,
@@ -61,32 +62,22 @@ export {
 
 /** A Skill version's files, read from the global db. */
 export const skillFiles = (versionId: number) => filesOf(globalDb, versionId);
-export { userConnections } from "./connections.ts";
 
 /** Everything saved in /console but what the models package loads, with API keys decrypted. */
 async function loadSettings(
 	db: Db,
 ): Promise<Omit<Settings, keyof ModelSettings>> {
 	const key = encryptionKey();
-	const [
-		searchProviders,
-		served,
-		mcpServers,
-		agents,
-		[sandbox],
-		[saved],
-		[parser],
-	] = await Promise.all([
-		db.select().from(searchProvider),
-		servedBy(db),
-		loadMcpServers(db, key),
-		db.select().from(agent).orderBy(agent.createdAt),
-		db.select().from(sandboxProvider),
-		db.select().from(limits),
-		db.select().from(documentParser),
-	]);
+	const [searchProviders, served, mcpServers, [sandbox], [saved], [parser]] =
+		await Promise.all([
+			db.select().from(searchProvider),
+			servedBy(db),
+			loadMcpServers(db, key),
+			db.select().from(sandboxProvider),
+			db.select().from(limits),
+			db.select().from(documentParser),
+		]);
 	return {
-		agents,
 		searchProviders: searchProviders.map((p) => ({
 			id: p.id as SearchProviderId,
 			apiKey: decryptSecret(p.apiKey, key),
@@ -111,13 +102,9 @@ async function loadSettings(
 	};
 }
 
-const logWarnings = (config: Omit<OrqestraConfig, "skills">) => {
-	for (const a of config.agents) {
-		for (const ref of a.unavailableModels)
-			console.warn(`Agent "${a.id}": Model "${ref}" is not available`);
-		if (!a.models.length)
-			console.warn(`Agent "${a.id}": no Model is available, so it is offline`);
-	}
+const logWarnings = <C extends Pick<OrqestraConfig, "tools" | "mcpServers">>(
+	config: C,
+) => {
 	const available = availableTools(config);
 	for (const tool of toolName.options)
 		if (!available.includes(tool))
@@ -139,8 +126,13 @@ export function createConfig(db: Db) {
 		channel: CONFIG_CHANNEL,
 		load: () => loadSettings(db),
 	});
-	// shortcut: the Skills keep their own snapshot, put in here until #131 gives Turn resolution the Skills itself
+	// shortcut: the Skills and Agents keep their own snapshots, put in here until #132 gives Turn resolution them itself
 	const skills = createSkills(db);
+	const agents = createAgents(db, {
+		models,
+		skills,
+		available: () => current(),
+	});
 	// resolved again only when a snapshot was reloaded, the same object while none is, as a snapshot is
 	let last: { from: unknown[]; config: Promise<OrqestraConfig> } | undefined;
 	const current = async () => {
@@ -148,12 +140,14 @@ export function createConfig(db: Db) {
 			settings.current(),
 			models.current(),
 			skills.current(),
+			agents.current(),
 		]);
 		if (!last || from.some((f, i) => f !== last?.from[i])) {
-			const [c, m, s] = from;
+			const [c, m, s, a] = from;
 			const next = Promise.resolve().then(() => ({
 				...logWarnings(resolveConfig(c, m)),
 				skills: s,
+				...a,
 			}));
 			const previous = last?.config;
 			// as live does: a failed reload keeps the previous config
@@ -174,18 +168,18 @@ export function createConfig(db: Db) {
 		current,
 		write,
 		close: async () => {
-			await Promise.all([settings.close(), models.close(), skills.close()]);
+			await Promise.all([
+				settings.close(),
+				models.close(),
+				skills.close(),
+				agents.close(),
+			]);
 		},
 		...admin({ current, write }),
 		providers: models.providers,
-		skills: {
-			...skills,
-			/** Also removes it from every Agent Definition. */
-			delete: async (name: string) => {
-				await skills.delete(name);
-				await forgetSkill(settings, name);
-			},
-		},
+		agents,
+		/** Deleting one also removes it from every Agent Definition. */
+		skills: { ...skills, delete: agents.deleteSkill },
 	};
 }
 
