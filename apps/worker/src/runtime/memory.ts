@@ -1,12 +1,12 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
+import type { Recall } from "@orqestra/conversations";
 import {
 	MAX_MEMORY_BODY,
 	MAX_MEMORY_DESCRIPTION,
 	type Memories,
 	type Memory,
-	type Recall,
-} from "@orqestra/conversations";
+} from "@orqestra/memory";
 
 /** Tokens of the Memory Index, as `tokens` estimates them. */
 const MAX_INDEX_TOKENS = 2000;
@@ -61,7 +61,7 @@ export function memoryPrompt(
 	return `\n\n<memory>\n${readOnly ? SUBAGENT_INSTRUCTIONS : INSTRUCTIONS}\n\n<memory_index>\n${lines.join("\n") || "(no memories yet)"}\n</memory_index>\n</memory>`;
 }
 
-/** The Tools an Agent reads and writes the User's Memories with (only reads, when `readOnly`); `details` keeps a write's Memory before and after. */
+/** The Tools an Agent reads and writes the User's Memories with (only reads, when `readOnly`); each write is recorded under its call's id, and `details` keeps its Memory before and after to show. */
 export function memoryTools(memories: Memories, readOnly = false): AgentTool[] {
 	const path = Type.String({
 		description: "Like a file path, e.g. preferences/language",
@@ -76,8 +76,8 @@ export function memoryTools(memories: Memories, readOnly = false): AgentTool[] {
 				description: Type.String(),
 				body: Type.String(),
 			}),
-			execute: async (_id, { path, description, body }) => {
-				const { before } = await memories.write(path, description, body);
+			execute: async (id, { path, description, body }) => {
+				const { before } = await memories.write(path, description, body, id);
 				return {
 					content: text(`${before ? "Updated" : "Created"} ${path}.`),
 					details: { path, before, after: { description, body } },
@@ -94,8 +94,8 @@ export function memoryTools(memories: Memories, readOnly = false): AgentTool[] {
 				old: Type.String(),
 				new: Type.String(),
 			}),
-			execute: async (_id, { path, old, new: replacement }) => {
-				const { before } = await memories.edit(path, old, replacement);
+			execute: async (id, { path, old, new: replacement }) => {
+				const { before } = await memories.edit(path, old, replacement, id);
 				return {
 					content: text(`Edited ${path}.`),
 					details: { path, before, old, new: replacement },
@@ -107,8 +107,8 @@ export function memoryTools(memories: Memories, readOnly = false): AgentTool[] {
 			label: "Forget",
 			description: "Delete a memory.",
 			parameters: Type.Object({ path }),
-			execute: async (_id, { path }) => {
-				const { before } = await memories.delete(path);
+			execute: async (id, { path }) => {
+				const { before } = await memories.delete(path, id);
 				return { content: text(`Deleted ${path}.`), details: { path, before } };
 			},
 		}),

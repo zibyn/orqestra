@@ -18,6 +18,7 @@ import {
 	type UsagePurpose,
 	usage,
 } from "@orqestra/db/schema";
+import { type Memories, memoriesOf, memoryOn } from "@orqestra/memory";
 import type {
 	BackgroundCallStart,
 	ConnectionStore,
@@ -38,7 +39,6 @@ import {
 	requeueBackgroundCalls,
 	startBackgroundCall,
 } from "./background-calls.ts";
-import { type Memories, memoriesOf, memoryOn } from "./memories.ts";
 import { type Recall, recallOf } from "./recall.ts";
 import {
 	AGENT_RUNS_QUEUE,

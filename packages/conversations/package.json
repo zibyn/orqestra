@@ -13,6 +13,7 @@
     "@earendil-works/pi-ai": "1.4.0",
     "@orqestra/config": "workspace:*",
     "@orqestra/db": "workspace:*",
+    "@orqestra/memory": "workspace:*",
     "@orqestra/tools": "workspace:*",
     "bullmq": "^6.5.0",
     "cron-parser": "5.10.2",

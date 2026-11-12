@@ -37,8 +37,8 @@ const {
 	MAX_SUBAGENTS,
 	RunTimedOut,
 	MAX_SUBAGENTS_PER_USER_MESSAGE,
-	userMemories,
 } = await import("./index.ts");
+const { userMemories } = await import("@orqestra/memory");
 const runs = await import("./runs.ts");
 const timers = await import("./timers.ts");
 const { memoryRun } = await import("./testing.ts");

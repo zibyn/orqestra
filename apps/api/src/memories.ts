@@ -1,10 +1,10 @@
 import {
-	checkMemory,
+	InvalidMemory,
 	MAX_MEMORY_BODY,
 	MAX_MEMORY_DESCRIPTION,
-	MemoryError,
+	MemoryNotFound,
 	userMemories,
-} from "@orqestra/conversations";
+} from "@orqestra/memory";
 import { Elysia, t } from "elysia";
 import { unauthorized } from "./admin.ts";
 import type { SignedIn } from "./app.ts";
@@ -35,17 +35,18 @@ export const memoryRoutes = (signedIn: SignedIn) =>
 				"",
 				async ({ mine, body: { path, description, body }, status }) => {
 					try {
-						checkMemory(path, description, body);
+						await mine.update(path, description, body);
+						return status(204);
 					} catch (e) {
-						if (!(e instanceof MemoryError)) throw e;
-						return status(422, {
-							errors: { "": { code: "invalid" as const, detail: e.message } },
-						});
+						if (e instanceof InvalidMemory)
+							return status(422, {
+								errors: {
+									"": { code: "invalid" as const, detail: e.message },
+								},
+							});
+						if (e instanceof MemoryNotFound) return status(404, notFound);
+						throw e;
 					}
-					// past checkMemory, a MemoryError means there is no such Memory of the User's
-					return (await found(() => mine.update(path, description, body)))
-						? status(204)
-						: status(404, notFound);
 				},
 				{
 					body: t.Object({
@@ -55,11 +56,15 @@ export const memoryRoutes = (signedIn: SignedIn) =>
 					}),
 				},
 			)
-			.delete("/:path", async ({ mine, params, status }) =>
-				(await found(() => mine.delete(params.path)))
-					? status(204)
-					: status(404, notFound),
-			)
+			.delete("/:path", async ({ mine, params, status }) => {
+				try {
+					await mine.delete(params.path);
+					return status(204);
+				} catch (e) {
+					if (e instanceof MemoryNotFound) return status(404, notFound);
+					throw e;
+				}
+			})
 			.delete("", async ({ mine, status }) => {
 				await mine.deleteAll();
 				return status(204);
@@ -73,14 +78,3 @@ export const memoryRoutes = (signedIn: SignedIn) =>
 				{ body: t.Object({ on: t.Boolean() }) },
 			),
 	);
-
-/** Whether change found the Memory it changes. */
-async function found(change: () => Promise<unknown>) {
-	try {
-		await change();
-		return true;
-	} catch (e) {
-		if (e instanceof MemoryError) return false;
-		throw e;
-	}
-}

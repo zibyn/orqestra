@@ -12,7 +12,6 @@ import {
 	type ThinkingLevel,
 	turnSkills,
 } from "@orqestra/config";
-import type { MemoryChange } from "@orqestra/config/shared";
 import { db } from "@orqestra/db";
 import {
 	attachment,
@@ -24,6 +23,7 @@ import {
 	subagent,
 	timer,
 } from "@orqestra/db/schema";
+import { type Undone, undoChange } from "@orqestra/memory";
 import {
 	type ConnectionStore,
 	type Fetch,
@@ -41,7 +41,6 @@ import {
 	endBackgroundCallsOf,
 	runningCalls,
 } from "./background-calls.ts";
-import { MEMORY_CHANGES, undoChange } from "./memories.ts";
 import {
 	AGENT_RUNS_QUEUE,
 	conversationChannel,
@@ -70,16 +69,6 @@ import {
 } from "./uploads.ts";
 
 export { MAX_UPLOAD_BYTES } from "@orqestra/config";
-export {
-	checkMemory,
-	MAX_MEMORIES,
-	MAX_MEMORY_BODY,
-	MAX_MEMORY_DESCRIPTION,
-	type Memories,
-	type Memory,
-	MemoryError,
-	userMemories,
-} from "./memories.ts";
 export {
 	MAX_RECALL_RESULTS,
 	MAX_SNIPPET,
@@ -143,7 +132,6 @@ export class ConversationError extends Error {
 		super(message);
 	}
 }
-class AlreadyUndone extends Error {}
 
 const owned = (userId: string, id: string) =>
 	db.query.conversation.findFirst({
@@ -853,57 +841,28 @@ export function createConversations({
 		},
 
 		/**
-		 * Reverses the Memory change of the Agent's Tool call `toolCallId` in the user's Conversation, from the `before` its result kept,
-		 * and marks that result `undone`. Refuses when the Memory changed since, so a later change is never lost.
+		 * Reverses the Memory change of the Agent's Tool call `toolCallId` in the user's Conversation (`undoChange`),
+		 * and marks that call's result `undone`. Refuses when the Memory changed since, so a later change is never lost.
 		 */
 		async undoMemory(
 			userId: string,
 			id: string,
 			toolCallId: string,
-		): Promise<{ error?: "not_found" | "undone" | "changed" | "full" }> {
+		): Promise<{ error?: Undone }> {
 			if (!(await owned(userId, id))) return { error: "not_found" };
-			const [row] = await db
-				.select({ id: message.id, message: message.message })
-				.from(message)
-				.where(
-					and(
-						eq(message.conversationId, id),
-						sql`${message.message} @> ${JSON.stringify({ role: "toolResult", toolCallId, isError: false })}::jsonb`,
+			const error = await undoChange(userId, id, toolCallId, (tx) =>
+				tx
+					.update(message)
+					.set({
+						message: sql`jsonb_set(${message.message}, '{details,undone}', 'true')`,
+					})
+					.where(
+						and(
+							eq(message.conversationId, id),
+							sql`${message.message} @> ${JSON.stringify({ role: "toolResult", toolCallId })}::jsonb`,
+						),
 					),
-				);
-			const result = row?.message as
-				| {
-						toolName: MemoryChange;
-						details?: { undone?: boolean; path: string };
-				  }
-				| undefined;
-			if (!result?.details || !MEMORY_CHANGES.includes(result.toolName))
-				return { error: "not_found" };
-			if (result.details.undone) return { error: "undone" };
-			const error = await undoChange(
-				userId,
-				result.toolName,
-				result.details,
-				async (tx) => {
-					const marked = await tx
-						.update(message)
-						.set({
-							message: sql`jsonb_set(${message.message}, '{details,undone}', 'true')`,
-						})
-						.where(
-							and(
-								eq(message.id, row.id),
-								sql`not coalesce((${message.message}#>>'{details,undone}')::boolean, false)`,
-							),
-						)
-						.returning({ id: message.id });
-					// undone meanwhile: roll back
-					if (!marked.length) throw new AlreadyUndone();
-				},
-			).catch((e) => {
-				if (e instanceof AlreadyUndone) return "undone" as const;
-				throw e;
-			});
+			);
 			if (error) return { error };
 			await saved(id);
 			return {};

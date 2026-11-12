@@ -384,6 +384,32 @@ export const memory = pgTable(
 	(table) => [unique().on(table.userId, table.path)],
 );
 
+// One change an Agent's Memory Tool call made (ADR 0010), written with it, so the User can undo it from the Conversation; goes with the Conversation, the Memory stays
+export const memoryChange = pgTable(
+	"memory_change",
+	{
+		id: serial("id").primaryKey(),
+		conversationId: uuid("conversation_id")
+			.notNull()
+			.references(() => conversation.id, { onDelete: "cascade" }),
+		toolCallId: text("tool_call_id").notNull(),
+		// the owner's Polaris `sub`
+		userId: text("user_id").notNull(),
+		path: text("path").notNull(),
+		// the Memory before the call; null: the call created it
+		before: jsonb("before").$type<{ description: string; body: string }>(),
+		// the Conversation that wrote it before; null once that is deleted
+		beforeConversationId: uuid("before_conversation_id").references(
+			() => conversation.id,
+			{ onDelete: "set null" },
+		),
+		// the Memory as the call left it; null: the call deleted it
+		after: jsonb("after").$type<{ description: string; body: string }>(),
+		undone: boolean("undone").default(false).notNull(),
+	},
+	(table) => [unique().on(table.conversationId, table.toolCallId)],
+);
+
 // A User who has used Orqestra (ADR 0008), written when a signed-in request reads the session; kept when Polaris removes them.
 // Roles and Entitlements stay in Polaris: whether a User is an Admin is read from the access token on every request
 export const user = pgTable("user", {

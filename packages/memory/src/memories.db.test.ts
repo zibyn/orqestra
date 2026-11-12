@@ -1,7 +1,5 @@
-import type { OrqestraConfig } from "@orqestra/config";
-import { memoryStore } from "@orqestra/tools/testing";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import type { Memories, Memory } from "./memories.ts";
+import type { Memories, Memory, Undone } from "./index.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -9,10 +7,8 @@ if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
-const { memoriesOf, MAX_MEMORIES, MemoryError, userMemories } = await import(
-	"./memories.ts"
-);
-const { createConversations } = await import("./index.ts");
+const { memoriesOf, MAX_MEMORIES, MemoryError, undoChange, userMemories } =
+	await import("./index.ts");
 const { inMemoryMemories } = await import("./testing.ts");
 
 const newConversation = async (userId: string) =>
@@ -25,11 +21,12 @@ const newConversation = async (userId: string) =>
 afterAll(() => db.$client.end());
 
 type Seed = Pick<Memory, "path" | "description" | "body">;
-/** The two Memories adapters, run through the same scenarios: they open a User's Memories, seeded, and say which Conversation writes. */
+type Undo = (toolCallId: string) => Promise<Undone | undefined>;
+/** The two Memories adapters, run through the same scenarios: they open a User's Memories, seeded, and say which Conversation writes and how it undoes a Tool call's change. */
 const adapters: {
 	name: string;
 	skip: boolean;
-	open(userId: string, seed?: Seed[]): Promise<[Memories, string]>;
+	open(userId: string, seed?: Seed[]): Promise<[Memories, string, Undo]>;
 }[] = [
 	{
 		name: "Postgres",
@@ -40,16 +37,20 @@ const adapters: {
 					.insert(schema.memory)
 					.values(seed.map((m) => ({ userId, ...m })));
 			const id = await newConversation(userId);
-			return [memoriesOf(userId, id), id];
+			return [
+				memoriesOf(userId, id),
+				id,
+				(toolCallId) => undoChange(userId, id, toolCallId),
+			];
 		},
 	},
 	{
 		name: "in memory",
 		skip: false,
-		open: async (_userId, seed) => [
-			inMemoryMemories(seed, "c1").memories,
-			"c1",
-		],
+		open: async (_userId, seed) => {
+			const { memories, undo } = inMemoryMemories(seed, "c1");
+			return [memories, "c1", undo];
+		},
 	},
 ];
 
@@ -57,12 +58,13 @@ for (const adapter of adapters)
 	describe.skipIf(adapter.skip)(`Memories (${adapter.name})`, () => {
 		let mine: Memories;
 		let conversationId: string;
+		let undo: Undo;
 		beforeEach(async () => {
 			if (url)
 				await db.execute(
 					sql`truncate conversation, memory, memory_setting cascade`,
 				);
-			[mine, conversationId] = await adapter.open("u1");
+			[mine, conversationId, undo] = await adapter.open("u1");
 		});
 
 		it("writes, reads, lists and deletes a User's Memories, recording the Conversation that wrote them", async () => {
@@ -168,6 +170,62 @@ for (const adapter of adapters)
 			]);
 			await expect(mine.grep("(")).rejects.toThrow(MemoryError);
 		});
+
+		describe("undoing an Agent's Tool call", () => {
+			it("forgets a Memory the call created, and restores one it replaced", async () => {
+				await mine.write("p", "first", "one", "created");
+				await mine.write("q", "d", "old", "earlier");
+				await mine.write("q", "d2", "new", "replaced");
+				expect(await undo("replaced")).toBeUndefined();
+				expect(await mine.read("q")).toMatchObject({
+					description: "d",
+					body: "old",
+				});
+				expect(await undo("created")).toBeUndefined();
+				expect(await mine.read("p")).toBeUndefined();
+			});
+
+			it("reverses an edit and a delete", async () => {
+				await mine.write("p", "d", "likes tea");
+				await mine.edit("p", "tea", "coffee", "edited");
+				expect(await undo("edited")).toBeUndefined();
+				expect((await mine.read("p"))?.body).toBe("likes tea");
+				await mine.delete("p", "deleted");
+				expect(await undo("deleted")).toBeUndefined();
+				expect(await mine.read("p")).toMatchObject({
+					description: "d",
+					body: "likes tea",
+				});
+			});
+
+			it("undoes a change only once", async () => {
+				await mine.write("p", "d", "b", "call");
+				expect(await undo("call")).toBeUndefined();
+				expect(await undo("call")).toBe("undone");
+			});
+
+			it("refuses when the Memory changed since, so the later change is not lost", async () => {
+				await mine.write("p", "d", "b", "written");
+				await mine.write("p", "d", "changed");
+				expect(await undo("written")).toBe("changed");
+				expect((await mine.read("p"))?.body).toBe("changed");
+				await mine.write("q", "d", "b", "gone");
+				await mine.delete("q");
+				expect(await undo("gone")).toBe("changed");
+				await mine.write("r", "d", "b");
+				await mine.delete("r", "deleted");
+				await mine.write("r", "d", "again");
+				expect(await undo("deleted")).toBe("changed");
+			});
+
+			it("finds no change for a call that changed no Memory", async () => {
+				expect(await undo("nothing")).toBe("not_found");
+				await expect(mine.edit("p", "a", "b", "failed")).rejects.toThrow(
+					MemoryError,
+				);
+				expect(await undo("failed")).toBe("not_found");
+			});
+		});
 	});
 
 describe.skipIf(!url)("Memories (Postgres)", () => {
@@ -181,13 +239,73 @@ describe.skipIf(!url)("Memories (Postgres)", () => {
 		mine = memoriesOf("u1", conversationId);
 	});
 
-	it("keeps a Memory when the Conversation that wrote it is deleted", async () => {
-		await mine.write("p", "d", "b");
+	it("keeps a Memory when the Conversation that wrote it is deleted, but not its change to undo", async () => {
+		await mine.write("p", "d", "b", "call");
 		await db
 			.delete(schema.conversation)
 			.where(sql`${schema.conversation.id} = ${conversationId}`);
 		expect(await memoriesOf("u1", conversationId).read("p")).toMatchObject({
 			conversationId: null,
+		});
+		expect(await undoChange("u1", conversationId, "call")).toBe("not_found");
+	});
+
+	describe("undoing an Agent's Tool call", () => {
+		it("gives a restored Memory back the Conversation that wrote it before, or none once that is deleted", async () => {
+			const earlier = await newConversation("u1");
+			await memoriesOf("u1", earlier).write("p", "d", "old");
+			await memoriesOf("u1", earlier).write("q", "d", "old");
+			await mine.write("p", "d", "new", "replaced");
+			await mine.delete("q", "deleted");
+			expect(
+				await undoChange("u1", conversationId, "replaced"),
+			).toBeUndefined();
+			expect(await mine.read("p")).toMatchObject({
+				body: "old",
+				conversationId: earlier,
+			});
+			await db
+				.delete(schema.conversation)
+				.where(sql`${schema.conversation.id} = ${earlier}`);
+			expect(await undoChange("u1", conversationId, "deleted")).toBeUndefined();
+			expect(await mine.read("q")).toMatchObject({
+				body: "old",
+				conversationId: null,
+			});
+		});
+
+		it("finds only the User's own change, of that Conversation", async () => {
+			await mine.write("p", "d", "b", "call");
+			expect(await undoChange("u2", conversationId, "call")).toBe("not_found");
+			expect(await undoChange("u1", await newConversation("u1"), "call")).toBe(
+				"not_found",
+			);
+			expect(await mine.read("p")).toBeDefined();
+		});
+
+		it("rolls back when what runs with it throws", async () => {
+			await mine.write("p", "d", "b", "call");
+			await expect(
+				undoChange("u1", conversationId, "call", async () => {
+					throw new Error("no");
+				}),
+			).rejects.toThrow("no");
+			expect(await mine.read("p")).toBeDefined();
+			expect(await undoChange("u1", conversationId, "call")).toBeUndefined();
+		});
+
+		it("refuses to restore a deleted Memory past the limit", async () => {
+			await mine.write("p", "d", "b");
+			await mine.delete("p", "deleted");
+			await db.insert(schema.memory).values(
+				Array.from({ length: MAX_MEMORIES }, (_, i) => ({
+					userId: "u1",
+					path: `bulk/${i}`,
+					description: "d",
+					body: "b",
+				})),
+			);
+			expect(await undoChange("u1", conversationId, "deleted")).toBe("full");
 		});
 	});
 
@@ -266,175 +384,3 @@ describe.skipIf(!url)("Memories (Postgres)", () => {
 		});
 	});
 });
-
-describe.skipIf(!url)(
-	"Undoing a Memory change from the Conversation (Postgres)",
-	() => {
-		const conversations = createConversations({
-			store: memoryStore().store,
-			// no Agents: the Conversation is read-only, which undoing ignores
-			config: async () =>
-				({ agents: [], models: [] }) as unknown as OrqestraConfig,
-			skillFiles: async () => [],
-		});
-		let conversationId: string;
-		let mine: ReturnType<typeof memoriesOf>;
-		let calls = 0;
-		beforeEach(async () => {
-			await db.execute(sql`truncate conversation, memory cascade`);
-			conversationId = await newConversation("u1");
-			mine = memoriesOf("u1", conversationId);
-		});
-		/** Saves the result of the Agent's Memory Tool call as a Run does; returns the call's id. */
-		const called = async (toolName: string, details: object) => {
-			const toolCallId = `call-${++calls}`;
-			await db.insert(schema.message).values({
-				conversationId,
-				model: "faux/faux-1",
-				thinkingLevel: "off",
-				message: {
-					role: "toolResult",
-					toolCallId,
-					toolName,
-					content: [{ type: "text", text: "ok" }],
-					details,
-					isError: false,
-					timestamp: Date.now(),
-				},
-			});
-			return toolCallId;
-		};
-		const write = async (path: string, description: string, body: string) => {
-			const { before } = await mine.write(path, description, body);
-			return called("memory_write", {
-				path,
-				before,
-				after: { description, body },
-			});
-		};
-
-		it("forgets a Memory the Agent created, and restores one it replaced", async () => {
-			const created = await write("p", "first", "one");
-			await write("q", "d", "old");
-			const replaced = await write("q", "d2", "new");
-			expect(
-				await conversations.undoMemory("u1", conversationId, replaced),
-			).toEqual({});
-			expect(await mine.read("q")).toMatchObject({
-				description: "d",
-				body: "old",
-			});
-			expect(
-				await conversations.undoMemory("u1", conversationId, created),
-			).toEqual({});
-			expect(await mine.read("p")).toBeUndefined();
-		});
-
-		it("reverses an edit and a delete", async () => {
-			await mine.write("p", "d", "likes tea");
-			const { before } = await mine.edit("p", "tea", "coffee");
-			const edited = await called("memory_edit", {
-				path: "p",
-				before,
-				old: "tea",
-				new: "coffee",
-			});
-			expect(
-				await conversations.undoMemory("u1", conversationId, edited),
-			).toEqual({});
-			expect((await mine.read("p"))?.body).toBe("likes tea");
-			const deleted = await called("memory_delete", {
-				path: "p",
-				before: (await mine.delete("p")).before,
-			});
-			expect(
-				await conversations.undoMemory("u1", conversationId, deleted),
-			).toEqual({});
-			expect(await mine.read("p")).toMatchObject({
-				description: "d",
-				body: "likes tea",
-			});
-		});
-
-		it("gives a restored Memory back the Conversation that wrote it before, or none once that is deleted", async () => {
-			const earlier = await newConversation("u1");
-			await memoriesOf("u1", earlier).write("p", "d", "old");
-			await memoriesOf("u1", earlier).write("q", "d", "old");
-			const replaced = await write("p", "d", "new");
-			const deleted = await called("memory_delete", {
-				path: "q",
-				before: (await mine.delete("q")).before,
-			});
-			expect(
-				await conversations.undoMemory("u1", conversationId, replaced),
-			).toEqual({});
-			expect(await mine.read("p")).toMatchObject({
-				body: "old",
-				conversationId: earlier,
-			});
-			await db
-				.delete(schema.conversation)
-				.where(sql`${schema.conversation.id} = ${earlier}`);
-			expect(
-				await conversations.undoMemory("u1", conversationId, deleted),
-			).toEqual({});
-			expect(await mine.read("q")).toMatchObject({
-				body: "old",
-				conversationId: null,
-			});
-		});
-
-		it("tells the pages showing the Conversation that it changed", async () => {
-			const id = await write("p", "d", "b");
-			const stream = await conversations.subscribe(
-				"u1",
-				conversationId,
-				new AbortController().signal,
-			);
-			const reader = (stream as ReadableStream<Uint8Array>)
-				.pipeThrough(new TextDecoderStream())
-				.getReader();
-			await conversations.undoMemory("u1", conversationId, id);
-			expect((await reader.read()).value).toContain('"saved"');
-			await reader.cancel();
-		});
-
-		it("marks the change undone, and undoes it only once", async () => {
-			const id = await write("p", "d", "b");
-			await conversations.undoMemory("u1", conversationId, id);
-			const conv = await conversations.get("u1", conversationId);
-			expect(conv?.messages[0].message).toMatchObject({
-				details: { undone: true },
-			});
-			expect(await conversations.undoMemory("u1", conversationId, id)).toEqual({
-				error: "undone",
-			});
-		});
-
-		it("refuses when the Memory changed since", async () => {
-			const id = await write("p", "d", "b");
-			await mine.write("p", "d", "changed");
-			expect(await conversations.undoMemory("u1", conversationId, id)).toEqual({
-				error: "changed",
-			});
-			expect((await mine.read("p"))?.body).toBe("changed");
-			const gone = await write("q", "d", "b");
-			await mine.delete("q");
-			expect(
-				await conversations.undoMemory("u1", conversationId, gone),
-			).toEqual({ error: "changed" });
-		});
-
-		it("lets only the Conversation's owner undo, and only Memory changes", async () => {
-			const id = await write("p", "d", "b");
-			expect(await conversations.undoMemory("u2", conversationId, id)).toEqual({
-				error: "not_found",
-			});
-			expect(await mine.read("p")).toBeDefined();
-			const read = await called("memory_read", { path: "p" });
-			expect(
-				await conversations.undoMemory("u1", conversationId, read),
-			).toEqual({ error: "not_found" });
-		});
-	},
-);
