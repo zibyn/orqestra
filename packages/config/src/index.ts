@@ -1,17 +1,14 @@
-import {
-	type Api,
-	type AssistantMessageEventStream,
-	type Context,
-	getSupportedThinkingLevels,
-	InMemoryCredentialStore,
-	InMemoryModelsStore,
-	type Model,
-	type ModelThinkingLevel,
-	type SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
-import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 // types only: importing @orqestra/mcp would open the database before a test points DATABASE_URL at its own
 import type { McpServer, McpServerSettings } from "@orqestra/mcp";
+import {
+	type ModelSettings,
+	type Models,
+	modelRef,
+	resolveModels,
+	resolveThinking,
+	type ThinkingLevel,
+} from "@orqestra/models";
 import type { SkillInfo } from "@orqestra/skills";
 import type { ToolConfig } from "@orqestra/tools/live";
 import type { z } from "zod";
@@ -23,10 +20,18 @@ import {
 	type ToolRef,
 } from "./shared.ts";
 
+// shortcut: re-exported until callers import them from @orqestra/models (#122)
+export {
+	catalogProviders,
+	modelRef,
+	priceInForce,
+	pricesByModel,
+	resolveThinking,
+	type ThinkingLevel,
+	testConnection,
+} from "@orqestra/models";
 export { type SkillInfo, skillInstructions } from "@orqestra/skills";
 export * from "./shared.ts";
-
-export type ThinkingLevel = ModelThinkingLevel;
 
 export interface AgentDefinition {
 	id: string;
@@ -57,17 +62,7 @@ export interface AgentDefinition {
 }
 
 /** What an Admin configured in /console, as stored in the database. */
-export interface Settings {
-	/** `apiKey` is undefined when the stored key cannot be decrypted; `baseUrl` null means the Catalog's. */
-	providers: {
-		id: string;
-		apiKey: string | undefined;
-		baseUrl: string | null;
-	}[];
-	/** As `provider/id`. */
-	enabledModels: string[];
-	/** An Admin's prices, by `provider/id`, each replacing the Catalog's `cost` as a whole. */
-	modelPrices: Record<string, Model<Api>["cost"]>;
+export interface Settings extends ModelSettings {
 	/** Agent Definitions as stored, validated by `loadConfig`. */
 	agents: { id: string; definition: unknown }[];
 	mcpServers: McpServerSettings;
@@ -109,11 +104,7 @@ export const DEFAULT_LIMITS: Limits = {
 };
 
 /** With the Tools' services and Sandbox Provider, which @orqestra/tools loads. */
-export interface OrqestraConfig extends ToolConfig {
-	/** pi's Catalog runtime; stream through `streamSimple` so the configured key is used. */
-	registry: ModelRegistry;
-	/** Enabled Models of configured Providers, with the Provider's baseUrl applied. */
-	models: Model<Api>[];
+export interface OrqestraConfig extends Models, ToolConfig {
 	agents: AgentDefinition[];
 	defaultAgent: AgentDefinition;
 	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
@@ -123,107 +114,25 @@ export interface OrqestraConfig extends ToolConfig {
 	/** Enabled Skills, by name; the others are unavailable. */
 	skills: Record<string, SkillInfo>;
 	limits: Limits;
-	/** pi's streamSimple with the Provider's configured API key. */
-	streamSimple: StreamSimple;
 }
-
-type StreamSimple = (
-	model: Model<Api>,
-	context: Context,
-	options?: SimpleStreamOptions,
-	// a worker may queue the request before it starts
-) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
 
 export class ConfigError extends Error {
 	override name = "ConfigError";
-}
-
-export const modelRef = (m: { provider: string; id: string }) =>
-	`${m.provider}/${m.id}`;
-
-/** An Admin's prices as stored, keyed as `Settings.modelPrices`. */
-export const pricesByModel = (
-	rows: ({ providerId: string; modelId: string } & Model<Api>["cost"])[],
-): Settings["modelPrices"] =>
-	Object.fromEntries(
-		rows.map(({ providerId, modelId, ...cost }) => [
-			modelRef({ provider: providerId, id: modelId }),
-			cost,
-		]),
-	);
-
-/** The price a Model `ref` is costed at: the Admin's, replacing the Catalog's `catalog` as a whole, else that. */
-export function priceInForce<C>(
-	prices: Settings["modelPrices"],
-	ref: string,
-	catalog: C,
-) {
-	const custom = prices[ref];
-	return custom
-		? { cost: custom, source: "custom" as const }
-		: { cost: catalog, source: "catalog" as const };
-}
-
-// in-memory stores keep pi from reading or writing ~/.pi; no models.json, so only pi's built-in Catalog.
-// Shared by every load, so a Provider registered on it (tests do) survives reloads
-let runtime: Promise<ModelRegistry> | undefined;
-const catalogRegistry = () =>
-	(runtime ??= ModelRuntime.create({
-		modelsPath: null,
-		credentials: new InMemoryCredentialStore(),
-		modelsStore: new InMemoryModelsStore(),
-		allowModelNetwork: false,
-	}).then((r) => new ModelRegistry(r)));
-
-// fixed baseUrl and an API key, but pi exchanges the key through OAuth first
-const unsupported = ["github-copilot"];
-
-/**
- * The Catalog: pi's built-in Providers that work with one API key and a fixed baseUrl, with their Models.
- * Those needing cloud credentials, URL placeholders or OAuth are left out.
- */
-export async function catalogProviders() {
-	const registry = await catalogRegistry();
-	const providers = [];
-	for (const id of new Set(registry.getAll().map((m) => m.provider))) {
-		const provider = registry.getProvider(id);
-		const models = registry.getAll().filter((m) => m.provider === id);
-		const baseUrl = provider?.baseUrl;
-		if (
-			!provider?.auth?.apiKey ||
-			!baseUrl ||
-			baseUrl.includes("{") ||
-			unsupported.includes(id) ||
-			// a custom baseUrl replaces every Model's, so they must share one
-			models.some((m) => m.baseUrl !== baseUrl)
-		)
-			continue;
-		providers.push({ id, name: provider.name ?? id, baseUrl, models });
-	}
-	return providers;
 }
 
 /**
  * Resolves the stored Agent Definitions against the configured Providers and Models.
  * Throws a ConfigError naming each bad Agent and field; a Model that is not available only warns.
  */
-export async function loadConfig(
-	settings: Settings,
-): Promise<Omit<OrqestraConfig, keyof ToolConfig | "skills">> {
-	const registry = await catalogRegistry();
-	const enabled = new Set(settings.enabledModels);
-	const models = (await catalogProviders()).flatMap((p) => {
-		const configured = settings.providers.find((s) => s.id === p.id);
-		if (!configured) return [];
-		return p.models
-			.filter((m) => enabled.has(modelRef(m)))
-			.map((m) => ({
-				...m,
-				baseUrl: configured.baseUrl || m.baseUrl,
-				// pi prices usage.cost with it, so Usage is costed at the price in force
-				cost: priceInForce(settings.modelPrices, modelRef(m), m.cost).cost,
-			}));
-	});
+export const loadConfig = async (settings: Settings) =>
+	resolveConfig(settings, await resolveModels(settings));
+
+/** `loadConfig` on Models resolved by the models package, as `createConfig` does with its snapshot. */
+export function resolveConfig(
+	settings: Omit<Settings, keyof ModelSettings>,
+	loaded: Models,
+): Omit<OrqestraConfig, keyof ToolConfig | "skills"> {
+	const { models } = loaded;
 	const known = models.map(modelRef);
 
 	const errors: string[] = [];
@@ -305,48 +214,13 @@ export async function loadConfig(
 	}
 
 	return {
-		registry,
-		models,
+		...loaded,
 		agents,
 		defaultAgent: defaults[0],
 		mcpServers,
 		allMcpServers,
 		limits: settings.limits ?? DEFAULT_LIMITS,
-		streamSimple: (model, context, options) => {
-			const provider = settings.providers.find((p) => p.id === model.provider);
-			if (provider && provider.apiKey === undefined)
-				throw new ConfigError(
-					`The API key of Provider "${provider.id}" cannot be decrypted (was ORQESTRA_ENCRYPTION_KEY changed?); an Admin must enter it again in /console`,
-				);
-			return registry.streamSimple(model, context, {
-				...options,
-				apiKey: provider?.apiKey ?? options?.apiKey,
-			});
-		},
 	};
-}
-
-/** Sends a tiny completion to check a Provider's key and baseUrl before they are saved; resolves to an error message, or undefined when it worked. */
-export async function testConnection(
-	model: Model<Api>,
-	apiKey: string,
-	baseUrl?: string,
-) {
-	const registry = await catalogRegistry();
-	try {
-		const result = await registry
-			.streamSimple(
-				{ ...model, baseUrl: baseUrl || model.baseUrl },
-				{ messages: [{ role: "user", content: "Hi", timestamp: Date.now() }] },
-				{ apiKey, maxTokens: 16, signal: AbortSignal.timeout(30_000) },
-			)
-			.result();
-		return result.stopReason === "error"
-			? (result.errorMessage ?? "Request failed")
-			: undefined;
-	} catch (error) {
-		return (error as Error).message;
-	}
 }
 
 const issueField = (issue: z.core.$ZodIssue) =>
@@ -354,29 +228,6 @@ const issueField = (issue: z.core.$ZodIssue) =>
 		...issue.path,
 		...(issue.code === "unrecognized_keys" ? [issue.keys.join(", ")] : []),
 	].join(".");
-
-/**
- * The thinking levels an Agent offers on a Model, and the one selected by default:
- * the Agent's `thinking.default`, else `low`, else the lowest supported level above `off`.
- */
-export function resolveThinking(
-	thinking: AgentDefinition["thinking"],
-	model: Pick<Model<Api>, "reasoning" | "thinkingLevelMap">,
-): { allowed: ThinkingLevel[]; default: ThinkingLevel } {
-	const supported = getSupportedThinkingLevels(model as Model<Api>);
-	const allowed = thinking.allowed
-		? supported.filter((l) => thinking.allowed?.includes(l))
-		: supported;
-	// the Agent's levels may not overlap this Model's; fall back to what the Model can do
-	const offered = allowed.length ? allowed : supported;
-	const preferred = [thinking.default, "low"].find(
-		(l): l is ThinkingLevel => !!l && offered.includes(l as ThinkingLevel),
-	);
-	return {
-		allowed: offered,
-		default: preferred ?? offered.find((l) => l !== "off") ?? offered[0],
-	};
-}
 
 /** System prompt of the general worker. */
 export const GENERAL_WORKER =

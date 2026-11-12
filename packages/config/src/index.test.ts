@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	catalogProviders,
 	GENERAL_WORKER,
 	loadConfig,
-	resolveThinking,
 	resolveTurn,
 	type Settings,
 	turnSkills,
@@ -44,23 +42,6 @@ const withAgents = (agents: Record<string, unknown>, enabled?: string[]) =>
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("catalogProviders", () => {
-	it("lists Providers that work with one API key and a fixed baseUrl", async () => {
-		const ids = (await catalogProviders()).map((p) => p.id);
-		expect(ids).toEqual(expect.arrayContaining(["deepseek", "anthropic"]));
-		for (const id of [
-			"amazon-bedrock",
-			"google-vertex",
-			"azure",
-			"cloudflare-ai-gateway",
-			"cloudflare-workers-ai",
-			"github-copilot",
-			"openai-codex",
-		])
-			expect(ids).not.toContain(id);
-	});
-});
-
 describe("loadConfig", () => {
 	it("loads an Agent Definition with its instructions", async () => {
 		vi.stubEnv("ORQESTRA_DEFAULT_MODEL", "deepseek/deepseek-flash");
@@ -84,16 +65,6 @@ describe("loadConfig", () => {
 		// disabled Models and Providers nobody configured stay out
 		expect(config.defaultAgent.models).toEqual(["deepseek/deepseek-v4-pro"]);
 		expect(config.defaultAgent.defaultModel).toBe("deepseek/deepseek-v4-pro");
-	});
-
-	it("sends a Provider's Models to its custom baseUrl, keeping the Catalog's compat", async () => {
-		const config = await loadConfig(
-			deepseek(["deepseek-flash"], { baseUrl: "http://10.0.0.1:8080" }),
-		);
-		expect(config.models[0]).toMatchObject({
-			baseUrl: "http://10.0.0.1:8080",
-			compat: { thinkingFormat: "deepseek" },
-		});
 	});
 
 	describe("Models an Agent references but that are not available", () => {
@@ -138,15 +109,6 @@ describe("loadConfig", () => {
 			expect(config.defaultAgent.models).toEqual([]);
 			expect(resolveTurn(config, "general")).toBeUndefined();
 		});
-	});
-
-	it("fails a request to a Provider whose API key cannot be decrypted", async () => {
-		const config = await loadConfig(
-			deepseek(["deepseek-flash"], { apiKey: undefined }),
-		);
-		expect(() =>
-			config.streamSimple(config.models[0], { messages: [] }),
-		).toThrow(/API key of Provider "deepseek" cannot be decrypted/);
 	});
 
 	describe("Tools", () => {
@@ -405,63 +367,6 @@ describe("loadConfig", () => {
 				{ general: agentWith({ compaction: { reserveTokens: 0 } }) },
 				/"general": compaction\.reserveTokens/,
 			));
-	});
-});
-
-describe("resolveThinking", () => {
-	const flash = {
-		reasoning: true,
-		thinkingLevelMap: {
-			minimal: null,
-			low: "low",
-			medium: null,
-			high: "high",
-			max: "max",
-		},
-	};
-	const proOnly = {
-		reasoning: true,
-		thinkingLevelMap: {
-			minimal: null,
-			low: null,
-			medium: null,
-			high: "high",
-			max: "max",
-		},
-	};
-
-	it("allows every level the Model supports and defaults to low", () => {
-		expect(resolveThinking({}, flash)).toEqual({
-			allowed: ["off", "low", "high", "max"],
-			default: "low",
-		});
-	});
-
-	it("defaults to the lowest supported level when low is unsupported", () => {
-		expect(resolveThinking({}, proOnly)).toEqual({
-			allowed: ["off", "high", "max"],
-			default: "high",
-		});
-	});
-
-	it("only offers off for a Model without reasoning", () => {
-		expect(resolveThinking({}, { reasoning: false })).toEqual({
-			allowed: ["off"],
-			default: "off",
-		});
-	});
-
-	it("narrows to the Agent's allowed levels the Model supports", () => {
-		expect(
-			resolveThinking(
-				{ allowed: ["medium", "high", "max"], default: "max" },
-				flash,
-			),
-		).toEqual({ allowed: ["high", "max"], default: "max" });
-	});
-
-	it("ignores a configured default the Model cannot use", () => {
-		expect(resolveThinking({ default: "low" }, proOnly).default).toBe("high");
 	});
 });
 
