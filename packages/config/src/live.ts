@@ -1,4 +1,4 @@
-import type { Db } from "@orqestra/db";
+import { type Db, db as globalDb } from "@orqestra/db";
 import { live } from "@orqestra/db/live";
 import {
 	agent,
@@ -7,14 +7,18 @@ import {
 	mcpServer,
 	sandboxProvider,
 	searchProvider,
-	skill,
-	skillVersion,
 } from "@orqestra/db/schema";
 import { decryptSecret, encryptionKey } from "@orqestra/db/secret";
 import { createModels, type ModelSettings } from "@orqestra/models";
+import { createSkills, skillFiles as filesOf } from "@orqestra/skills";
 import { availableTools } from "@orqestra/tools";
-import { eq } from "drizzle-orm";
-import { admin, limitsInput, servedBy, storedClient } from "./admin.ts";
+import {
+	admin,
+	forgetSkill,
+	limitsInput,
+	servedBy,
+	storedClient,
+} from "./admin.ts";
 import {
 	type OrqestraConfig,
 	resolveConfig,
@@ -33,6 +37,13 @@ export {
 	providerInput,
 	providerTestInput,
 } from "@orqestra/models";
+export {
+	SkillNotFound,
+	skillCreateInput,
+	skillCurrentInput,
+	skillEditInput,
+	skillEnabledInput,
+} from "@orqestra/skills";
 export type {
 	DocumentParserTestResult,
 	McpTestResult,
@@ -44,16 +55,13 @@ export {
 	limitsInput,
 	mcpServerEnabledInput,
 	mcpServerInput,
-	SkillNotFound,
 	sandboxProviderInput,
 	searchProviderInput,
-	skillCreateInput,
-	skillCurrentInput,
-	skillEditInput,
-	skillEnabledInput,
-	skillFiles,
 	toolServiceInput,
 } from "./admin.ts";
+
+/** A Skill version's files, read from the global db. */
+export const skillFiles = (versionId: number) => filesOf(globalDb, versionId);
 export {
 	connectionStore,
 	deleteConnection,
@@ -71,7 +79,6 @@ async function loadSettings(
 		served,
 		mcpServers,
 		agents,
-		skills,
 		[sandbox],
 		[saved],
 		[parser],
@@ -80,17 +87,6 @@ async function loadSettings(
 		servedBy(db),
 		db.select().from(mcpServer).orderBy(mcpServer.createdAt),
 		db.select().from(agent).orderBy(agent.createdAt),
-		db
-			.select({
-				name: skill.name,
-				enabled: skill.enabled,
-				versionId: skillVersion.id,
-				description: skillVersion.description,
-				disableModelInvocation: skillVersion.disableModelInvocation,
-			})
-			.from(skill)
-			.innerJoin(skillVersion, eq(skill.currentVersionId, skillVersion.id))
-			.orderBy(skill.name),
 		db.select().from(sandboxProvider),
 		db.select().from(limits),
 		db.select().from(documentParser),
@@ -115,7 +111,6 @@ async function loadSettings(
 				value: decryptSecret(h.value, key),
 			})),
 		})),
-		skills,
 		// a stored row, read again by limitsInput so a bad one fails the load like a bad Agent Definition
 		limits: saved && limitsInput.parse(saved),
 		sandboxProvider: sandbox && {
@@ -133,7 +128,7 @@ async function loadSettings(
 	};
 }
 
-const logWarnings = (config: OrqestraConfig) => {
+const logWarnings = (config: Omit<OrqestraConfig, "skills">) => {
 	for (const a of config.agents) {
 		for (const ref of a.unavailableModels)
 			console.warn(`Agent "${a.id}": Model "${ref}" is not available`);
@@ -161,20 +156,26 @@ export function createConfig(db: Db) {
 		channel: CONFIG_CHANNEL,
 		load: () => loadSettings(db),
 	});
-	// resolved again only when either snapshot was reloaded
-	let last:
-		| { from: [unknown, unknown]; config: Promise<OrqestraConfig> }
-		| undefined;
+	// shortcut: the Skills keep their own snapshot, put in here until #131 gives Turn resolution the Skills itself
+	const skills = createSkills(db);
+	// resolved again only when a snapshot was reloaded, the same object while none is, as a snapshot is
+	let last: { from: unknown[]; config: Promise<OrqestraConfig> } | undefined;
 	const current = async () => {
-		const [s, m] = await Promise.all([settings.current(), models.current()]);
-		if (last?.from[0] !== s || last.from[1] !== m) {
-			const next = Promise.resolve().then(() =>
-				logWarnings(resolveConfig(s, m)),
-			);
+		const from = await Promise.all([
+			settings.current(),
+			models.current(),
+			skills.current(),
+		]);
+		if (!last || from.some((f, i) => f !== last?.from[i])) {
+			const [c, m, s] = from;
+			const next = Promise.resolve().then(() => ({
+				...logWarnings(resolveConfig(c, m)),
+				skills: s,
+			}));
 			const previous = last?.config;
 			// as live does: a failed reload keeps the previous config
 			last = {
-				from: [s, m],
+				from,
 				config: previous
 					? next.catch((error) => {
 							console.error(`${CONFIG_CHANNEL}: reload failed`, error);
@@ -189,9 +190,19 @@ export function createConfig(db: Db) {
 	return {
 		current,
 		write,
-		close: () => Promise.all([settings.close(), models.close()]),
+		close: async () => {
+			await Promise.all([settings.close(), models.close(), skills.close()]);
+		},
 		...admin({ current, write }),
 		providers: models.providers,
+		skills: {
+			...skills,
+			/** Also removes it from every Agent Definition. */
+			delete: async (name: string) => {
+				await skills.delete(name);
+				await forgetSkill(settings, name);
+			},
+		},
 	};
 }
 

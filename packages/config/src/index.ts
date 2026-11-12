@@ -1,5 +1,4 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { stripFrontmatter } from "@earendil-works/pi-coding-agent";
 import {
 	type ModelSettings,
 	type Models,
@@ -8,6 +7,7 @@ import {
 	resolveThinking,
 	type ThinkingLevel,
 } from "@orqestra/models";
+import type { SkillInfo } from "@orqestra/skills";
 import type { McpServer, SandboxProvider, ToolServices } from "@orqestra/tools";
 import type { z } from "zod";
 import {
@@ -31,6 +31,7 @@ export {
 	type ThinkingLevel,
 	testConnection,
 } from "@orqestra/models";
+export { type SkillInfo, skillInstructions } from "@orqestra/skills";
 export * from "./shared.ts";
 
 export interface AgentDefinition {
@@ -103,14 +104,6 @@ export interface Settings extends ModelSettings {
 	};
 	/** Omitted when none were saved: DEFAULT_LIMITS. */
 	limits?: Limits;
-	/** Every Skill with its current version. */
-	skills: {
-		name: string;
-		enabled: boolean;
-		versionId: number;
-		description: string;
-		disableModelInvocation: boolean;
-	}[];
 }
 
 /** The Limits an Admin sets in /console/limits; durations in seconds. */
@@ -146,14 +139,6 @@ export const DEFAULT_LIMITS: Limits = {
 	backgroundCallMaxDuration: 24 * 60 * 60,
 };
 
-/** A Skill Runs can use; read its files with `skillFiles(versionId)`. */
-export interface SkillInfo {
-	/** The current version when the config was loaded. */
-	versionId: number;
-	description: string;
-	disableModelInvocation: boolean;
-}
-
 export interface OrqestraConfig extends Models {
 	agents: AgentDefinition[];
 	defaultAgent: AgentDefinition;
@@ -185,7 +170,7 @@ export const loadConfig = async (settings: Settings) =>
 export function resolveConfig(
 	settings: Omit<Settings, keyof ModelSettings>,
 	loaded: Models,
-): OrqestraConfig {
+): Omit<OrqestraConfig, "skills"> {
 	const { models } = loaded;
 	const known = models.map(modelRef);
 
@@ -285,9 +270,6 @@ export function resolveConfig(
 		if (enabled) mcpServers[id] = allMcpServers[id];
 	}
 
-	const skills: OrqestraConfig["skills"] = {};
-	for (const { name, enabled, ...skill } of settings.skills)
-		if (enabled) skills[name] = skill;
 	const stored = settings.sandboxProvider;
 	const sandboxProvider = stored?.token
 		? { ...stored, token: stored.token, snapshot: stored.snapshot ?? undefined }
@@ -300,7 +282,6 @@ export function resolveConfig(
 		tools,
 		mcpServers,
 		allMcpServers,
-		skills,
 		sandboxProvider,
 		limits: settings.limits ?? DEFAULT_LIMITS,
 	};
@@ -379,7 +360,3 @@ export const turnSkills = (
 				return skill ? [{ name, ...skill }] : [];
 			})
 		: [];
-
-/** A SKILL.md's instructions, without its frontmatter. */
-export const skillInstructions = (skillMd: string) =>
-	stripFrontmatter(skillMd).trim();

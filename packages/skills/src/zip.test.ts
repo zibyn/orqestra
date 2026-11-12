@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseSkillZip } from "./skill-zip.ts";
 import { type Entry, zip } from "./test-zip.ts";
+import { parseSkillZip } from "./zip.ts";
 
 const skillMd = (front: string, body = "Use it well.") =>
 	`---\n${front}\n---\n\n${body}\n`;

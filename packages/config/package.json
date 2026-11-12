@@ -16,6 +16,7 @@
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@orqestra/db": "workspace:*",
     "@orqestra/models": "workspace:*",
+    "@orqestra/skills": "workspace:*",
     "@orqestra/tools": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "zod": "^4.6.7"
