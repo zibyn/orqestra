@@ -1,5 +1,6 @@
-import { connectionStore, createConfig } from "@orqestra/config/live";
+import { createConfig } from "@orqestra/config/live";
 import { db } from "@orqestra/db";
+import { connectionStore } from "@orqestra/mcp";
 import { s3Store } from "@orqestra/tools/s3";
 import { tracing } from "./tracing.ts";
 import { startAgentWorker } from "./worker.ts";

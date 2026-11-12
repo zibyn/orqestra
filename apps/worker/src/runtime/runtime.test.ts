@@ -28,15 +28,11 @@ import {
 import { zip } from "@orqestra/config/test-zip";
 import type { Transcript, Turn } from "@orqestra/conversations";
 import { memoryRun } from "@orqestra/conversations/testing";
-import { openToolbox } from "@orqestra/tools";
-import {
-	fakeMcpServer,
-	memoryConnections,
-	memoryOrrery,
-	memoryStore,
-} from "@orqestra/tools/testing";
+import { fakeMcpServer, memoryConnections } from "@orqestra/mcp/testing";
+import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
 import { otelTelemetry, tracing } from "../tracing.ts";
 import { type RuntimeDeps, runAgent } from "./index.ts";
+import { openToolbox } from "./toolbox.ts";
 import { MAX_SUBAGENT_STEPS } from "./tools.ts";
 
 // The runtime replying to a Run kept in memory, against pi's faux provider: no Postgres, no BullMQ

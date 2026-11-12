@@ -5,7 +5,6 @@ import {
 	documentParser,
 	enabledModel,
 	limits,
-	mcpServer,
 	modelPrice,
 	provider,
 	sandboxProvider,
@@ -14,9 +13,10 @@ import {
 	skillVersion,
 } from "@orqestra/db/schema";
 import { decryptSecret, encryptionKey } from "@orqestra/db/secret";
+import { loadMcpServers } from "@orqestra/mcp";
 import { availableTools } from "@orqestra/tools";
 import { eq } from "drizzle-orm";
-import { admin, limitsInput, servedBy, storedClient } from "./admin.ts";
+import { admin, limitsInput, servedBy } from "./admin.ts";
 import {
 	loadConfig,
 	modelRef,
@@ -30,17 +30,22 @@ import {
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
 
+export {
+	connectionStore,
+	deleteConnection,
+	type McpTestResult,
+	mcpServerEnabledInput,
+	mcpServerInput,
+	revokeConnections,
+} from "@orqestra/mcp";
 export type {
 	DocumentParserTestResult,
-	McpTestResult,
 	SandboxTestResult,
 } from "@orqestra/tools";
 export {
 	agentInput,
 	documentParserInput,
 	limitsInput,
-	mcpServerEnabledInput,
-	mcpServerInput,
 	modelEnabledInput,
 	modelPriceInput,
 	providerInput,
@@ -55,12 +60,7 @@ export {
 	skillFiles,
 	toolServiceInput,
 } from "./admin.ts";
-export {
-	connectionStore,
-	deleteConnection,
-	revokeConnections,
-	userConnections,
-} from "./connections.ts";
+export { userConnections } from "./connections.ts";
 
 /** Everything saved in /console, with API keys decrypted. */
 async function loadSettings(db: Db): Promise<Settings> {
@@ -83,7 +83,7 @@ async function loadSettings(db: Db): Promise<Settings> {
 		db.select().from(modelPrice),
 		db.select().from(searchProvider),
 		servedBy(db),
-		db.select().from(mcpServer).orderBy(mcpServer.createdAt),
+		loadMcpServers(db, key),
 		db.select().from(agent).orderBy(agent.createdAt),
 		db
 			.select({
@@ -117,18 +117,7 @@ async function loadSettings(db: Db): Promise<Settings> {
 			baseUrl: p.baseUrl,
 		})),
 		servedBy: served,
-		mcpServers: mcpServers.map((s) => ({
-			id: s.id,
-			name: s.name,
-			url: s.url,
-			enabled: s.enabled,
-			auth: s.auth,
-			oauthClient: storedClient(s, key) ?? null,
-			headers: s.headers.map((h) => ({
-				name: h.name,
-				value: decryptSecret(h.value, key),
-			})),
-		})),
+		mcpServers,
 		skills,
 		// a stored row, read again by limitsInput so a bad one fails the load like a bad Agent Definition
 		limits: saved && limitsInput.parse(saved),

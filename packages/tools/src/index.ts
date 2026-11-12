@@ -1,19 +1,10 @@
-// The Toolbox: which Tools are available, the Tools of one Run, the MCP connection test, and the orrery client.
+// The built-in Tools: which are available, those of one Run, and the orrery client. An MCP Server's Tools are @orqestra/mcp's.
 // A leaf: knows nothing of how the services are stored or configured.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
-import type { AuthProvider } from "@modelcontextprotocol/client";
 import { cut } from "./cut.ts";
-import {
-	type McpConnection,
-	type McpTool,
-	mcpTools,
-	type StartBackgroundCall,
-} from "./mcp.ts";
-import { type ConnectionStore, connectionAuth } from "./oauth.ts";
 import { type DocumentParser, type ParseFiles, parseTool } from "./parse.ts";
 import {
-	mcpServerOf,
 	mcpToolRef,
 	type SearchProviderId,
 	type SearchToolName,
@@ -49,23 +40,13 @@ export interface ToolService {
 	baseUrl: string;
 }
 
-/** An MCP Server ready to connect to, with plaintext headers. */
-export interface McpServer {
-	name: string;
-	url: string;
-	/** Omitted: shared, every User sends `headers`; oauth: each User connects with their own account. */
-	auth?: "shared" | "oauth";
-	/** A Client pre-registered with its authorization server, for oauth; omitted: Orqestra uses its own or registers. */
-	oauthClient?: { client_id: string; client_secret?: string };
-	headers: Record<string, string>;
-}
-
 /** The services the Tools need; only usable ones are listed, the other Tools are unavailable. */
 export interface ToolServices {
 	tools: Partial<Record<SearchToolName, ToolService>> & {
 		parse?: DocumentParser;
 	};
-	mcpServers: Record<string, McpServer>;
+	/** The MCP Servers whose Tools can be offered, by id. */
+	mcpServers: Record<string, unknown>;
 }
 
 /** The Tool entries that can be offered in a Run now. */
@@ -79,12 +60,22 @@ const text = (t: string) => [{ type: "text" as const, text: t }];
 // infers `execute`'s params from `parameters`, then fits the Agent's untyped Tool list
 const tool = <T extends TSchema>(t: AgentTool<T>) => t as unknown as AgentTool;
 
-/** Search, Scrape and Parse, those of them `offered`; Parse only with the Run's `files`. */
-function builtinTools(
-	services: ToolServices,
-	offered: ToolRef[],
-	fetch: Fetch,
-	{ files, pollMs }: { files?: ParseFiles; pollMs?: number },
+/** Search, Scrape and Parse, those of them `offered` that are available; Parse only with the Run's `files`. */
+export function builtinTools(
+	services: Pick<ToolServices, "tools">,
+	offered: readonly ToolRef[],
+	{
+		// looked up per call, so a fetch replaced later (tests) is used
+		fetch = (i, o) => globalThis.fetch(i, o),
+		files,
+		pollMs,
+	}: {
+		fetch?: Fetch;
+		/** The Run's Attachments, which Parse reads; no Parse without them. */
+		files?: ParseFiles;
+		/** How often Parse asks the Document Parser whether it is done. */
+		pollMs?: number;
+	},
 ): AgentTool[] {
 	const tools: AgentTool[] = [];
 	const search = offered.includes("search") && services.tools.search;
@@ -143,134 +134,6 @@ function builtinTools(
 	return tools;
 }
 
-/**
- * Opens the Tools of one Run: those of `allowed` that are available. MCP Servers are connected in parallel,
- * for this Run only; one that cannot be connected to or listed is skipped (logged). A per-User OAuth one only when `userId` has
- * a usable Connection to it in `connections`, else left out without a word. Call `close` when the Run ends.
- */
-export async function openToolbox(
-	services: ToolServices,
-	allowed: readonly ToolRef[],
-	options: {
-		signal: AbortSignal;
-		fetch?: Fetch;
-		/** How long one MCP request (connecting, listing, a Tool call) may take. */
-		timeoutMs?: number;
-		/** The Run's Attachments, which Parse reads; no Parse without them. */
-		files?: ParseFiles;
-		/** How often Parse asks the Document Parser whether it is done. */
-		pollMs?: number;
-		/** Starts a Background Call for an MCP Tool call its server puts in the background; without it, no call declares the Tasks extension. */
-		backgroundCall?: StartBackgroundCall;
-		/** The Run's User: its top-level Conversation's, also for Subagents and Firings. */
-		userId?: string;
-		/** Where the Users' Connections to per-User OAuth MCP Servers are kept. */
-		connections?: ConnectionStore;
-	},
-): Promise<{
-	/** An MCP Server's Tools say which server they are from. */
-	tools: (AgentTool | McpTool)[];
-	close: () => Promise<unknown>;
-}> {
-	const {
-		signal,
-		fetch,
-		timeoutMs = 60_000,
-		backgroundCall,
-		userId,
-		connections: store,
-		...parse
-	} = options;
-	const available = availableTools(services);
-	const offered = allowed.filter((t) => available.includes(t));
-	const allowedIds = offered.flatMap((t) => mcpServerOf(t) ?? []);
-	const auth: Record<string, AuthProvider> = {};
-	await Promise.all(
-		allowedIds
-			.filter((id) => services.mcpServers[id].auth === "oauth")
-			.map(async (id) => {
-				if (!userId || !store) return;
-				const provider = await connectionAuth(store, userId, id, {
-					server: services.mcpServers[id],
-					fetch,
-				}).catch(
-					(error) =>
-						void console.error(
-							`Reading the Connection of ${userId} to MCP Server "${id}" failed`,
-							error,
-						),
-				);
-				if (provider) auth[id] = provider;
-			}),
-	);
-	// decided as the Run starts: a Connection made during it counts from the next Run
-	const ids = allowedIds.filter(
-		(id) => services.mcpServers[id].auth !== "oauth" || auth[id],
-	);
-	const connections: McpConnection[] = [];
-	const mcp = await mcpTools(services.mcpServers, ids, connections, {
-		signal,
-		timeoutMs,
-		fetch,
-		backgroundCall,
-		auth,
-	});
-	// a name twice makes the Provider refuse the whole request: keep the first
-	const names = new Set<string>();
-	const tools = [
-		// looked up per call, so a fetch replaced later (tests) is used
-		...builtinTools(
-			services,
-			offered,
-			fetch ?? ((i, o) => globalThis.fetch(i, o)),
-			parse,
-		),
-		...mcp,
-	].filter((t) => {
-		if (!names.has(t.name)) return names.add(t.name);
-		console.error(`Tool "${t.name}" is offered twice; only the first is kept`);
-		return false;
-	});
-	return {
-		tools,
-		close: () => Promise.allSettled(connections.map((c) => c.close())),
-	};
-}
-
-export {
-	type BackgroundCallStart,
-	cancelMcpTask,
-	failureReason,
-	INPUT_REQUIRED,
-	type McpProbe,
-	type McpTaskState,
-	type McpTestResult,
-	type McpTool,
-	pollMcpTask,
-	probeMcpServer,
-	type StartBackgroundCall,
-	type TaskRequestOptions,
-	testMcpServer,
-} from "./mcp.ts";
-export {
-	type ConnectionStore,
-	type ConnectionTokens,
-	callbackUrl,
-	clientMetadataDocument,
-	connectionAuth,
-	connectionStatus,
-	type FinishConnectionError,
-	finishConnection,
-	type OAuthDiscoveryStep,
-	type OrqestraReach,
-	PENDING_TTL_MS,
-	type PendingAuthorization,
-	REVOKE_TIMEOUT_MS,
-	revokeConnection,
-	type StartConnectionError,
-	type StoredConnection,
-	startConnection,
-} from "./oauth.ts";
 export * from "./orrery.ts";
 export * from "./sandbox.ts";
 export type { ObjectStore } from "./store.ts";

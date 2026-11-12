@@ -1,11 +1,12 @@
-import { mcpServerId } from "@orqestra/config";
-import {
-	type Config,
-	mcpServerEnabledInput,
-	mcpServerInput,
-} from "@orqestra/config/live";
+import type { Config } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
-import { callbackUrl, type OrqestraReach } from "@orqestra/tools";
+import {
+	callbackUrl,
+	mcpServerEnabledInput,
+	mcpServerId,
+	mcpServerInput,
+	type OrqestraReach,
+} from "@orqestra/mcp";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { adminOnly } from "./admin.ts";

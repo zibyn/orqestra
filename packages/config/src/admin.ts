@@ -16,11 +16,14 @@ import {
 } from "@orqestra/db/schema";
 import { decryptSecret, sealSecret, secretReadable } from "@orqestra/db/secret";
 import {
+	deleteMcpServer,
+	mcpServerAdmin,
+	type OrqestraReach,
+	revokeConnections,
+} from "@orqestra/mcp";
+import {
 	availableTools,
 	type DocumentParserTestResult,
-	type McpTestResult,
-	type OrqestraReach,
-	probeMcpServer,
 	type SandboxTestResult,
 	testDocumentParser,
 	testSandboxProvider,
@@ -28,18 +31,12 @@ import {
 import { and, desc, eq, max, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
-	clearConnections,
-	connectedUsers,
-	revokeConnections,
-} from "./connections.ts";
-import {
 	agentDefinition,
 	agentId,
 	catalogProviders,
 	DEFAULT_LIMITS,
 	definitionIssues,
 	isMineruNet,
-	mcpServerId,
 	mcpToolRef,
 	modelRef,
 	type OrqestraConfig,
@@ -120,29 +117,6 @@ export const documentParserInput = z.object({
 	// blank keeps the stored key
 	apiKey: z.string().trim().optional(),
 });
-export const mcpServerInput = z.object({
-	// checked in save, so a bad id lands on the id field
-	id: z.string(),
-	create: z.boolean(),
-	name: z.string().trim().min(1),
-	url: httpUrl,
-	enabled: z.boolean(),
-	// a Client pre-registered with the authorization server, making it per-User OAuth; blank: none
-	oauthClientId: z.string().trim().optional(),
-	// blank keeps the stored secret
-	oauthClientSecret: z.string().trim().optional(),
-	headers: z.array(
-		z.object({
-			name: z.string().trim().min(1),
-			// blank keeps the stored value of the header with this name
-			value: z.string().trim().optional(),
-		}),
-	),
-});
-export const mcpServerEnabledInput = z.object({
-	id: mcpServerId,
-	enabled: z.boolean(),
-});
 export const skillEnabledInput = z.object({
 	name: z.string(),
 	enabled: z.boolean(),
@@ -208,9 +182,6 @@ export const agentInput = z.object({
 // null keeps following the default one (the Catalog's, or the official one)
 const customBaseUrl = (url: string, fallback: string) =>
 	url.replace(/\/+$/, "") === fallback.replace(/\/+$/, "") ? null : url;
-
-// RFC 7230 token
-const headerName = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 const catalogProvider = async (id: string) =>
 	(await catalogProviders()).find((p) => p.id === id);
@@ -420,165 +391,14 @@ const searchProviders = ({ current, write }: Deps) => ({
 		),
 });
 
-/** A stored MCP Server's pre-registered Client, its Secret decrypted. */
-/** The MCP Server's pre-registered Client, its secret decrypted (undefined when it no longer decrypts). */
-export const storedClient = (
-	row: Pick<
-		typeof mcpServer.$inferSelect,
-		"oauthClientId" | "oauthClientSecret"
-	>,
-	key?: Buffer,
-) =>
-	row.oauthClientId
-		? {
-				client_id: row.oauthClientId,
-				client_secret:
-					(row.oauthClientSecret &&
-						decryptSecret(row.oauthClientSecret, key)) ||
-					undefined,
-			}
-		: undefined;
-
-const mcpServers = ({ write }: Deps) => ({
-	async list() {
-		const [rows, connected] = await Promise.all([
-			db.select().from(mcpServer).orderBy(mcpServer.createdAt),
-			connectedUsers(),
-		]);
-		return rows.map((r) => ({
-			id: r.id,
-			name: r.name,
-			url: r.url,
-			enabled: r.enabled,
-			auth: r.auth,
-			oauthClientId: r.oauthClientId,
-			oauthClientSecret: r.oauthClientSecret
-				? { readable: secretReadable(r.oauthClientSecret) }
-				: null,
-			headers: r.headers.map((h) => ({
-				name: h.name,
-				readable: secretReadable(h.value),
-			})),
-			// the Admin sees who relies on it, but cannot disconnect them
-			...(r.auth === "oauth" && { connections: connected[r.id] ?? [] }),
-		}));
-	},
-
-	/**
-	 * Tests it first, which finds how it is signed in to (see probeMcpServer); once saved, also the test's result. `fetch` makes the
-	 * test's requests and revocations. A new auth mode, URL or pre-registered Client ends every Connection to it, revoked in the
-	 * background once committed.
-	 */
-	async save(
-		input: z.infer<typeof mcpServerInput>,
-		{ fetch }: Pick<OrqestraReach, "fetch"> = {},
-	): Promise<{ errors: SaveErrors; test?: McpTestResult }> {
-		if (!mcpServerId.safeParse(input.id).success)
-			return { errors: { id: { code: "id_invalid" } } };
-		const stored = await db.query.mcpServer.findFirst({
-			where: eq(mcpServer.id, input.id),
-		});
-		if (input.create && stored) return { errors: { id: { code: "id_taken" } } };
-		if (!input.create && !stored)
-			return { errors: { id: { code: "not_found" } } };
-		const headers = [];
-		const plain: Record<string, string> = {};
-		const seen = new Set<string>();
-		for (const h of input.headers) {
-			const header = h.name;
-			if (!headerName.test(header))
-				return { errors: { headers: { code: "header_invalid", header } } };
-			if (seen.has(header.toLowerCase()))
-				return { errors: { headers: { code: "header_twice", header } } };
-			// each User's Connection authorizes a server with a pre-registered Client
-			if (input.oauthClientId && header.toLowerCase() === "authorization")
-				return { errors: { headers: { code: "header_reserved", header } } };
-			seen.add(header.toLowerCase());
-			const kept = h.value
-				? undefined
-				: stored?.headers.find((s) => s.name === header)?.value;
-			const value = h.value || (kept && decryptSecret(kept));
-			if (!value)
-				return {
-					errors: { headers: { code: "header_value_missing", header } },
-				};
-			headers.push({
-				name: header,
-				value: sealSecret(h.value, kept) as string,
-			});
-			plain[header] = value;
-		}
-		const oauthClientId = input.oauthClientId || null;
-		const { auth: found, test } = await probeMcpServer(
-			{ url: input.url, headers: plain, preRegistered: !!oauthClientId },
-			{ fetch },
-		);
-		// one that did not answer keeps how it was signed in to, and its Connections
-		const auth = found ?? stored?.auth ?? "shared";
-		const values = {
-			name: input.name,
-			url: input.url,
-			enabled: input.enabled,
-			auth,
-			oauthClientId,
-			// a secret belongs to its Client: none without one
-			oauthClientSecret:
-				(oauthClientId &&
-					sealSecret(
-						input.oauthClientSecret,
-						stored?.oauthClientSecret ?? undefined,
-					)) ||
-				null,
-			headers,
-		};
-		const oldClient = stored && storedClient(stored);
-		// Connections made for another setup must never reach the new one
-		const reset =
-			stored &&
-			(stored.auth !== auth ||
-				stored.url !== input.url ||
-				stored.oauthClientId !== oauthClientId ||
-				(!!oauthClientId &&
-					!!input.oauthClientSecret &&
-					input.oauthClientSecret !== oldClient?.client_secret));
-		const cleared = await write(async (tx) => {
-			await tx
-				.insert(mcpServer)
-				.values({ id: input.id, ...values })
-				.onConflictDoUpdate({ target: mcpServer.id, set: values });
-			return reset ? clearConnections(tx, input.id, oldClient) : [];
-		});
-		// shortcut: in the background so the save does not wait on authorization servers; lost if the process exits first
-		if (cleared.length) void revokeConnections(cleared, { fetch });
-		// saved either way, so the Admin can fix the URL or headers later
-		return { errors: {}, test };
-	},
-
-	async setEnabled(id: string, enabled: boolean) {
-		const updated = await write((tx) =>
-			tx
-				.update(mcpServer)
-				.set({ enabled })
-				.where(eq(mcpServer.id, id))
-				.returning({ id: mcpServer.id }),
-		);
-		if (!updated.length) throw new Error("MCP Server not found");
-	},
+const mcpServers = (deps: Deps) => ({
+	...mcpServerAdmin(deps),
 
 	/** Also removes it from every Agent Definition, and ends every Connection to it, revoked in the background once committed. */
 	async delete(id: string, { fetch }: Pick<OrqestraReach, "fetch"> = {}) {
-		const cleared = await write(async (tx) => {
+		const cleared = await deps.write(async (tx) => {
 			const ref = mcpToolRef(id);
-			const [stored] = await tx
-				.select()
-				.from(mcpServer)
-				.where(eq(mcpServer.id, id))
-				.for("update");
-			// their tokens taken before the cascade would delete them
-			const cleared = stored
-				? await clearConnections(tx, id, storedClient(stored))
-				: [];
-			await tx.delete(mcpServer).where(eq(mcpServer.id, id));
+			const cleared = await deleteMcpServer(tx, id);
 			await tx.execute(
 				sql`update ${agent} set definition = jsonb_set(definition, '{tools}', (definition->'tools') - ${ref}::text) where definition->'tools' @> ${JSON.stringify([ref])}::jsonb`,
 			);

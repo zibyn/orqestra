@@ -1,18 +1,14 @@
-import { mcpServerId } from "@orqestra/config";
-import {
-	type Config,
-	connectionStore,
-	deleteConnection,
-	revokeConnections,
-	userConnections,
-} from "@orqestra/config/live";
+import { type Config, userConnections } from "@orqestra/config/live";
 import {
 	clientMetadataDocument,
 	connectionStatus,
+	connectionStore,
+	deleteConnection,
 	finishConnection,
+	mcpServerId,
 	type OrqestraReach,
 	startConnection,
-} from "@orqestra/tools";
+} from "@orqestra/mcp";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { signedInOnly } from "./admin.ts";
@@ -85,18 +81,12 @@ export const connectionRoutes = (
 			},
 			{ params: z.object({ serverId: mcpServerId }) },
 		)
-		// only the User's own; deleted first, then revoked as far as the authorization server lets it
+		// only the User's own, revoked as far as the authorization server lets it
 		.delete(
 			"/:serverId",
 			async ({ user, params: { serverId }, status }) => {
-				const server = (await config.current()).allMcpServers[serverId];
-				const deleted = await deleteConnection(
-					user.id,
-					serverId,
-					server?.oauthClient,
-				);
-				if (!deleted) return status(404, refused("not_found"));
-				await revokeConnections(deleted, { fetch });
+				if (!(await deleteConnection(user.id, serverId, { fetch })))
+					return status(404, refused("not_found"));
 			},
 			{ params: z.object({ serverId: mcpServerId }) },
 		);

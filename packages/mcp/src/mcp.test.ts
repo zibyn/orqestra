@@ -1,6 +1,6 @@
 import type { SerializedTaskReference } from "@modelcontextprotocol/ext-tasks/client";
 import { describe, expect, it, vi } from "vitest";
-import { openToolbox, type ToolServices } from "./index.ts";
+import { type McpServices, openMcpTools } from "./index.ts";
 import { connectMcpServer, pollMcpTask } from "./mcp.ts";
 import { finishConnection, startConnection } from "./oauth.ts";
 import {
@@ -28,7 +28,7 @@ const config = (...ids: string[]) =>
 	({
 		tools: {},
 		mcpServers: Object.fromEntries(ids.map((id) => [id, server(id)])),
-	}) as ToolServices;
+	}) as McpServices;
 
 const echo: FakeTool = {
 	name: "echo",
@@ -37,7 +37,7 @@ const echo: FakeTool = {
 };
 const never = new AbortController().signal;
 
-describe("openToolbox with MCP Servers", () => {
+describe("openMcpTools with MCP Servers", () => {
 	describe("a per-User OAuth MCP Server", () => {
 		const connected = (
 			store: ReturnType<typeof memoryConnections>,
@@ -54,7 +54,7 @@ describe("openToolbox with MCP Servers", () => {
 		) => {
 			const services = config("wiki", "github");
 			services.mcpServers.github.auth = "oauth";
-			return openToolbox(services, ["mcp:wiki", "mcp:github"], {
+			return openMcpTools(services, ["mcp:wiki", "mcp:github"], {
 				signal: never,
 				fetch: route(fakes),
 				userId,
@@ -130,7 +130,7 @@ describe("openToolbox with MCP Servers", () => {
 			wiki: fakeServer([echo]),
 			other: fakeServer([echo]),
 		};
-		const { tools, close } = await openToolbox(
+		const { tools, close } = await openMcpTools(
 			config("github", "wiki", "other"),
 			["search", "mcp:github", "mcp:wiki", "mcp:gone"],
 			{
@@ -176,7 +176,7 @@ describe("openToolbox with MCP Servers", () => {
 			{ ...echo, name: "a.b" },
 			{ ...echo, name: "a_b", call: () => ({ content: [] }) },
 		]);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 		});
@@ -197,7 +197,7 @@ describe("openToolbox with MCP Servers", () => {
 				}),
 			},
 		]);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 		});
@@ -224,7 +224,7 @@ describe("openToolbox with MCP Servers", () => {
 				}),
 			},
 		]);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 		});
@@ -240,7 +240,7 @@ describe("openToolbox with MCP Servers", () => {
 		const up = fakeServer([echo]);
 		const down = fakeServer([echo]);
 		down.down = true;
-		const { tools, close } = await openToolbox(
+		const { tools, close } = await openMcpTools(
 			config("down", "up"),
 			["mcp:down", "mcp:up"],
 			{ signal: never, fetch: route({ down, up }), timeoutMs: 50 },
@@ -257,7 +257,7 @@ describe("openToolbox with MCP Servers", () => {
 		"modern",
 	])("calls the Tools of a %s server", async (era) => {
 		const fake = fakeServer([echo], era);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 		});
@@ -280,7 +280,7 @@ describe("openToolbox with MCP Servers", () => {
 			],
 			"modern",
 		);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 		});
@@ -294,7 +294,7 @@ describe("openToolbox with MCP Servers", () => {
 		const fake = fakeServer([echo]);
 		fake.delayMs = 10_000; // listening, but never answers
 		const stop = new AbortController();
-		const connecting = openToolbox(config("s"), ["mcp:s"], {
+		const connecting = openMcpTools(config("s"), ["mcp:s"], {
 			signal: stop.signal,
 			fetch: fake.fetch,
 		});
@@ -312,7 +312,7 @@ describe("openToolbox with MCP Servers", () => {
 				call: () => new Promise(() => {}),
 			},
 		]);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 		});
@@ -331,7 +331,7 @@ describe("openToolbox with MCP Servers", () => {
 				call: () => new Promise(() => {}),
 			},
 		]);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 			timeoutMs: 50,
@@ -346,7 +346,7 @@ describe("openToolbox with MCP Servers", () => {
 			inputSchema: { type: "object" },
 			call: () => new Promise(() => {}),
 		};
-		const { tools, close } = await openToolbox(
+		const { tools, close } = await openMcpTools(
 			config("a", "b"),
 			["mcp:a", "mcp:b"],
 			{
@@ -391,8 +391,8 @@ describe("a Connection's tokens as a Run uses them", () => {
 			as.authorize(started.url),
 		);
 		const open = () =>
-			openToolbox(
-				{ tools: {}, mcpServers: { github } } as ToolServices,
+			openMcpTools(
+				{ tools: {}, mcpServers: { github } } as McpServices,
 				["mcp:github"],
 				{ signal: never, fetch, userId: "ada", connections },
 			);
@@ -534,9 +534,9 @@ describe("connectMcpServer and the Tasks extension", () => {
 	});
 });
 
-describe("openToolbox with Background Calls", () => {
+describe("openMcpTools with Background Calls", () => {
 	type Started = Parameters<
-		NonNullable<Parameters<typeof openToolbox>[2]["backgroundCall"]>
+		NonNullable<Parameters<typeof openMcpTools>[2]["backgroundCall"]>
 	>[0];
 	const started: Started[] = [];
 	const backgroundCall = async (call: Started) => {
@@ -557,7 +557,7 @@ describe("openToolbox with Background Calls", () => {
 		"modern",
 	] as const)("answers an immediate result as before on a %s server", async (era) => {
 		const fake = fakeServer([echo], era);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 			backgroundCall,
@@ -573,7 +573,7 @@ describe("openToolbox with Background Calls", () => {
 	it("declares the Tasks extension on every Tool call, and not without a way to start a Background Call", async () => {
 		const fake = fakeServer([echo], "modern");
 		for (const withCallback of [true, false]) {
-			const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+			const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 				signal: never,
 				fetch: fake.fetch,
 				backgroundCall: withCallback ? backgroundCall : undefined,
@@ -597,7 +597,7 @@ describe("openToolbox with Background Calls", () => {
 			],
 			"modern",
 		);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 			backgroundCall,
@@ -633,7 +633,7 @@ describe("openToolbox with Background Calls", () => {
 			],
 			"modern",
 		);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 			backgroundCall,
@@ -676,7 +676,7 @@ describe("openToolbox with Background Calls", () => {
 			],
 			"modern",
 		);
-		const { tools, close } = await openToolbox(config("s"), ["mcp:s"], {
+		const { tools, close } = await openMcpTools(config("s"), ["mcp:s"], {
 			signal: never,
 			fetch: fake.fetch,
 			backgroundCall,

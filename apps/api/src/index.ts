@@ -1,10 +1,7 @@
-import {
-	connectionStore,
-	createConfig,
-	skillFiles,
-} from "@orqestra/config/live";
+import { createConfig, skillFiles } from "@orqestra/config/live";
 import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
+import { connectionStore } from "@orqestra/mcp";
 import { s3Store } from "@orqestra/tools/s3";
 import { z } from "zod";
 import { createApp } from "./app.ts";

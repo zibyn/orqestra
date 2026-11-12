@@ -8,6 +8,7 @@ import { join } from "node:path";
 // Tighten this table as #122 adds packages: db 0 · models/tools/mcp/skills/memory 1 · agents 2 · conversations 3 · api/worker 4.
 const LAYERS = {
 	"@orqestra/db": 0,
+	"@orqestra/mcp": 1,
 	"@orqestra/memory": 1,
 	"@orqestra/tools": 1,
 	"@orqestra/config": 2, // shortcut: sits between tools and conversations until #122 deletes it
