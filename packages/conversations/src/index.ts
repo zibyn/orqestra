@@ -23,13 +23,9 @@ import {
 	subagent,
 	timer,
 } from "@orqestra/db/schema";
+import type { ConnectionStore, Fetch } from "@orqestra/mcp";
 import { type Undone, undoChange } from "@orqestra/memory";
-import {
-	type ConnectionStore,
-	type Fetch,
-	type ObjectStore,
-	orrery as orreryClient,
-} from "@orqestra/tools";
+import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import { alerts } from "./alerts.ts";

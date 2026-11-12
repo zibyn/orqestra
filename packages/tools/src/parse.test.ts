@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 // the zip writer the Skill upload tests use, independent of the reader under test
 import { zip } from "../../skills/src/test-zip.ts";
 import {
+	builtinTools,
 	type DocumentParser,
-	openToolbox,
 	type ParseFiles,
 	testDocumentParser,
 } from "./index.ts";
@@ -234,18 +234,17 @@ function files(names: Record<string, Uint8Array> = { "report.pdf": pdf }) {
 	return { files: parseFiles, objects, sandbox };
 }
 
-/** Opens a Toolbox with Parse served by `service` and returns the Parse Tool. */
+/** The built-in Tools with Parse served by `service`: the Parse Tool. */
 async function parseTool(
 	fetch: Fetch,
 	parseFiles?: ParseFiles,
 	service: DocumentParser | undefined = mineru,
 ) {
-	const box = await openToolbox(
-		{ tools: service ? { parse: service } : {}, mcpServers: {} },
-		["parse"],
-		{ signal: never, fetch, files: parseFiles, pollMs: 1 },
-	);
-	return box.tools.find((t) => t.name === "parse");
+	return builtinTools({ tools: service ? { parse: service } : {} }, ["parse"], {
+		fetch,
+		files: parseFiles,
+		pollMs: 1,
+	}).find((t) => t.name === "parse");
 }
 
 /** Calls Parse and returns its text. */

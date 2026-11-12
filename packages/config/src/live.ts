@@ -4,21 +4,15 @@ import {
 	agent,
 	documentParser,
 	limits,
-	mcpServer,
 	sandboxProvider,
 	searchProvider,
 } from "@orqestra/db/schema";
 import { decryptSecret, encryptionKey } from "@orqestra/db/secret";
+import { loadMcpServers } from "@orqestra/mcp";
 import { createModels, type ModelSettings } from "@orqestra/models";
 import { createSkills, skillFiles as filesOf } from "@orqestra/skills";
 import { availableTools } from "@orqestra/tools";
-import {
-	admin,
-	forgetSkill,
-	limitsInput,
-	servedBy,
-	storedClient,
-} from "./admin.ts";
+import { admin, forgetSkill, limitsInput, servedBy } from "./admin.ts";
 import {
 	type OrqestraConfig,
 	resolveConfig,
@@ -30,6 +24,14 @@ import {
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
 
+export {
+	connectionStore,
+	deleteConnection,
+	type McpTestResult,
+	mcpServerEnabledInput,
+	mcpServerInput,
+	revokeConnections,
+} from "@orqestra/mcp";
 // shortcut: re-exported until callers import them from @orqestra/models (#122)
 export {
 	modelEnabledInput,
@@ -46,15 +48,12 @@ export {
 } from "@orqestra/skills";
 export type {
 	DocumentParserTestResult,
-	McpTestResult,
 	SandboxTestResult,
 } from "@orqestra/tools";
 export {
 	agentInput,
 	documentParserInput,
 	limitsInput,
-	mcpServerEnabledInput,
-	mcpServerInput,
 	sandboxProviderInput,
 	searchProviderInput,
 	toolServiceInput,
@@ -62,12 +61,7 @@ export {
 
 /** A Skill version's files, read from the global db. */
 export const skillFiles = (versionId: number) => filesOf(globalDb, versionId);
-export {
-	connectionStore,
-	deleteConnection,
-	revokeConnections,
-	userConnections,
-} from "./connections.ts";
+export { userConnections } from "./connections.ts";
 
 /** Everything saved in /console but what the models package loads, with API keys decrypted. */
 async function loadSettings(
@@ -85,7 +79,7 @@ async function loadSettings(
 	] = await Promise.all([
 		db.select().from(searchProvider),
 		servedBy(db),
-		db.select().from(mcpServer).orderBy(mcpServer.createdAt),
+		loadMcpServers(db, key),
 		db.select().from(agent).orderBy(agent.createdAt),
 		db.select().from(sandboxProvider),
 		db.select().from(limits),
@@ -99,18 +93,7 @@ async function loadSettings(
 			baseUrl: p.baseUrl,
 		})),
 		servedBy: served,
-		mcpServers: mcpServers.map((s) => ({
-			id: s.id,
-			name: s.name,
-			url: s.url,
-			enabled: s.enabled,
-			auth: s.auth,
-			oauthClient: storedClient(s, key) ?? null,
-			headers: s.headers.map((h) => ({
-				name: h.name,
-				value: decryptSecret(h.value, key),
-			})),
-		})),
+		mcpServers,
 		// a stored row, read again by limitsInput so a bad one fails the load like a bad Agent Definition
 		limits: saved && limitsInput.parse(saved),
 		sandboxProvider: sandbox && {

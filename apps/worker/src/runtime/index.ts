@@ -17,15 +17,14 @@ import {
 	type ConnectionStore,
 	failureReason,
 	type McpTool,
-	type ObjectStore,
-	type openToolbox,
-	orrery as orreryClient,
-} from "@orqestra/tools";
+} from "@orqestra/mcp";
+import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
 import { inputContent, outputContent } from "../tracing.ts";
 import { prepareContext } from "./compaction.ts";
 import { memoryPrompt, memoryTools, recallTool } from "./memory.ts";
 import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
 import { generateTitle } from "./title.ts";
+import type { openToolbox } from "./toolbox.ts";
 import {
 	backgrounded,
 	draftTool,

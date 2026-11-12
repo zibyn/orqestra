@@ -6,13 +6,11 @@ if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const { mcpServer } = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
-const { connectionStore } = await import("./live.ts");
-const { finishConnection, openToolbox, startConnection } = await import(
-	"@orqestra/tools"
+const { connectionStore } = await import("./connections.ts");
+const { finishConnection, openMcpTools, startConnection } = await import(
+	"./index.ts"
 );
-const { fakeAuthorizationServer, fakeMcpServer } = await import(
-	"@orqestra/tools/testing"
-);
+const { fakeAuthorizationServer, fakeMcpServer } = await import("./testing.ts");
 
 const never = new AbortController().signal;
 
@@ -61,7 +59,7 @@ describe.skipIf(!url)("Connections in Postgres", () => {
 		);
 
 		const open = () =>
-			openToolbox({ tools: {}, mcpServers: { github } }, ["mcp:github"], {
+			openMcpTools({ mcpServers: { github } }, ["mcp:github"], {
 				signal: never,
 				fetch,
 				userId: "ada",

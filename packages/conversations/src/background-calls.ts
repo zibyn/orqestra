@@ -10,16 +10,15 @@ import {
 } from "@orqestra/db/schema";
 import {
 	type BackgroundCallStart,
-	type ConnectionStore,
 	cancelMcpTask,
-	connectionAuth,
-	type Fetch,
 	INPUT_REQUIRED,
+	type McpAccess,
 	type McpServer,
 	type McpTaskState,
 	pollMcpTask,
+	signIn,
 	type TaskRequestOptions,
-} from "@orqestra/tools";
+} from "@orqestra/mcp";
 import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
 import {
 	busy,
@@ -38,9 +37,6 @@ import type { TraceCarrier } from "./serve.ts";
 
 // A Background Call is its `background_call` row: polled by delayed jobs that carry only its id, one at a time,
 // until it ends; a job that finds it gone, ended or polled by a later job does nothing.
-
-/** How Background Calls reach their MCP Servers: through `fetch` (tests stand in for the servers), as the User with their Connection to a per-User OAuth one. */
-export type McpAccess = { fetch?: Fetch; connections?: ConnectionStore };
 
 /** BullMQ queue of delayed jobs `{ backgroundCallId }`, one per poll. */
 export const BACKGROUND_CALLS_QUEUE = "background-calls";
@@ -192,17 +188,6 @@ export async function requeueBackgroundCalls() {
 	for (const r of running) await schedule(r.id, r.jobId, 0);
 }
 
-/** How a request to a per-User OAuth server signs in: as the User, with their Connection; undefined when they have none usable. */
-const asUser = (
-	server: McpServer,
-	serverId: string,
-	userId: string,
-	{ fetch, connections }: McpAccess,
-) =>
-	connections
-		? connectionAuth(connections, userId, serverId, { server, fetch })
-		: undefined;
-
 /**
  * How a poll of a per-User OAuth server signs in: as the User of the row's Conversation (a Subagent's is its top-level
  * Conversation's User); else how the Background Call ends, its Connection gone or needing reconnecting.
@@ -217,7 +202,7 @@ async function signInOrEnding(
 		where: eq(conversation.id, row.conversationId),
 	});
 	if (conv && mcp.connections) {
-		const provider = await asUser(server, row.mcpServerId, conv.userId, mcp);
+		const provider = await signIn(server, row.mcpServerId, conv.userId, mcp);
 		if (provider) return provider;
 		if (await mcp.connections.connection(conv.userId, row.mcpServerId))
 			return {
@@ -414,7 +399,7 @@ export async function askToCancel(
 				timeoutMs: POLL_TIMEOUT_MS,
 				authProvider:
 					server.auth === "oauth"
-						? await asUser(server, call.mcpServerId, call.userId, mcp)
+						? await signIn(server, call.mcpServerId, call.userId, mcp)
 						: undefined,
 			}))().catch((error) =>
 			console.error("could not cancel a Background Call", error),

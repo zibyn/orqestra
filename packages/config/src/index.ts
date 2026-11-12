@@ -1,4 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
+// types only: importing @orqestra/mcp would open the database before a test points DATABASE_URL at its own
+import type { McpServer, McpServerSettings } from "@orqestra/mcp";
 import {
 	type ModelSettings,
 	type Models,
@@ -8,7 +10,7 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/models";
 import type { SkillInfo } from "@orqestra/skills";
-import type { McpServer, SandboxProvider, ToolServices } from "@orqestra/tools";
+import type { SandboxProvider, ToolServices } from "@orqestra/tools";
 import type { z } from "zod";
 import {
 	agentDefinition,
@@ -80,20 +82,7 @@ export interface Settings extends ModelSettings {
 		url: string;
 		apiKey: string | null | undefined;
 	};
-	/** A header `value` is undefined when it cannot be decrypted. */
-	mcpServers: {
-		id: string;
-		name: string;
-		url: string;
-		enabled: boolean;
-		auth: "shared" | "oauth";
-		/** `client_secret` is undefined when there is none or it cannot be decrypted. */
-		oauthClient?: {
-			client_id: string;
-			client_secret: string | undefined;
-		} | null;
-		headers: { name: string; value: string | undefined }[];
-	}[];
+	mcpServers: McpServerSettings;
 	/** Omitted when none is configured; `token` is undefined when it cannot be decrypted, `snapshot` null means orrery's default. */
 	sandboxProvider?: {
 		url: string;

@@ -1,6 +1,6 @@
 import type { Config } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
-import type { OrqestraReach } from "@orqestra/tools";
+import type { OrqestraReach } from "@orqestra/mcp";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { signedInOnly } from "./admin.ts";
