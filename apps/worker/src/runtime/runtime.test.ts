@@ -23,12 +23,12 @@ import { type AgentDefinition, resolveTurn } from "@orqestra/agents";
 import type { Transcript, Turn } from "@orqestra/conversations";
 import { DEFAULT_LIMITS } from "@orqestra/conversations";
 import { messageText } from "@orqestra/conversations/shared";
-import { memoryRun } from "@orqestra/conversations/testing";
+import { memoryRun as memoryRunOf } from "@orqestra/conversations/testing";
 import { fakeMcpServer, memoryConnections } from "@orqestra/mcp/testing";
 import { zip } from "@orqestra/skills/test-zip";
 import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
 import { otelTelemetry, tracing } from "../tracing.ts";
-import { type RuntimeDeps, runAgent } from "./index.ts";
+import { runAgent } from "./index.ts";
 import { openToolbox } from "./toolbox.ts";
 import { MAX_SUBAGENT_STEPS } from "./tools.ts";
 
@@ -43,9 +43,9 @@ const faux = fauxProvider({
 });
 const models = createModels();
 models.setProvider(faux.provider);
-// every request alike, whatever it is for
-const streamSimple: RuntimeDeps["streamSimple"] = () =>
-	models.streamSimple.bind(models);
+// every request alike, whatever it is for, on the Run's metered streaming
+const memoryRun = (options: Parameters<typeof memoryRunOf>[0]) =>
+	memoryRunOf({ streamSimple: models.streamSimple.bind(models), ...options });
 
 const agent = (fields: Partial<AgentDefinition>): AgentDefinition => ({
 	id: "faux",
@@ -91,13 +91,9 @@ const config = {
 };
 const turn = (agentId = "faux") => resolveTurn(config, agentId) as Turn;
 
-const noSkillFiles = async () => [];
-
 // Search answers with `results`
 const deps = (results: unknown[] = []) => ({
 	config,
-	streamSimple,
-	skillFiles: noSkillFiles,
 	openToolbox: ((services, allowed, options) =>
 		openToolbox(services, allowed, {
 			...options,
@@ -594,8 +590,6 @@ describe("runAgent", () => {
 		});
 		await runAgent(m.run, {
 			config: mcpConfig,
-			streamSimple,
-			skillFiles: noSkillFiles,
 			openToolbox: ((services, allowed, options) =>
 				openToolbox(services, allowed, {
 					...options,
@@ -631,6 +625,7 @@ describe("runAgent", () => {
 			transcript: transcript(user("use it")),
 			turn: resolveTurn(oauthConfig, "gh") as Turn,
 			isSubagent: true,
+			connections,
 		});
 		await connections.saveConnection(m.run.userId, "gh", {
 			tokens: { access_token: "ada-token", token_type: "Bearer" },
@@ -645,9 +640,6 @@ describe("runAgent", () => {
 		]);
 		await runAgent(m.run, {
 			config: oauthConfig,
-			streamSimple,
-			skillFiles: noSkillFiles,
-			connections,
 			openToolbox: ((services, allowed, options) =>
 				openToolbox(services, allowed, {
 					...options,
@@ -701,14 +693,10 @@ describe("runAgent with Skills", () => {
 		m: memoryRun({
 			transcript: transcript(user("help")),
 			turn: resolveTurn(cfg, "skilled") as Turn,
-		}),
-		deps: {
-			config: cfg,
-			streamSimple,
-			openToolbox,
 			skillFiles,
-			orrery: () => o.client,
-		},
+			orrery: o.client,
+		}),
+		deps: { config: cfg, openToolbox },
 	});
 	// what bash does for these commands
 	const shell = (command: string, fs: Map<string, Uint8Array<ArrayBuffer>>) => {
@@ -1333,18 +1321,16 @@ describe("runAgent with a Document Parser", () => {
 			fauxAssistantMessage("Read it"),
 		]);
 		const cfg = parseConfig(true);
+		const o = memoryOrrery();
 		const m = memoryRun({
 			transcript: transcript(user("read report.pdf")),
 			turn: resolveTurn(cfg, "reader") as Turn,
 			attachments: { "report.pdf": "r/c/1" },
+			orrery: o.client,
+			store,
 		});
-		const o = memoryOrrery();
 		await runAgent(m.run, {
 			config: cfg,
-			streamSimple,
-			skillFiles: noSkillFiles,
-			orrery: () => o.client,
-			store,
 			openToolbox: ((services, allowed, options) =>
 				openToolbox(services, allowed, {
 					...options,
@@ -1614,8 +1600,6 @@ describe("runAgent traces", () => {
 		});
 		await runAgent(m.run, {
 			config: mcpConfig,
-			streamSimple,
-			skillFiles: noSkillFiles,
 			// Search's provider is down; the MCP Server answers
 			openToolbox: ((services, allowed, options) =>
 				openToolbox(services, allowed, {

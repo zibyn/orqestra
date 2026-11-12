@@ -1,4 +1,4 @@
-import type { Api, Message, Model, Usage } from "@earendil-works/pi-ai";
+import type { Message } from "@earendil-works/pi-ai";
 import { GENERAL_WORKER, resolveTurn } from "@orqestra/agents";
 import { db, type Tx } from "@orqestra/db";
 import {
@@ -15,11 +15,15 @@ import {
 import type {
 	BackgroundCallStart,
 	ConnectionStore,
-	Fetch,
 	McpAccess,
 } from "@orqestra/mcp";
 import { type Memories, memoriesOf, memoryOn } from "@orqestra/memory";
-import { modelRef, type ThinkingLevel } from "@orqestra/models";
+import {
+	modelRef,
+	type StreamSimple,
+	type ThinkingLevel,
+} from "@orqestra/models";
+import type { SkillFile } from "@orqestra/skills/shared";
 import type { ObjectStore, Orrery, SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
@@ -33,6 +37,7 @@ import {
 	startBackgroundCall,
 } from "./background-calls.ts";
 import type { OrqestraConfig } from "./capabilities.ts";
+import { metered, providerLimiter } from "./metered.ts";
 import { type Recall, recallOf } from "./recall.ts";
 import {
 	AGENT_RUNS_QUEUE,
@@ -162,23 +167,24 @@ export type RunHandle = {
 	 */
 	finish(outcome?: Ended, options?: { question?: boolean }): Promise<Message[]>;
 	/**
-	 * Records one Model request of the Run as Usage, for `purpose`, from the usage its Provider reported,
-	 * at the cost the Provider reported; nothing when the Provider reported none.
+	 * The Run's Model requests for `purpose`, each with the Provider's configured key: first checked against the User's
+	 * Spending Limit as it stands then, throwing SpendingLimitReached unsent once it is used up, then recorded as Usage once
+	 * its stream ends, whatever the end (see `metered`). The only way the Run reaches a Model.
 	 */
-	recordUsage(
-		purpose: UsagePurpose,
-		model: Model<Api>,
-		reported: Usage,
-	): Promise<void>;
-	/** Whether the Run's User has used up this month's Spending Limit, as it stands now; checked before each Model request. */
-	spendingLimitReached(): Promise<boolean>;
+	streamSimple(purpose: UsagePurpose): StreamSimple;
 	/** Names the Conversation, unless the User renamed it meanwhile. */
 	setTitle(title: string): Promise<void>;
-	/** The Conversation's Sandbox, ready to use: created the first time, started if stopped (`woke`); see `ensureSandbox`. */
-	sandbox(
-		client: Orrery,
-		provider: SandboxProvider,
-	): Promise<{ id: string; woke: boolean }>;
+	/**
+	 * The Conversation's Sandbox, ready to use, with the Sandbox Provider's client that reaches it: created the first time,
+	 * started if stopped (`woke`); see `ensureSandbox`. Throws when no Sandbox Provider is configured.
+	 */
+	sandbox(): Promise<{ id: string; woke: boolean; client: Orrery }>;
+	/** A Skill version's files, to write into the Sandbox. */
+	skillFiles(versionId: number): Promise<SkillFile[]>;
+	/** Object storage, where the Attachments are kept; Parse reads them there. */
+	store: ObjectStore;
+	/** The Users' Connections, which per-User OAuth MCP Servers are signed in to with; without them, those servers are left out. */
+	connections?: ConnectionStore;
 	/** The Attachment `name` of the Conversation, else of the nearest Conversation above it up to the top-level one, with its object storage key; undefined when there is none. */
 	attachment(name: string): Promise<{ key: string } | undefined>;
 	/** The Memories of the Conversation's User; writes record this Conversation. None while the User has memory off or the Conversation is Incognito, and no Recall then either. */
@@ -225,23 +231,33 @@ export type RunHandle = {
 	};
 };
 
+/** The config a Run's Turn was resolved from, without its Models' unmetered streaming: the Run reaches them through `run.streamSimple`. */
+export type RunConfig = Omit<OrqestraConfig, "streamSimple" | "registry">;
+
 /** Replies to one Run; gets the config the Run's Turn was resolved from. */
-export type RunHandler = (
-	run: RunHandle,
-	config: OrqestraConfig,
-) => Promise<void>;
+export type RunHandler = (run: RunHandle, config: RunConfig) => Promise<void>;
 
 export type ServeOptions = {
 	/** Top-level Runs this worker works on at once. */
 	concurrency?: number;
 	/** Subagent Runs this worker works on at once. */
 	subagentConcurrency?: number;
+	/** Model requests to one Provider at once, across this worker's Runs. */
+	providerConcurrency?: number;
 	/** How soon a crashed worker's Run is noticed; tests shorten it. */
 	stalledInterval?: number;
-	/** The `fetch` Background Calls are polled with; tests stand in for the MCP Servers. */
-	fetch?: Fetch;
-	/** The Users' Connections, which the Background Calls of per-User OAuth MCP Servers are polled with. */
-	connections?: ConnectionStore;
+};
+
+/** What Runs are served with, given once to `createConversations`. */
+export type RunDeps = {
+	/** Read as each Run starts: a Run keeps the config it started with. */
+	config: () => Promise<OrqestraConfig>;
+	store: ObjectStore;
+	/** The Sandbox Provider's client. */
+	orrery: (provider: SandboxProvider) => Orrery;
+	skillFiles: (versionId: number) => Promise<SkillFile[]>;
+	/** What Background Calls are polled and cancelled with. */
+	mcp: McpAccess;
 };
 
 /** Runs in this process, by Conversation id, so a stop request can abort them from the start (compaction included). */
@@ -305,13 +321,12 @@ async function failed(
  * A stopped Run ends here; a failed one is ended by the worker's 'failed' handler, which also sees crashes.
  */
 async function execute(
-	config: () => Promise<OrqestraConfig>,
-	store: ObjectStore,
+	deps: RunDeps & { limit: (streamSimple: StreamSimple) => StreamSimple },
 	conversationId: string,
 	jobId: string | undefined,
 	handler: RunHandler,
-	mcp?: McpAccess,
 ) {
+	const { config, mcp } = deps;
 	// listening for a Stop before reading the row, which holds one sent before this listened
 	const stop = new AbortController();
 	active.set(conversationId, stop);
@@ -357,8 +372,8 @@ async function execute(
 			);
 		}
 		const run = await open(
+			deps,
 			cfg,
-			store,
 			conv,
 			{
 				incognito: !!root?.incognito,
@@ -371,7 +386,6 @@ async function execute(
 			() => {
 				over = true;
 			},
-			mcp,
 		);
 		await handler(run, cfg);
 		if (!over && !stop.signal.aborted)
@@ -392,8 +406,14 @@ async function execute(
 }
 
 async function open(
+	{
+		store,
+		orrery,
+		skillFiles,
+		mcp,
+		limit,
+	}: RunDeps & { limit: (streamSimple: StreamSimple) => StreamSimple },
 	cfg: OrqestraConfig,
-	store: ObjectStore,
 	conv: typeof conversation.$inferSelect,
 	root: {
 		incognito: boolean;
@@ -404,7 +424,6 @@ async function open(
 	signal: AbortSignal,
 	emit: (event: ConversationEvent) => Promise<unknown>,
 	end: () => void,
-	mcp?: McpAccess,
 ): Promise<RunHandle> {
 	const conversationId = conv.id;
 	const sub = conv.parentId ? conversationId : undefined;
@@ -565,32 +584,19 @@ async function open(
 			}
 			return next;
 		},
-		async recordUsage(purpose, model, reported) {
-			const tokens = {
-				inputTokens: reported.input,
-				outputTokens: reported.output,
-				cacheReadTokens: reported.cacheRead,
-				cacheWriteTokens: reported.cacheWrite,
-			};
-			// all zero: the request never reached the Provider (pi reports a failed connection so), nothing to count
-			if (!Object.values(tokens).some(Boolean)) return;
-			await db.insert(usage).values({
-				userId: conv.userId,
-				// the general worker is no Agent Definition
-				agentId: conv.agentId,
-				agentName: conv.agentId === null ? null : turn.agent.name,
-				provider: model.provider,
-				modelId: model.id,
-				conversationId: conv.rootId,
-				purpose,
-				scheduledTaskId: root.scheduledTaskId,
-				...tokens,
-				// as the Provider of pi priced it, at the Model's (perhaps custom) price, with pricing like service tiers that recomputing would lose
-				cost: reported.cost.total,
-			});
-		},
-		spendingLimitReached: async () =>
-			!!(await spendingLimitStatus(conv.userId))?.reached,
+		streamSimple: metered(limit(cfg.streamSimple), {
+			reached: async () => !!(await spendingLimitStatus(conv.userId))?.reached,
+			record: (counted) =>
+				db.insert(usage).values({
+					userId: conv.userId,
+					// the general worker is no Agent Definition
+					agentId: conv.agentId,
+					agentName: conv.agentId === null ? null : turn.agent.name,
+					conversationId: conv.rootId,
+					scheduledTaskId: root.scheduledTaskId,
+					...counted,
+				}),
+		}),
 		async setTitle(title) {
 			await db
 				.update(conversation)
@@ -604,8 +610,18 @@ async function open(
 				);
 			await saved();
 		},
-		sandbox: (client, provider) =>
-			ensureSandbox(conversationId, client, provider, { signal }),
+		async sandbox() {
+			const provider = cfg.sandboxProvider;
+			if (!provider) throw new Error("No Sandbox Provider is configured");
+			const client = orrery(provider);
+			return {
+				...(await ensureSandbox(conversationId, client, provider, { signal })),
+				client,
+			};
+		},
+		skillFiles,
+		store,
+		connections: mcp.connections,
 		async attachment(name) {
 			// this Conversation's, else the nearest ancestor's, up to the top-level Conversation (same User throughout)
 			const { rows } = await db.execute<{ key: string }>(
@@ -782,16 +798,18 @@ function subagentsOf(
  * the Runs a crash left without a job; resolves to a close function. `handler` produces each Run's reply.
  */
 export async function serveRuns(
-	config: () => Promise<OrqestraConfig>,
-	store: ObjectStore,
+	deps: RunDeps,
 	handler: RunHandler,
 	{
 		concurrency = 8,
 		subagentConcurrency = 8,
+		providerConcurrency = 8,
 		stalledInterval = 30_000,
-		...mcp
 	}: ServeOptions = {},
 ) {
+	const { config, store, mcp } = deps;
+	// one Provider's limit holds across this worker's Runs and configs
+	const limited = { ...deps, limit: providerLimiter(providerConcurrency) };
 	const databaseUrl = process.env.DATABASE_URL as string;
 	// a pool connection held for good, since LISTEN is per connection
 	const listener = await db.$client.connect();
@@ -806,8 +824,7 @@ export async function serveRuns(
 	).map(([queue, concurrency]) => {
 		const worker = new Worker(
 			queue,
-			(job) =>
-				execute(config, store, job.data.conversationId, job.id, handler, mcp),
+			(job) => execute(limited, job.data.conversationId, job.id, handler),
 			{
 				concurrency,
 				// bullmq tables live in their own "bullmq" schema; migrate is advisory-locked across processes

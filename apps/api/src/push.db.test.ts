@@ -13,10 +13,12 @@ import { createApp, type User } from "./app.ts";
 const url = process.env.TEST_DATABASE_URL;
 
 const conversations = createConversations({
-	...noMcpServerDeletes,
 	store: memoryStore().store,
-	config: async () => ({}) as OrqestraConfig,
-	skillFiles: async () => [],
+	capabilities: {
+		...noMcpServerDeletes,
+		current: async () => ({}) as OrqestraConfig,
+		skillFiles: async () => [],
+	},
 });
 const ada: User = { id: "ada", name: "Ada", admin: false };
 

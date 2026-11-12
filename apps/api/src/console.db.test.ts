@@ -226,11 +226,8 @@ describe.skipIf(!url)("the console through the api", () => {
 			auth: () => new Response(null, { status: 404 }),
 			conversations: createConversations({
 				store: memoryStore().store,
-				config: config.current,
-				skillFiles: async () => [],
+				capabilities: config,
 				fetch: fake.fetch,
-				mcpServers: config.mcpServers,
-				agents: config.agents,
 			}),
 		});
 		const url = "http://127.0.0.1:9/mcp";

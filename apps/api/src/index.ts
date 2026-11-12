@@ -4,7 +4,6 @@ import {
 } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { connectionStore } from "@orqestra/mcp";
-import { skillFiles } from "@orqestra/skills";
 import { s3Store } from "@orqestra/tools/s3";
 import { z } from "zod";
 import { createApp } from "./app.ts";
@@ -73,12 +72,9 @@ createApp({
 	orqestraUrl: env.data.ORQESTRA_URL,
 	config,
 	conversations: createConversations({
-		config: config.current,
-		skillFiles: (versionId) => skillFiles(db, versionId),
+		capabilities: config,
 		store,
 		connections: connectionStore,
-		mcpServers: config.mcpServers,
-		agents: config.agents,
 	}),
 }).listen(3001);
 console.log("api listening on 3001");

@@ -35,23 +35,25 @@ describe.skipIf(!url)("Deleting an MCP Server (Postgres)", () => {
 	let steps: string[];
 	const conversations = createConversations({
 		store: memoryStore().store,
-		config: config.current,
-		skillFiles: async () => [],
 		fetch: (input, init) => {
 			if (String(init?.body).includes('"tasks/cancel"')) steps.push("cancel");
 			return fake.fetch(input, init);
 		},
-		mcpServers: {
-			write: async (fn) => {
-				const done = await config.mcpServers.write(fn);
-				steps.push("delete");
-				return done;
+		capabilities: {
+			current: config.current,
+			skillFiles: async () => [],
+			mcpServers: {
+				write: async (fn) => {
+					const done = await config.mcpServers.write(fn);
+					steps.push("delete");
+					return done;
+				},
 			},
-		},
-		agents: {
-			forget: async (ref) => {
-				await config.agents.forget(ref);
-				steps.push("forget");
+			agents: {
+				forget: async (ref) => {
+					await config.agents.forget(ref);
+					steps.push("forget");
+				},
 			},
 		},
 	});

@@ -47,10 +47,12 @@ const base = {
 } as unknown as OrqestraConfig;
 let config = base;
 const conversations = createConversations({
-	...noMcpServerDeletes,
 	store: memoryStore().store,
-	config: async () => config,
-	skillFiles: async () => [],
+	capabilities: {
+		...noMcpServerDeletes,
+		current: async () => config,
+		skillFiles: async () => [],
+	},
 });
 const tasks = conversations.tasks;
 const ada = "ada";

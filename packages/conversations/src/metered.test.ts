@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
-import { limiter, providerLimiter } from "./worker.ts";
+import { describe, expect, it } from "vitest";
+import { limiter, providerLimiter } from "./metered.ts";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 

@@ -25,12 +25,14 @@ describe.skipIf(!url)(
 	"Undoing a Memory change from the Conversation (Postgres)",
 	() => {
 		const conversations = createConversations({
-			...noMcpServerDeletes,
 			store: memoryStore().store,
 			// no Agents: the Conversation is read-only, which undoing ignores
-			config: async () =>
-				({ agents: [], models: [] }) as unknown as OrqestraConfig,
-			skillFiles: async () => [],
+			capabilities: {
+				...noMcpServerDeletes,
+				current: async () =>
+					({ agents: [], models: [] }) as unknown as OrqestraConfig,
+				skillFiles: async () => [],
+			},
 		});
 		let conversationId: string;
 		let mine: ReturnType<typeof memoriesOf>;

@@ -1,4 +1,5 @@
 import {
+	createModels,
 	fauxAssistantMessage,
 	fauxProvider,
 	fauxToolCall,
@@ -10,6 +11,7 @@ import { type AgentDefinition, GENERAL_WORKER } from "@orqestra/agents";
 import { createPostgresBackend, Worker } from "bullmq";
 import {
 	afterAll,
+	afterEach,
 	beforeAll,
 	beforeEach,
 	describe,
@@ -39,9 +41,10 @@ const runs = await import("./runs.ts");
 const timers = await import("./timers.ts");
 const { memoryRun, noMcpServerDeletes } = await import("./testing.ts");
 const { memoryOrrery, memoryStore } = await import("@orqestra/tools/testing");
+const { rememberUser, setSpendingLimit } = await import("./users.ts");
 const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 };
 
-// Models only for the Turn: the scripted handler below replies in their place
+// Models for the Turn: the scripted handler below replies in their place, but for the requests the contract makes
 const faux = fauxProvider({
 	provider: "faux",
 	models: [
@@ -49,6 +52,9 @@ const faux = fauxProvider({
 		{ id: "faux-small", contextWindow: 2000 },
 	],
 });
+const piModels = createModels();
+piModels.setProvider(faux.provider);
+const streamSimple = piModels.streamSimple.bind(piModels);
 const agent = (id: string, model: string): AgentDefinition => ({
 	id,
 	name: id,
@@ -73,6 +79,7 @@ const skilled = {
 const config = {
 	agents: [fauxAgent, agent("small", "faux/faux-small"), skilled],
 	models: faux.models,
+	streamSimple,
 	defaultAgent: fauxAgent,
 	// `gone` is listed by `skilled` but disabled or deleted, so it is missing here
 	skills: {
@@ -88,26 +95,33 @@ const config = {
 } as unknown as OrqestraConfig;
 /** Each Skill version's SKILL.md, as the test has it now. */
 const skillMds = new Map<number, string>();
+/** The Sandbox Provider's client the served Runs' Sandboxes are in; the contract's Sandbox scenario swaps it. */
+let runOrrery = memoryOrrery();
 const conversations = createConversations({
-	...noMcpServerDeletes,
+	capabilities: {
+		...noMcpServerDeletes,
+		current: async () => config,
+		skillFiles: async (versionId) => [
+			{ path: "scripts/run.py", content: new TextEncoder().encode("print()") },
+			{
+				path: "SKILL.md",
+				content: new TextEncoder().encode(skillMds.get(versionId) ?? ""),
+			},
+		],
+	},
 	store: memoryStore().store,
-	config: async () => config,
-	skillFiles: async (versionId) => [
-		{ path: "scripts/run.py", content: new TextEncoder().encode("print()") },
-		{
-			path: "SKILL.md",
-			content: new TextEncoder().encode(skillMds.get(versionId) ?? ""),
-		},
-	],
+	orrery: () => runOrrery.client,
 });
 const userId = "u1";
 // one that deletes Sandboxes in `o`
 const sandboxed = (o: ReturnType<typeof memoryOrrery>) =>
 	createConversations({
-		...noMcpServerDeletes,
+		capabilities: {
+			...noMcpServerDeletes,
+			current: async () => ({ ...config, sandboxProvider: provider }),
+			skillFiles: async () => [],
+		},
 		store: memoryStore().store,
-		config: async () => ({ ...config, sandboxProvider: provider }),
-		skillFiles: async () => [],
 		orrery: () => o.client,
 	});
 
@@ -2477,16 +2491,50 @@ describe.skipIf(!url)(
 
 		describe("RunHandle contract, alike in Postgres and memoryRun", () => {
 			const text = (ms: Message[]) => ms.map(messageText);
-			/** A scenario plays one Run; `push` is an input arriving meanwhile. */
+			/** What a Usage record says, apart from the token counts the Provider reported (here: whether there were any). */
+			type Counted = {
+				purpose: string;
+				provider: string;
+				modelId: string;
+				tokens: boolean;
+			};
+			/**
+			 * A scenario plays one Run; `push` is an input arriving meanwhile, `usage` the Usage the Run's Model requests recorded,
+			 * `orrery` the Sandbox Provider's client the Run's Sandbox is in. A scenario may start with the User's Spending Limit set.
+			 */
 			type Scenario = (
 				run: RunHandle,
-				push: (text: string) => Promise<void>,
+				adapter: {
+					push: (text: string) => Promise<void>;
+					usage: () => Promise<Counted[]>;
+					orrery: ReturnType<typeof memoryOrrery>;
+				},
 			) => Promise<unknown>;
 			const reply = (run: RunHandle) => run.save(fauxAssistantMessage("ok"));
-			const scenarios: [string, Scenario, unknown][] = [
+			const counted = (u: {
+				purpose: string;
+				provider: string;
+				modelId: string;
+				inputTokens: number;
+				outputTokens: number;
+			}): Counted => ({
+				purpose: u.purpose,
+				provider: u.provider,
+				modelId: u.modelId,
+				tokens: u.inputTokens + u.outputTokens > 0,
+			});
+			const hi = {
+				messages: [{ role: "user" as const, content: "hi", timestamp: 0 }],
+			};
+			const scenarios: [
+				string,
+				Scenario,
+				unknown,
+				{ spendingLimit?: number }?,
+			][] = [
 				[
 					"delivers the inputs that arrived, in order",
-					async (run, push) => {
+					async (run, { push }) => {
 						await push("two");
 						await push("three");
 						const delivered = text(await run.deliver());
@@ -2509,7 +2557,7 @@ describe.skipIf(!url)(
 				],
 				[
 					"goes on with the inputs that arrived before finish",
-					async (run, push) => {
+					async (run, { push }) => {
 						await reply(run);
 						await push("again");
 						const next = text(await run.finish());
@@ -2520,12 +2568,15 @@ describe.skipIf(!url)(
 				],
 				[
 					"keeps the Conversation's one Sandbox, starting it once stopped",
-					async (run) => {
-						const o = memoryOrrery();
-						const first = await run.sandbox(o.client, provider);
-						const again = await run.sandbox(o.client, provider);
+					async (run, { orrery: o }) => {
+						const sandbox = async () => {
+							const { id, woke } = await run.sandbox();
+							return { id, woke };
+						};
+						const first = await sandbox();
+						const again = await sandbox();
 						o.stop(first.id);
-						const woken = await run.sandbox(o.client, provider);
+						const woken = await sandbox();
 						await reply(run);
 						await run.finish();
 						return [
@@ -2542,14 +2593,78 @@ describe.skipIf(!url)(
 						1,
 					],
 				],
+				[
+					"records each Model request as Usage, for what it was for",
+					async (run, { usage }) => {
+						faux.setResponses([fauxAssistantMessage("counted")]);
+						const stream = await run.streamSimple("title")(faux.getModel(), hi);
+						const answer = messageText(await stream.result());
+						const counted = await usage();
+						await reply(run);
+						await run.finish();
+						return [answer, counted];
+					},
+					[
+						"counted",
+						[
+							{
+								purpose: "title",
+								provider: "faux",
+								modelId: "faux-1",
+								tokens: true,
+							},
+						],
+					],
+				],
+				[
+					"refuses a Model request unsent once the Spending Limit is used up",
+					async (run, { usage }) => {
+						faux.setResponses([fauxAssistantMessage("never")]);
+						const refused = await (async () =>
+							run.streamSimple("step")(faux.getModel(), hi))().then(
+							() => "sent",
+							(error: Error) => error.name,
+						);
+						const counted = [faux.getPendingResponseCount(), await usage()];
+						await reply(run);
+						await run.finish();
+						return [refused, ...counted];
+					},
+					["SpendingLimitReached", 1, []],
+					{ spendingLimit: 0 },
+				],
 			];
 
-			for (const [name, scenario, expected] of scenarios) {
+			// a used-up Spending Limit would refuse the next tests' messages
+			afterEach(() => db.execute(sql`truncate usage, "user" cascade`));
+
+			for (const [name, scenario, expected, setup = {}] of scenarios) {
 				it(`${name} (Postgres)`, async () => {
+					runOrrery = memoryOrrery();
 					let result: unknown;
 					override = async (run) => {
-						result = await scenario(run, async (t) => {
-							await send(t, run.conversationId);
+						// set as the Run goes, since a used-up limit refuses the message that would start it
+						if (setup.spendingLimit !== undefined) {
+							await rememberUser({ id: userId, name: "U" });
+							await setSpendingLimit(userId, {
+								mode: "limited",
+								usd: setup.spendingLimit,
+							});
+						}
+						result = await scenario(run, {
+							push: async (t) => {
+								await send(t, run.conversationId);
+							},
+							// written once the reply's stream ends, not awaited by it
+							usage: async () => {
+								for (let i = 0; i < 20; i++) {
+									const rows = await db.select().from(schema.usage);
+									if (rows.length) return rows.map(counted);
+									await new Promise((r) => setTimeout(r, 50));
+								}
+								return [];
+							},
+							orrery: runOrrery,
 						});
 					};
 					const id = await send("one");
@@ -2561,6 +2676,7 @@ describe.skipIf(!url)(
 				});
 
 				it(`${name} (memoryRun)`, async () => {
+					const o = memoryOrrery();
 					const memory = memoryRun({
 						transcript: {
 							messages: [
@@ -2572,9 +2688,16 @@ describe.skipIf(!url)(
 							],
 						},
 						turn: {} as RunHandle["turn"],
+						streamSimple,
+						spendingLimit: setup.spendingLimit,
+						orrery: o.client,
 					});
-					const result = await scenario(memory.run, async (t) => {
-						memory.push({ role: "user", content: t, timestamp: 0 });
+					const result = await scenario(memory.run, {
+						push: async (t) => {
+							memory.push({ role: "user", content: t, timestamp: 0 });
+						},
+						usage: async () => memory.usage.map(counted),
+						orrery: o,
 					});
 					expect(result).toEqual(expected);
 					expect(memory.over).toBe(true);
@@ -2609,10 +2732,12 @@ describe.skipIf(!url)(
 				const o = memoryOrrery();
 				const { store, objects } = memoryStore();
 				const files = createConversations({
-					...noMcpServerDeletes,
 					store,
-					config: async () => ({ ...config, sandboxProvider: provider }),
-					skillFiles: async () => [],
+					capabilities: {
+						...noMcpServerDeletes,
+						current: async () => ({ ...config, sandboxProvider: provider }),
+						skillFiles: async () => [],
+					},
 					orrery: () => o.client,
 				});
 				const [conv] = await db

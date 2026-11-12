@@ -3,7 +3,8 @@ import { createAgents } from "@orqestra/agents/live";
 import type { Db } from "@orqestra/db";
 import { createMcpServers, type McpSnapshot } from "@orqestra/mcp";
 import { createModels, type Models } from "@orqestra/models";
-import { createSkills, type SkillInfo } from "@orqestra/skills";
+import { createSkills, type SkillInfo, skillFiles } from "@orqestra/skills";
+import type { SkillFile } from "@orqestra/skills/shared";
 import { createTools, type ToolConfig } from "@orqestra/tools/live";
 import { createLimits, type Limits } from "./limits.ts";
 
@@ -77,6 +78,9 @@ export function createCapabilities(db: Db) {
 		models,
 		tools,
 		mcpServers,
+		/** A Skill version's files. */
+		skillFiles: async (versionId: number): Promise<SkillFile[]> =>
+			skillFiles(db, versionId),
 		/** Deleting one also removes it from every Agent Definition. */
 		skills: { ...skills, delete: agents.deleteSkill },
 		agents,

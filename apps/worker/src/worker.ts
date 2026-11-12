@@ -1,141 +1,49 @@
 import {
-	type Capabilities,
+	type ConversationCapabilities,
 	createConversations,
-	type OrqestraConfig,
-	type RunHandle,
-	SpendingLimitReached,
 } from "@orqestra/conversations";
-import { db } from "@orqestra/db";
-import { skillFiles as filesOf } from "@orqestra/skills";
-import type { ObjectStore } from "@orqestra/tools";
 import { type RuntimeDeps, runAgent } from "./runtime/index.ts";
 import { openToolbox } from "./runtime/toolbox.ts";
 
-/** Runs at most `max` functions at once, the rest in call order; one aborted while waiting leaves the queue and rejects. */
-export function limiter(max: number) {
-	let active = 0;
-	const waiting: (() => void)[] = [];
-	return async <T>(fn: () => Promise<T>, signal?: AbortSignal) => {
-		signal?.throwIfAborted();
-		if (active < max) active++;
-		else
-			await new Promise<void>((resolve, reject) => {
-				const start = () => {
-					signal?.removeEventListener("abort", stop);
-					resolve();
-				};
-				const stop = () => {
-					waiting.splice(waiting.indexOf(start), 1);
-					reject(signal?.reason);
-				};
-				waiting.push(start);
-				signal?.addEventListener("abort", stop, { once: true });
-			});
-		try {
-			return await fn();
-		} finally {
-			// hand the slot straight to the next one, so no newcomer can slip in between
-			const next = waiting.shift();
-			if (next) next();
-			else active--;
-		}
-	};
-}
-
-/**
- * Wraps a streamSimple so each Provider serves at most `max` Model requests at once, counted from the request until its stream ends.
- * The limits live as long as the returned function, so one Provider shares them across configs.
- */
-export function providerLimiter(max: number) {
-	const limits = new Map<string, ReturnType<typeof limiter>>();
-	// shortcut: per worker process; several workers multiply the limit, move to a shared lock if that hits rate limits
-	return (
-		streamSimple: OrqestraConfig["streamSimple"],
-	): OrqestraConfig["streamSimple"] =>
-		(model, context, options) => {
-			const limit = limits.get(model.provider) ?? limiter(max);
-			limits.set(model.provider, limit);
-			return new Promise((resolve, reject) => {
-				limit(async () => {
-					const stream = await streamSimple(model, context, options);
-					resolve(stream);
-					await stream.result();
-				}, options?.signal).catch(reject);
-			});
-		};
-}
-
-/**
- * Wraps a streamSimple so each Model request of `run` is first checked against its User's Spending Limit, throwing
- * SpendingLimitReached unsent once it is used up, then recorded as Usage, for the purpose its caller names, once its stream ends,
- * whether it finished, failed or was stopped.
- */
-export const metered =
-	(run: RunHandle, streamSimple: OrqestraConfig["streamSimple"]) =>
-	(
-		purpose: Parameters<RunHandle["recordUsage"]>[0],
-	): OrqestraConfig["streamSimple"] =>
-	async (model, context, options) => {
-		if (await run.spendingLimitReached()) throw new SpendingLimitReached();
-		const stream = await streamSimple(model, context, options);
-		// not awaited: the reply goes on while it is written
-		stream
-			.result()
-			.then((reply) => run.recordUsage(purpose, model, reply.usage))
-			.catch((error) => console.error("recording Usage failed", error));
-		return stream;
-	};
+type Deps = Parameters<typeof createConversations>[0];
 
 /** Works on queued Runs in this process, replying to each, until the returned close function is called. */
 export function startAgentWorker(
 	// `current` read per Run: a Run keeps the config it started with, the next one picks up a reload
-	capabilities: Pick<Capabilities, "current" | "mcpServers" | "agents">,
+	capabilities: ConversationCapabilities,
 	{
-		providerConcurrency = 8,
 		toolbox = openToolbox,
 		orrery,
 		store,
+		fetch,
 		connections,
 		telemetry,
 		captureContent,
 		...options
-	}: Parameters<ReturnType<typeof createConversations>["serveRuns"]>[1] & {
-		/** Model requests to one Provider at once, across this worker's Runs. */
-		providerConcurrency?: number;
-		/** Opens each Run's Tools; tests stand in for the services behind them. */
-		toolbox?: typeof openToolbox;
-		/** The Sandbox Provider's client; tests stand in for orrery. */
-		orrery?: RuntimeDeps["orrery"];
-		/** Object storage, where Attachments are kept. */
-		store: ObjectStore;
-		/** Where Run traces go; nowhere by default. */
-		telemetry?: RuntimeDeps["telemetry"];
-		/** Run traces also carry what was said. */
-		captureContent?: boolean;
-	},
+	}: Parameters<ReturnType<typeof createConversations>["serveRuns"]>[1] &
+		Omit<Deps, "capabilities"> & {
+			/** Opens each Run's Tools; tests stand in for the services behind them. */
+			toolbox?: typeof openToolbox;
+			/** Where Run traces go; nowhere by default. */
+			telemetry?: RuntimeDeps["telemetry"];
+			/** Run traces also carry what was said. */
+			captureContent?: boolean;
+		},
 ) {
-	const limitProviders = providerLimiter(providerConcurrency);
-	const skillFiles = (versionId: number) => filesOf(db, versionId);
 	return createConversations({
-		config: capabilities.current,
-		mcpServers: capabilities.mcpServers,
-		agents: capabilities.agents,
-		skillFiles,
+		capabilities,
+		orrery,
 		store,
+		fetch,
 		connections,
 	}).serveRuns(
 		(run, config) =>
 			runAgent(run, {
 				config,
-				streamSimple: metered(run, limitProviders(config.streamSimple)),
 				openToolbox: toolbox,
-				skillFiles,
-				orrery,
-				store,
-				connections,
 				telemetry,
 				captureContent,
 			}),
-		{ ...options, connections },
+		options,
 	);
 }

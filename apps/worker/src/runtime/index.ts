@@ -7,24 +7,19 @@ import {
 	type TelemetrySpan,
 } from "@earendil-works/pi-telemetry";
 import { turnSkills } from "@orqestra/agents";
-import type { OrqestraConfig } from "@orqestra/conversations";
 import {
+	type RunConfig,
 	type RunHandle,
 	RunTimedOut,
 	SpendingLimitReached,
 	type TraceCarrier,
 } from "@orqestra/conversations";
 import { messageText } from "@orqestra/conversations/shared";
-import {
-	type ConnectionStore,
-	failureReason,
-	type McpTool,
-} from "@orqestra/mcp";
-import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
+import { failureReason, type McpTool } from "@orqestra/mcp";
 import { inputContent, outputContent } from "../tracing.ts";
 import { prepareContext } from "./compaction.ts";
 import { memoryPrompt, memoryTools, recallTool } from "./memory.ts";
-import { type SkillFiles, sandboxTools, skillsPrompt } from "./sandbox.ts";
+import { sandboxTools, skillsPrompt } from "./sandbox.ts";
 import { generateTitle } from "./title.ts";
 import type { openToolbox } from "./toolbox.ts";
 import {
@@ -39,25 +34,14 @@ import {
 	timerTools,
 } from "./tools.ts";
 
+/** What the runtime has besides its RunHandle, which it reaches Models, the Sandbox, Skill files, Attachments and Connections through. */
 export type RuntimeDeps = {
 	/** Subagent templates, the services for the Tools, and the Skills with the Sandbox Provider. */
 	config: Pick<
-		OrqestraConfig,
+		RunConfig,
 		"agents" | "tools" | "mcpServers" | "skills" | "sandboxProvider" | "limits"
 	>;
-	/** Every Model request of the Run goes through it, each saying what it is for. */
-	streamSimple: (
-		purpose: Parameters<RunHandle["recordUsage"]>[0],
-	) => OrqestraConfig["streamSimple"];
 	openToolbox: typeof openToolbox;
-	/** A Skill version's files, written into the Sandbox. */
-	skillFiles: SkillFiles;
-	/** The Sandbox Provider's client; tests stand in for orrery. */
-	orrery?: typeof orreryClient;
-	/** Object storage, where Attachments are kept; Parse reads them there. No Parse without it. */
-	store?: ObjectStore;
-	/** The Users' Connections to per-User OAuth MCP Servers; without it, those servers are left out. */
-	connections?: ConnectionStore;
 	/** Where the Run's spans go; nowhere by default. */
 	telemetry?: TelemetryContext;
 	/** The spans also carry what was said: messages, Memory, Tool arguments and results, error text. */
@@ -212,8 +196,8 @@ export function runAgent(
 				attributes,
 				captureContent,
 				// every Model request of the Run is a child of its span, saying what it is for
-				streamSimple: (purpose) => {
-					const streamSimple = deps.streamSimple(purpose);
+				streamSimple: (purpose): ReturnType<RunHandle["streamSimple"]> => {
+					const streamSimple = run.streamSimple(purpose);
 					const telemetry = withAttributes(span, {
 						...attributes,
 						"orqestra.purpose": purpose,
@@ -252,14 +236,12 @@ async function reply(
 		config,
 		streamSimple,
 		openToolbox,
-		skillFiles,
-		orrery = orreryClient,
-		store,
-		connections,
 		span,
 		attributes,
 		captureContent = false,
 	}: Omit<RuntimeDeps, "telemetry"> & {
+		/** The Run's metered Model requests, each a child of its span. */
+		streamSimple: RunHandle["streamSimple"];
 		span: TelemetrySpan;
 		/** Whose the Run is and what for, on each of its Tool calls too. */
 		attributes: SpanAttributes;
@@ -272,7 +254,6 @@ async function reply(
 	let failure = "_OTHER";
 	const rows = run.transcript.messages;
 	const last = rows.at(-1) as (typeof rows)[number];
-	const provider = config.sandboxProvider;
 	// the trace context of each Tool call under way, handed to the Subagents it starts or continues
 	const carriers = new Map<string, TraceCarrier>();
 	// MCP Servers are connected for this Run only, so changes on the server side show up in the next one
@@ -281,7 +262,7 @@ async function reply(
 		signal,
 		// a Subagent's and a Firing's Conversation are their top-level Conversation's User's
 		userId: run.userId,
-		connections,
+		connections: run.connections,
 		backgroundCall:
 			background &&
 			(async (call) =>
@@ -292,15 +273,14 @@ async function reply(
 							throw refusal(error);
 						}),
 				)),
-		files: store && {
-			store,
+		files: {
+			store: run.store,
 			attachment: (name) => run.attachment(name),
 			// beside the Attachment's copy, so the Agent can search the whole document with bash
 			toSandbox:
-				provider &&
+				config.sandboxProvider &&
 				(async (path, markdown) => {
-					const client = orrery(provider);
-					const { id } = await run.sandbox(client, provider);
+					const { id, client } = await run.sandbox();
 					await client.writeFile(id, path, new TextEncoder().encode(markdown), {
 						signal,
 					});
@@ -309,12 +289,7 @@ async function reply(
 	});
 	// no Sandbox or Sandbox Tools without a Sandbox Provider; no Skill list without an available Skill
 	const skills = turnSkills(config, turn.agent);
-	const sandbox = config.sandboxProvider
-		? sandboxTools(run, config.sandboxProvider, skills, {
-				orrery,
-				skillFiles,
-			})
-		: [];
+	const sandbox = config.sandboxProvider ? sandboxTools(run, skills) : [];
 	// a Subagent only reads; none when the User turned memory off; the Index is a snapshot, so writes during the Run leave the prompt (and its cache) alone
 	const memory = turn.agent.memory ? run.memories : undefined;
 	try {

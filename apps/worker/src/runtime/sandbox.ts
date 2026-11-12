@@ -6,12 +6,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { turnSkills } from "@orqestra/agents";
 import type { RunHandle } from "@orqestra/conversations";
-import { SKILLS_DIR, type SkillFile } from "@orqestra/skills/shared";
+import { SKILLS_DIR } from "@orqestra/skills/shared";
 import {
 	type Orrery,
 	OrreryError,
 	runCommand,
-	type SandboxProvider,
 	tar,
 	workspacePath,
 } from "@orqestra/tools";
@@ -21,7 +20,6 @@ const MAX_STREAM_CHARS = 20_000;
 const MAX_FILE_CHARS = 50_000;
 
 type Skills = ReturnType<typeof turnSkills>;
-export type SkillFiles = (versionId: number) => Promise<SkillFile[]>;
 
 /** The Skills block of the system prompt: name, description and location of those the model may invoke. */
 export const skillsPrompt = (skills: Skills) =>
@@ -69,21 +67,12 @@ const tail = (s: string) =>
  * The Tools that read files and run commands in the Conversation's Sandbox. The Sandbox is got ready on the
  * first call, and the Skills written into it then, and again whenever it had to be created or started.
  */
-export function sandboxTools(
-	run: RunHandle,
-	provider: SandboxProvider,
-	skills: Skills,
-	{
-		orrery,
-		skillFiles,
-	}: { orrery: (p: SandboxProvider) => Orrery; skillFiles: SkillFiles },
-): AgentTool[] {
-	const client = orrery(provider);
+export function sandboxTools(run: RunHandle, skills: Skills): AgentTool[] {
 	const signal = run.signal;
 	let written = false;
 	let queue: Promise<unknown> = Promise.resolve();
 
-	async function writeSkills(id: string) {
+	async function writeSkills(id: string, client: Orrery) {
 		const cleared = await runCommand(
 			client,
 			id,
@@ -94,7 +83,7 @@ export function sandboxTools(
 			throw new Error(`Could not clear ${SKILLS_DIR}: ${cleared.stderr}`);
 		const files = await Promise.all(
 			skills.map(async (s) =>
-				(await skillFiles(s.versionId)).map((f) => ({
+				(await run.skillFiles(s.versionId)).map((f) => ({
 					path: `${s.name}/${f.path}`,
 					content: f.content,
 				})),
@@ -107,12 +96,12 @@ export function sandboxTools(
 		const next = queue
 			.catch(() => {})
 			.then(async () => {
-				const { id, woke } = await run.sandbox(client, provider);
+				const { id, woke, client } = await run.sandbox();
 				if (woke || !written) {
-					if (skills.length) await writeSkills(id);
+					if (skills.length) await writeSkills(id, client);
 					written = true;
 				}
-				return id;
+				return { id, client };
 			});
 		queue = next;
 		return next.catch((error) => {
@@ -135,7 +124,7 @@ export function sandboxTools(
 				const relative = workspacePath(path);
 				if (!relative)
 					throw new Error("read reaches only /workspace: use bash elsewhere");
-				const id = await ready();
+				const { id, client } = await ready();
 				const bytes = await client
 					.readFile(id, relative, { signal })
 					.catch((error) => {
@@ -161,7 +150,7 @@ export function sandboxTools(
 				command: Type.String({ description: "The command" }),
 			}),
 			execute: async (_id, { command }) => {
-				const id = await ready();
+				const { id, client } = await ready();
 				const r = await runCommand(client, id, command, { signal }).catch(
 					(error) => {
 						throw explain(error);
@@ -196,7 +185,7 @@ export function sandboxTools(
 				);
 				const relative = workspacePath(path);
 				if (!relative) throw refused;
-				const id = await ready();
+				const { id, client } = await ready();
 				// resolved, so a symlink cannot lead out of /workspace
 				const r = await runCommand(
 					client,

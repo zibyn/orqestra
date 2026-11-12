@@ -45,10 +45,12 @@ const config = {
 	skills: {},
 } as unknown as OrqestraConfig;
 const conversations = createConversations({
-	...noMcpServerDeletes,
 	store: memoryStore().store,
-	config: async () => config,
-	skillFiles: async () => [],
+	capabilities: {
+		...noMcpServerDeletes,
+		current: async () => config,
+		skillFiles: async () => [],
+	},
 });
 
 const ada: User = { id: "ada", name: "Ada", admin: false };

@@ -39,12 +39,9 @@ const app = (orqestraUrl: string) =>
 		auth: () => new Response(null, { status: 404 }),
 		conversations: createConversations({
 			store: memoryStore().store,
-			config: config.current,
-			skillFiles: async () => [],
+			capabilities: config,
 			fetch: (input, init) => as.fetch(input, init),
 			connections: connectionStore,
-			mcpServers: config.mcpServers,
-			agents: config.agents,
 		}),
 		orqestraUrl,
 		// looked up per request, so each test's fake is used

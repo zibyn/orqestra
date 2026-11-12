@@ -54,7 +54,6 @@ const { asc, eq, sql } = await import("drizzle-orm");
 const { limits, pushSubscription, usage, user } = await import(
 	"@orqestra/db/schema"
 );
-const { skillFiles } = await import("@orqestra/skills");
 const {
 	createCapabilities,
 	createConversations,
@@ -81,13 +80,15 @@ const { store } = memoryStore();
 const connections = memoryConnections();
 const conversations = createConversations({
 	store,
-	config: config.current,
-	skillFiles: (versionId) => skillFiles(db, versionId),
+	capabilities: {
+		current: config.current,
+		skillFiles: config.skillFiles,
+		// the fake MCP Servers are only in the snapshot, so deleting one writes nothing
+		mcpServers: { write: async () => [] as never },
+		agents: { forget: async () => {} },
+	},
 	fetch: (input, init) => fetchFake(input, init),
 	connections,
-	// the fake MCP Servers are only in the snapshot, so deleting one writes nothing
-	mcpServers: { write: async () => [] as never },
-	agents: { forget: async () => {} },
 });
 const faux = fauxProvider({
 	provider: "faux",

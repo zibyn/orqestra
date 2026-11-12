@@ -65,9 +65,11 @@ const config = {
 let o = memoryOrrery();
 const s = memoryStore();
 const conversations = createConversations({
-	...noMcpServerDeletes,
-	config: async () => config,
-	skillFiles: async () => [],
+	capabilities: {
+		...noMcpServerDeletes,
+		current: async () => config,
+		skillFiles: async () => [],
+	},
 	orrery: () => o.client,
 	store: s.store,
 });

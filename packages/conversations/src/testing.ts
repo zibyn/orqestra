@@ -1,7 +1,12 @@
 import type { Message } from "@earendil-works/pi-ai";
+import type { ConnectionStore } from "@orqestra/mcp";
 import type { Memory } from "@orqestra/memory";
 import { inMemoryMemories } from "@orqestra/memory/testing";
-import { readySandbox } from "@orqestra/tools";
+import type { StreamSimple } from "@orqestra/models";
+import type { SkillFile } from "@orqestra/skills/shared";
+import { type ObjectStore, type Orrery, readySandbox } from "@orqestra/tools";
+import { memoryStore } from "@orqestra/tools/testing";
+import { type Counted, metered } from "./metered.ts";
 import type { Recall } from "./recall.ts";
 import type { Ended } from "./runs.ts";
 import {
@@ -21,11 +26,15 @@ import {
 const unavailable = async (): Promise<never> => {
 	throw new Error("memoryRun has no Subagents: pass `subagents`");
 };
+const noModels: StreamSimple = () => {
+	throw new Error("memoryRun has no Models: pass `streamSimple`");
+};
 
 /**
  * A RunHandle kept in memory, for testing a Run's handler without Postgres or BullMQ; same contract as the one `serveRuns` hands out.
  * `deliver` hands over the inputs `inbox` and `push` added, in order; `finish` returns those left, and the Run is over when there are none.
- * Records what the handler saved, streamed, compacted, titled and attached; attaching renames nothing.
+ * Records what the handler saved, streamed, compacted, titled and attached, and the Usage of its Model requests; attaching renames nothing.
+ * Its Model requests are metered as `serveRuns`' are, against a Spending Limit of `spendingLimit` dollars for the Run.
  */
 export function memoryRun({
 	transcript,
@@ -51,6 +60,12 @@ export function memoryRun({
 		open: async () => undefined,
 	},
 	attachments = {},
+	streamSimple = noModels,
+	spendingLimit = Number.POSITIVE_INFINITY,
+	orrery,
+	store = memoryStore().store,
+	skillFiles = async () => [],
+	connections,
 }: {
 	transcript: Transcript;
 	turn: Turn;
@@ -78,8 +93,22 @@ export function memoryRun({
 	attachments?: Record<string, string>;
 	/** The User's past Conversations; none by default. */
 	recall?: Recall;
+	/** The Models' streaming, which the Run's metered requests go through; none by default. */
+	streamSimple?: StreamSimple;
+	/** Dollars the Run's Model requests may cost before its Spending Limit is used up; no limit by default. */
+	spendingLimit?: number;
+	/** The Sandbox Provider's client the Conversation's Sandbox is in; no Sandbox without it. */
+	orrery?: Orrery;
+	/** Object storage, where the Attachments are kept; an empty one by default. */
+	store?: ObjectStore;
+	/** A Skill version's files; none by default. */
+	skillFiles?: (versionId: number) => Promise<SkillFile[]>;
+	/** The Users' Connections; none by default. */
+	connections?: ConnectionStore;
 }) {
-	const { memories: userMemories, store } = inMemoryMemories(memories);
+	const { memories: userMemories, store: memoryPaths } =
+		inMemoryMemories(memories);
+	const usage: Counted[] = [];
 	const pending = [...inbox];
 	const stopper = new AbortController();
 	const saved: Message[] = [];
@@ -132,22 +161,30 @@ export function memoryRun({
 			over = !next.length;
 			return next;
 		},
-		// Usage is the assembled worker's: its wrapper around streamSimple records it
-		recordUsage: async () => {},
-		spendingLimitReached: async () => false,
+		streamSimple: metered(streamSimple, {
+			reached: async () =>
+				usage.reduce((spent, u) => spent + u.cost, 0) >= spendingLimit,
+			record: async (counted) => usage.push(counted),
+		}),
 		setTitle: async (title) => {
 			titles.push(title);
 		},
-		sandbox: (client, provider) =>
-			readySandbox(
-				client,
-				provider,
+		sandbox: async () => {
+			if (!orrery) throw new Error("No Sandbox Provider is configured");
+			const ready = await readySandbox(
+				orrery,
+				{ url: "http://orrery", token: "t", cpu: 1, memory: 1 },
 				async (replacing, create) => {
 					if (!sandboxId || sandboxId === replacing) sandboxId = await create();
 					return sandboxId;
 				},
 				{ signal: stopper.signal },
-			),
+			);
+			return { ...ready, client: orrery };
+		},
+		skillFiles,
+		store,
+		connections,
 		attachment: async (name) =>
 			Object.hasOwn(attachments, name) ? { key: attachments[name] } : undefined,
 		memories: memoryOff || incognito ? undefined : userMemories,
@@ -200,7 +237,9 @@ export function memoryRun({
 		/** Whether each `finish` ended on a Question to the User. */
 		questions,
 		/** The User's Memories, by path. */
-		memories: store,
+		memories: memoryPaths,
+		/** The Usage the Run's Model requests recorded, in order. */
+		usage,
 	};
 }
 

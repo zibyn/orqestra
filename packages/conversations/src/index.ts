@@ -4,7 +4,7 @@ import {
 	resolveTurn,
 	turnSkills,
 } from "@orqestra/agents";
-import { db, type Tx } from "@orqestra/db";
+import { db } from "@orqestra/db";
 import {
 	attachment,
 	backgroundCall,
@@ -28,11 +28,7 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/models";
 import { skillInstructions } from "@orqestra/skills";
-import {
-	invokedSkill,
-	type SkillFile,
-	skillBlock,
-} from "@orqestra/skills/shared";
+import { invokedSkill, skillBlock } from "@orqestra/skills/shared";
 import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
 import { mcpToolRef } from "@orqestra/tools/shared";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -46,7 +42,7 @@ import {
 	endBackgroundCallsOf,
 	runningCalls,
 } from "./background-calls.ts";
-import type { OrqestraConfig } from "./capabilities.ts";
+import type { Capabilities, OrqestraConfig } from "./capabilities.ts";
 import { ConversationError } from "./errors.ts";
 import {
 	AGENT_RUNS_QUEUE,
@@ -98,6 +94,7 @@ export {
 	MAX_SUBAGENT_TASKS,
 	NoSuchSubagent,
 	NoSuchTemplate,
+	type RunConfig,
 	type RunHandle,
 	type RunHandler,
 	RunTimedOut,
@@ -150,33 +147,40 @@ const ownedSubagent = async (userId: string, id: string) => {
 	return row as { parentId: string; number: number } | undefined;
 };
 
+/** What of the Capabilities Conversations use. */
+export type ConversationCapabilities = Pick<
+	Capabilities,
+	"current" | "skillFiles"
+> & {
+	mcpServers: Pick<Capabilities["mcpServers"], "write">;
+	agents: { forget: (ref: { tool: `mcp:${string}` }) => Promise<unknown> };
+};
+
+/** Every outside dependency of Conversations and their Runs, given once: the Runs' handler gets what it needs from its RunHandle. */
 export function createConversations({
-	config,
-	skillFiles,
+	capabilities,
 	orrery = orreryClient,
 	store,
 	fetch,
 	connections,
-	mcpServers,
-	agents,
 }: {
-	/** Read per call: a Run keeps the config it started with, the next one picks up a reload. */
-	config: () => Promise<OrqestraConfig>;
-	/** A Skill version's files, read when a User invokes it. */
-	skillFiles: (versionId: number) => Promise<SkillFile[]>;
-	/** The Sandbox Provider's client, for deleting Sandboxes and copying attachments into them; tests pass a fake. */
+	/**
+	 * The capabilities' live configuration. `current` is read per call: a Run keeps the config it started with, the next one
+	 * picks up a reload. An MCP Server is deleted in `mcpServers` (a transaction, after which every process reloads them) and
+	 * forgotten in `agents`: only the api's deletes one. `skillFiles` reads a Skill version's files, when a User invokes it or a
+	 * Run writes it into its Sandbox.
+	 */
+	capabilities: ConversationCapabilities;
+	/** The Sandbox Provider's client, for the Runs' Sandboxes, deleting them and copying attachments into them; tests pass a fake. */
 	orrery?: typeof orreryClient;
 	/** Object storage, where Attachments are kept; tests pass `memoryStore()`. */
 	store: ObjectStore;
-	/** What MCP requests go through, such as cancelling a Background Call; tests pass a fake server's. */
+	/** What MCP requests go through, such as polling or cancelling a Background Call; tests pass a fake server's. */
 	fetch?: Fetch;
-	/** The Users' Connections, which Background Calls of per-User OAuth MCP Servers are cancelled with. */
+	/** The Users' Connections, which per-User OAuth MCP Servers are signed in to with, by Runs and their Background Calls. */
 	connections?: ConnectionStore;
-	/** Where an MCP Server is deleted: a transaction, after which every process reloads them. Only the api's deletes one. */
-	mcpServers: { write: <T>(fn: (tx: Tx) => Promise<T>) => Promise<T> };
-	/** What forgets a deleted MCP Server in every Agent Definition. Only the api's deletes one. */
-	agents: { forget: (ref: { tool: `mcp:${string}` }) => Promise<unknown> };
 }) {
+	const { current: config, skillFiles, mcpServers, agents } = capabilities;
 	const mcp = { fetch, connections };
 	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
 	async function expandSkill(
@@ -225,7 +229,7 @@ export function createConversations({
 	return {
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
-			serveRuns(config, store, handler, options),
+			serveRuns({ config, store, orrery, skillFiles, mcp }, handler, options),
 
 		/** Deletes the Attachments not sent with a message for a day before `now`; the worker does this every hour. */
 		sweepUnsentAttachments: (now?: Date) => sweepUnsentAttachments(store, now),
