@@ -1,8 +1,8 @@
-import { DEFAULT_LIMITS } from "@orqestra/config";
-import type { UserSpendingLimit } from "@orqestra/config/shared";
 import { db } from "@orqestra/db";
 import { limits, user } from "@orqestra/db/schema";
 import { desc, eq, getTableColumns, sql } from "drizzle-orm";
+import { DEFAULT_LIMITS } from "./limits.ts";
+import type { UserSpendingLimit } from "./shared.ts";
 import { spendingMonth, spentSince } from "./spending.ts";
 
 /**

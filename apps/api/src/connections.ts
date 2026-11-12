@@ -1,4 +1,4 @@
-import type { Config } from "@orqestra/config/live";
+import type { Capabilities } from "@orqestra/conversations";
 import {
 	clientMetadataDocument,
 	connectionStatus,
@@ -22,7 +22,7 @@ const refused = (code: string) => ({ errors: { serverId: { code } } });
  */
 export const connectionRoutes = (
 	signedIn: SignedIn,
-	config: Config,
+	config: Capabilities,
 	{ orqestraUrl, fetch }: OrqestraReach & { orqestraUrl: string },
 ) =>
 	new Elysia({ prefix: "/connections" })

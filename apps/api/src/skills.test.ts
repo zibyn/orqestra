@@ -1,12 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { createConfig } from "@orqestra/config/live";
-import { SKILL_ZIP_MAX_BYTES } from "@orqestra/config/shared";
-import { zip } from "@orqestra/config/test-zip";
-import type { Conversations } from "@orqestra/conversations";
+import {
+	type Conversations,
+	createCapabilities,
+} from "@orqestra/conversations";
 import { db } from "@orqestra/db";
+import { SKILL_ZIP_MAX_BYTES } from "@orqestra/skills/shared";
+import { zip } from "@orqestra/skills/test-zip";
 import { createApp, type User } from "./app.ts";
 
-const config = createConfig(db);
+const config = createCapabilities(db);
 
 const ada: User = { id: "s1", name: "Ada", admin: true };
 const bob: User = { id: "s2", name: "Bob", admin: false };

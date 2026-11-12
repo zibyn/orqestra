@@ -1,4 +1,4 @@
-import { isMineruNet, MINERU_URL } from "@orqestra/config/shared";
+import { isMineruNet, MINERU_URL } from "@orqestra/tools/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { CheckCircle2Icon, Loader2Icon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";

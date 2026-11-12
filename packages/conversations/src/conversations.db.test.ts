@@ -6,13 +6,7 @@ import {
 	type ToolCall,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import {
-	type AgentDefinition,
-	DEFAULT_LIMITS,
-	GENERAL_WORKER,
-	messageText,
-	type OrqestraConfig,
-} from "@orqestra/config";
+import { type AgentDefinition, GENERAL_WORKER } from "@orqestra/agents";
 import { createPostgresBackend, Worker } from "bullmq";
 import {
 	afterAll,
@@ -23,7 +17,8 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { ConversationEvent, RunHandle } from "./index.ts";
+import type { ConversationEvent, OrqestraConfig, RunHandle } from "./index.ts";
+import { messageText } from "./shared.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -34,6 +29,7 @@ const { sql } = await import("drizzle-orm");
 const {
 	BudgetExceeded,
 	createConversations,
+	DEFAULT_LIMITS,
 	MAX_SUBAGENTS,
 	RunTimedOut,
 	MAX_SUBAGENTS_PER_USER_MESSAGE,
@@ -41,7 +37,7 @@ const {
 const { userMemories } = await import("@orqestra/memory");
 const runs = await import("./runs.ts");
 const timers = await import("./timers.ts");
-const { memoryRun } = await import("./testing.ts");
+const { memoryRun, noMcpServerDeletes } = await import("./testing.ts");
 const { memoryOrrery, memoryStore } = await import("@orqestra/tools/testing");
 const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 };
 
@@ -93,6 +89,7 @@ const config = {
 /** Each Skill version's SKILL.md, as the test has it now. */
 const skillMds = new Map<number, string>();
 const conversations = createConversations({
+	...noMcpServerDeletes,
 	store: memoryStore().store,
 	config: async () => config,
 	skillFiles: async (versionId) => [
@@ -107,6 +104,7 @@ const userId = "u1";
 // one that deletes Sandboxes in `o`
 const sandboxed = (o: ReturnType<typeof memoryOrrery>) =>
 	createConversations({
+		...noMcpServerDeletes,
 		store: memoryStore().store,
 		config: async () => ({ ...config, sandboxProvider: provider }),
 		skillFiles: async () => [],
@@ -2611,6 +2609,7 @@ describe.skipIf(!url)(
 				const o = memoryOrrery();
 				const { store, objects } = memoryStore();
 				const files = createConversations({
+					...noMcpServerDeletes,
 					store,
 					config: async () => ({ ...config, sandboxProvider: provider }),
 					skillFiles: async () => [],

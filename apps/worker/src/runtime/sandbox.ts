@@ -4,8 +4,9 @@ import {
 	formatSkillsForPrompt,
 	type Skill,
 } from "@earendil-works/pi-coding-agent";
-import { SKILLS_DIR, type SkillFile, type turnSkills } from "@orqestra/config";
+import type { turnSkills } from "@orqestra/agents";
 import type { RunHandle } from "@orqestra/conversations";
+import { SKILLS_DIR, type SkillFile } from "@orqestra/skills/shared";
 import {
 	type Orrery,
 	OrreryError,

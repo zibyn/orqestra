@@ -1,7 +1,13 @@
 // MCP Servers as Admins edit them in /console/mcp, and as they are loaded for Runs. Header values and Client secrets only go in.
 import { type Db, db, type Tx } from "@orqestra/db";
+import { live } from "@orqestra/db/live";
 import { mcpServer } from "@orqestra/db/schema";
-import { decryptSecret, sealSecret, secretReadable } from "@orqestra/db/secret";
+import {
+	decryptSecret,
+	encryptionKey,
+	sealSecret,
+	secretReadable,
+} from "@orqestra/db/secret";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import {
@@ -9,8 +15,12 @@ import {
 	connectedUsers,
 	revokeConnections,
 } from "./connections.ts";
+import type { McpServer } from "./index.ts";
 import { type McpTestResult, probeMcpServer } from "./mcp.ts";
 import type { OrqestraReach } from "./oauth.ts";
+
+/** NOTIFY channel, no payload: an MCP Server changed, reload them (web -> web and worker). */
+const MCP_CHANNEL = "mcp_changed";
 
 /** An MCP Server's id, like an Agent's; never changes, since Agent Definitions and Tool names refer to it. */
 export const mcpServerId = z
@@ -110,6 +120,59 @@ export const loadMcpServers = async (
 			})),
 		}),
 	);
+
+/** The MCP Servers a Run can use: those whose headers decrypt, by id. */
+export interface McpSnapshot {
+	/** Enabled MCP Servers whose headers decrypt, by id; the others are unavailable. */
+	mcpServers: Record<string, McpServer>;
+	/** Every MCP Server whose headers decrypt, disabled ones included, by id: what deleting one cancels its Background Calls with. */
+	allMcpServers: Record<string, McpServer>;
+}
+
+/** The stored MCP Servers as Runs use them. */
+export function resolveMcpServers(settings: McpServerSettings): McpSnapshot {
+	const mcpServers: McpSnapshot["mcpServers"] = {};
+	const allMcpServers: McpSnapshot["allMcpServers"] = {};
+	for (const {
+		id,
+		name,
+		url,
+		enabled,
+		auth,
+		oauthClient,
+		headers,
+	} of settings) {
+		const plain = headers.flatMap((h) =>
+			h.value === undefined ? [] : [[h.name, h.value]],
+		);
+		// one unreadable header: the server would reject us, so it is unavailable
+		if (plain.length !== headers.length) continue;
+		allMcpServers[id] = {
+			name,
+			url,
+			auth,
+			...(oauthClient && { oauthClient }),
+			headers: Object.fromEntries(plain),
+		};
+		if (enabled) mcpServers[id] = allMcpServers[id];
+	}
+	return { mcpServers, allMcpServers };
+}
+
+/**
+ * The MCP Servers: `current()` for Runs, and what Admins edit in /console/mcp. Loaded on the first `current()`, which rejects when
+ * that fails (also on a missing ORQESTRA_ENCRYPTION_KEY); every write reloads them here and in every other process once committed.
+ */
+export function createMcpServers(from: Db) {
+	const servers = live(from, {
+		channel: MCP_CHANNEL,
+		load: async () =>
+			resolveMcpServers(await loadMcpServers(from, encryptionKey())),
+	});
+	return { ...servers, ...mcpServerAdmin(servers) };
+}
+
+export type McpServersLive = ReturnType<typeof createMcpServers>;
 
 /**
  * In `tx`, deletes the MCP Server and every Connection to it, their tokens taken before the cascade would delete them; what revoking

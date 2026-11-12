@@ -1,4 +1,4 @@
-// No Node imports: browser code can use this module (as @orqestra/tools/refs, through @orqestra/config/shared)
+// No Node imports: browser code can use this module (as @orqestra/tools/shared)
 import { z } from "zod";
 
 /** The built-in Tools a Search Provider serves; which one serves each is picked in /console. */

@@ -1,4 +1,4 @@
-import type { SaveError, SaveErrors } from "@orqestra/config/shared";
+import type { SaveError, SaveErrors } from "@orqestra/api";
 import { m } from "#/paraglide/messages";
 
 type Code = SaveError["code"];

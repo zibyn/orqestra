@@ -7,11 +7,9 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/models";
 import type { SkillInfo } from "@orqestra/skills";
-import { searchToolNames, type ToolRef } from "@orqestra/tools/refs";
+import { searchToolNames, type ToolRef } from "@orqestra/tools/shared";
 import type { z } from "zod";
 import { agentDefinition, definitionIssues } from "./shared.ts";
-
-export * from "./shared.ts";
 
 export interface AgentDefinition {
 	id: string;

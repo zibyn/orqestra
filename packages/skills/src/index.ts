@@ -12,8 +12,6 @@ import {
 	skillName,
 } from "./zip.ts";
 
-export * from "./shared.ts";
-
 /** NOTIFY channel, no payload: a Skill changed, reload them (web -> web and worker). */
 const SKILLS_CHANNEL = "skills_changed";
 

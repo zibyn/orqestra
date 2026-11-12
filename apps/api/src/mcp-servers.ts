@@ -1,5 +1,4 @@
-import type { Config } from "@orqestra/config/live";
-import type { Conversations } from "@orqestra/conversations";
+import type { Capabilities, Conversations } from "@orqestra/conversations";
 import {
 	callbackUrl,
 	mcpServerEnabledInput,
@@ -16,7 +15,7 @@ import { saved } from "./saved.ts";
 // MCP Servers, edited by Admins in /console/mcp. Header values only go in.
 export const mcpServers = (
 	signedIn: SignedIn,
-	config: Config,
+	config: Capabilities,
 	conversations: Pick<Conversations, "deleteMcpServer">,
 	/** Where the callback names Orqestra, and what the test and revocations reach servers with. */
 	reach: OrqestraReach & { orqestraUrl: string },

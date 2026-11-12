@@ -1,12 +1,12 @@
+import type { Capabilities } from "@orqestra/conversations";
 import {
-	type Config,
 	SkillNotFound,
 	skillCreateInput,
 	skillCurrentInput,
 	skillEditInput,
 	skillEnabledInput,
-} from "@orqestra/config/live";
-import { SKILL_ZIP_MAX_BYTES } from "@orqestra/config/shared";
+} from "@orqestra/skills";
+import { SKILL_ZIP_MAX_BYTES } from "@orqestra/skills/shared";
 import { Elysia, status } from "elysia";
 import { z } from "zod";
 import { adminOnly } from "./admin.ts";
@@ -32,7 +32,7 @@ const tooLarge = () =>
 const nameParams = z.object({ name: z.string() });
 
 /** Skills, managed by Admins in the console. */
-export const skills = (signedIn: SignedIn, config: Config) =>
+export const skills = (signedIn: SignedIn, config: Capabilities) =>
 	new Elysia({ prefix: "/skills" })
 		.use(signedIn)
 		.derive(adminOnly)

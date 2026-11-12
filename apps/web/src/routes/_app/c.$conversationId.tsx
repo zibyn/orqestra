@@ -5,12 +5,12 @@ import type {
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import type { ConversationEvent } from "@orqestra/api";
+import { messageText } from "@orqestra/conversations/shared";
 import {
 	MEMORY_CHANGES,
 	type MemoryChange as MemoryChangeName,
-	messageText,
-	parseSkillBlock,
-} from "@orqestra/config/shared";
+} from "@orqestra/memory/shared";
+import { parseSkillBlock } from "@orqestra/skills/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	createFileRoute,

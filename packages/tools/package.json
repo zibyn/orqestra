@@ -5,7 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./live": "./src/live.ts",
-    "./refs": "./src/refs.ts",
+    "./shared": "./src/shared.ts",
     "./s3": "./src/s3.ts",
     "./testing": "./src/testing.ts"
   },

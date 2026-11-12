@@ -1,4 +1,4 @@
-import { MAX_UPLOAD_BYTES } from "@orqestra/config/shared";
+import { MAX_UPLOAD_BYTES } from "@orqestra/conversations/shared";
 import { m } from "#/paraglide/messages";
 
 /** A failure whose message is for the User. */

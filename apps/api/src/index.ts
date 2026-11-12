@@ -1,7 +1,10 @@
-import { createConfig, skillFiles } from "@orqestra/config/live";
-import { createConversations } from "@orqestra/conversations";
+import {
+	createCapabilities,
+	createConversations,
+} from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { connectionStore } from "@orqestra/mcp";
+import { skillFiles } from "@orqestra/skills";
 import { s3Store } from "@orqestra/tools/s3";
 import { z } from "zod";
 import { createApp } from "./app.ts";
@@ -56,7 +59,7 @@ try {
 	process.exit(1);
 }
 
-const config = createConfig(db);
+const config = createCapabilities(db);
 // a misconfigured instance does not come up
 await config.current().catch((error) => {
 	console.error(error.message);
@@ -71,10 +74,10 @@ createApp({
 	config,
 	conversations: createConversations({
 		config: config.current,
-		skillFiles,
+		skillFiles: (versionId) => skillFiles(db, versionId),
 		store,
 		connections: connectionStore,
-		mcpServers: config,
+		mcpServers: config.mcpServers,
 		agents: config.agents,
 	}),
 }).listen(3001);

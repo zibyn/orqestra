@@ -6,18 +6,16 @@ import { connectionStatus } from "@orqestra/mcp";
 import { type ModelsLive, modelRef } from "@orqestra/models";
 import type { SkillInfo, Skills } from "@orqestra/skills";
 import { availableTools, type ToolServices } from "@orqestra/tools";
-import { mcpToolRef, type ToolRef } from "@orqestra/tools/refs";
+import { mcpToolRef, type ToolRef } from "@orqestra/tools/shared";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
+import { type AgentsSnapshot, resolveAgents, turnSkills } from "./index.ts";
 import {
 	type AgentSaveError,
-	type AgentsSnapshot,
 	agentDefinition,
 	agentId,
 	definitionIssues,
-	resolveAgents,
-	turnSkills,
-} from "./index.ts";
+} from "./shared.ts";
 
 /** NOTIFY channel, no payload: an Agent Definition changed, reload them. */
 const AGENTS_CHANNEL = "agents_changed";
@@ -45,7 +43,7 @@ export function createAgents(
 		models: Pick<ModelsLive, "current">;
 		/** Deleting a Skill goes through here, so it is forgotten after. */
 		skills: Pick<Skills, "delete">;
-		/** What a Run can use now, for the Agent form. shortcut: config's snapshot, until tools and mcp load their own (#132) */
+		/** What a Run can use now, for the Agent form: the Tools', MCP Servers' and Skills' snapshots. */
 		available: () => Promise<
 			ToolServices & {
 				skills: Record<string, SkillInfo>;

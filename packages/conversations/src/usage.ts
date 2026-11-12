@@ -1,6 +1,6 @@
-import { catalogProviders, modelRef } from "@orqestra/config";
 import { db } from "@orqestra/db";
 import { agent, enabledModel, usage, user } from "@orqestra/db/schema";
+import { catalogProviders, modelRef } from "@orqestra/models";
 import {
 	and,
 	count,

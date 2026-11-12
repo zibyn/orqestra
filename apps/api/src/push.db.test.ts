@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { OrqestraConfig } from "@orqestra/config";
-import { createConfig } from "@orqestra/config/live";
-import { createConversations } from "@orqestra/conversations";
+import {
+	createCapabilities,
+	createConversations,
+	type OrqestraConfig,
+} from "@orqestra/conversations";
+import { noMcpServerDeletes } from "@orqestra/conversations/testing";
 import { db } from "@orqestra/db";
 import { memoryStore } from "@orqestra/tools/testing";
 import { createApp, type User } from "./app.ts";
@@ -10,6 +13,7 @@ import { createApp, type User } from "./app.ts";
 const url = process.env.TEST_DATABASE_URL;
 
 const conversations = createConversations({
+	...noMcpServerDeletes,
 	store: memoryStore().store,
 	config: async () => ({}) as OrqestraConfig,
 	skillFiles: async () => [],
@@ -18,7 +22,7 @@ const ada: User = { id: "ada", name: "Ada", admin: false };
 
 const app = (user: User | null) => (method: string, body?: unknown) =>
 	createApp({
-		config: createConfig(db),
+		config: createCapabilities(db),
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(),
 		conversations,

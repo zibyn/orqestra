@@ -159,12 +159,16 @@ export {
 	startConnection,
 } from "./oauth.ts";
 export {
+	createMcpServers,
 	deleteMcpServer,
 	loadMcpServers,
 	type McpServerSettings,
+	type McpServersLive,
+	type McpSnapshot,
 	mcpServerAdmin,
 	mcpServerEnabledInput,
 	mcpServerId,
 	mcpServerInput,
+	resolveMcpServers,
 	storedClient,
 } from "./servers.ts";

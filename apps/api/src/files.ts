@@ -1,9 +1,9 @@
-import { MAX_UPLOAD_BYTES } from "@orqestra/config/shared";
 import {
 	ConversationError,
 	type Conversations,
 	UploadTooLarge,
 } from "@orqestra/conversations";
+import { MAX_UPLOAD_BYTES } from "@orqestra/conversations/shared";
 import { z } from "zod";
 
 const error = (status: number, field: string, code: string) =>

@@ -7,9 +7,13 @@ import {
 	it,
 } from "bun:test";
 import { fauxProvider } from "@earendil-works/pi-ai";
-import type { AgentDefinition, OrqestraConfig } from "@orqestra/config";
-import { createConfig } from "@orqestra/config/live";
-import { createConversations } from "@orqestra/conversations";
+import type { AgentDefinition } from "@orqestra/agents";
+import {
+	createCapabilities,
+	createConversations,
+	type OrqestraConfig,
+} from "@orqestra/conversations";
+import { noMcpServerDeletes } from "@orqestra/conversations/testing";
 import { db } from "@orqestra/db";
 import { memoryStore } from "@orqestra/tools/testing";
 import { createApp, type User } from "./app.ts";
@@ -41,6 +45,7 @@ const config = {
 	skills: {},
 } as unknown as OrqestraConfig;
 const conversations = createConversations({
+	...noMcpServerDeletes,
 	store: memoryStore().store,
 	config: async () => config,
 	skillFiles: async () => [],
@@ -52,7 +57,7 @@ const bob: User = { id: "bob", name: "Bob", admin: false };
 /** The app, every request signed in as user. */
 function app(user: User | null) {
 	const api = createApp({
-		config: createConfig(db),
+		config: createCapabilities(db),
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(),
 		conversations,

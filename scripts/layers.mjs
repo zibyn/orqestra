@@ -5,7 +5,6 @@ import { join } from "node:path";
 
 // A package depends only on packages of a lower layer; same-layer and upward
 // dependencies fail, so a cycle (which needs one upward edge) fails too.
-// Tighten this table as #122 adds packages: db 0 · models/tools/mcp/skills/memory 1 · agents 2 · conversations 3 · api/worker 4.
 const LAYERS = {
 	"@orqestra/db": 0,
 	"@orqestra/mcp": 1,
@@ -14,7 +13,6 @@ const LAYERS = {
 	"@orqestra/skills": 1,
 	"@orqestra/tools": 1,
 	"@orqestra/agents": 2,
-	"@orqestra/config": 2.5, // shortcut: sits between agents and conversations until #132 deletes it
 	"@orqestra/conversations": 3,
 	"@orqestra/api": 4,
 	"@orqestra/worker": 4,
@@ -50,21 +48,21 @@ function selfCheck() {
 		"@orqestra/tools": ["@orqestra/db"],
 		"@orqestra/api": ["@orqestra/conversations", "@orqestra/db"],
 	};
-	assert.deepEqual(violations(ok, ["@orqestra/api", "@orqestra/config/shared"]), []);
+	assert.deepEqual(violations(ok, ["@orqestra/api", "@orqestra/tools/shared"]), []);
 	const bad = {
 		reverse: [{ "@orqestra/db": ["@orqestra/tools"] }, []],
 		sameLayer: [{ "@orqestra/api": ["@orqestra/worker"] }, []],
 		cycle: [
 			{
-				"@orqestra/tools": ["@orqestra/config"],
-				"@orqestra/config": ["@orqestra/tools"],
+				"@orqestra/tools": ["@orqestra/agents"],
+				"@orqestra/agents": ["@orqestra/tools"],
 			},
 			[],
 		],
 		onWeb: [{ "@orqestra/api": [WEB] }, []],
 		unlisted: [{ "@orqestra/nope": [] }, []],
-		webServerEntry: [{}, ["@orqestra/config"]],
-		webDeepEntry: [{}, ["@orqestra/config/live"]],
+		webServerEntry: [{}, ["@orqestra/conversations"]],
+		webDeepEntry: [{}, ["@orqestra/agents/live"]],
 	};
 	for (const [name, [deps, imports]] of Object.entries(bad))
 		assert.notDeepEqual(violations(deps, imports), [], `${name} should fail`);

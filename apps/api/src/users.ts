@@ -1,9 +1,9 @@
-import { userSpendingLimit } from "@orqestra/config/shared";
 import {
 	listUsers,
 	rememberUser,
 	setSpendingLimit,
 } from "@orqestra/conversations";
+import { userSpendingLimit } from "@orqestra/conversations/shared";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { adminOnly } from "./admin.ts";

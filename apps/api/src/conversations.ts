@@ -1,4 +1,4 @@
-import { thinkingLevel } from "@orqestra/config/shared";
+import { thinkingLevel } from "@orqestra/agents/shared";
 import {
 	ConversationError,
 	type Conversations,

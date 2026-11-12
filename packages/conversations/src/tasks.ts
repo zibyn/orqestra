@@ -1,11 +1,4 @@
-import {
-	type Limits,
-	modelRef,
-	type OrqestraConfig,
-	resolveThinking,
-	resolveTurn,
-	type ThinkingLevel,
-} from "@orqestra/config";
+import { resolveTurn } from "@orqestra/agents";
 import { db } from "@orqestra/db";
 import {
 	conversation,
@@ -13,9 +6,16 @@ import {
 	type Schedule,
 	scheduledTask,
 } from "@orqestra/db/schema";
+import {
+	modelRef,
+	resolveThinking,
+	type ThinkingLevel,
+} from "@orqestra/models";
 import { CronExpressionParser } from "cron-parser";
 import { and, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { alertRun, sendAlert, taskUrl } from "./alerts.ts";
+import type { OrqestraConfig } from "./capabilities.ts";
+import type { Limits } from "./limits.ts";
 import {
 	countFiring,
 	ensureRun,

@@ -1,5 +1,5 @@
 import type { Fetch, ToolService } from "./index.ts";
-import type { SearchProviderId } from "./refs.ts";
+import type { SearchProviderId } from "./shared.ts";
 
 // Search and Scrape through the Search Providers' HTTP APIs; only the parameters all of them share are exposed.
 

@@ -17,9 +17,9 @@ importers:
 
   apps/api:
     dependencies:
-      '@orqestra/config':
+      '@orqestra/agents':
         specifier: workspace:*
-        version: link:../../packages/config
+        version: link:../../packages/agents
       '@orqestra/conversations':
         specifier: workspace:*
         version: link:../../packages/conversations
@@ -32,6 +32,12 @@ importers:
       '@orqestra/memory':
         specifier: workspace:*
         version: link:../../packages/memory
+      '@orqestra/models':
+        specifier: workspace:*
+        version: link:../../packages/models
+      '@orqestra/skills':
+        specifier: workspace:*
+        version: link:../../packages/skills
       '@orqestra/tools':
         specifier: workspace:*
         version: link:../../packages/tools
@@ -81,9 +87,21 @@ importers:
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
-      '@orqestra/config':
+      '@orqestra/agents':
         specifier: workspace:*
-        version: link:../../packages/config
+        version: link:../../packages/agents
+      '@orqestra/conversations':
+        specifier: workspace:*
+        version: link:../../packages/conversations
+      '@orqestra/memory':
+        specifier: workspace:*
+        version: link:../../packages/memory
+      '@orqestra/skills':
+        specifier: workspace:*
+        version: link:../../packages/skills
+      '@orqestra/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools
       '@shadcn/react':
         specifier: ^0.3.1
         version: 0.3.1(@types/react@19.3.0)(react@19.3.1)
@@ -253,9 +271,9 @@ importers:
       '@opentelemetry/sdk-trace':
         specifier: ^3.1.1
         version: 3.1.1(@opentelemetry/api@1.10.0)
-      '@orqestra/config':
+      '@orqestra/agents':
         specifier: workspace:*
-        version: link:../../packages/config
+        version: link:../../packages/agents
       '@orqestra/conversations':
         specifier: workspace:*
         version: link:../../packages/conversations
@@ -268,6 +286,9 @@ importers:
       '@orqestra/memory':
         specifier: workspace:*
         version: link:../../packages/memory
+      '@orqestra/skills':
+        specifier: workspace:*
+        version: link:../../packages/skills
       '@orqestra/tools':
         specifier: workspace:*
         version: link:../../packages/tools
@@ -319,14 +340,11 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
-  packages/config:
+  packages/conversations:
     dependencies:
       '@earendil-works/pi-ai':
         specifier: 1.4.0
         version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.6.7)
-      '@earendil-works/pi-coding-agent':
-        specifier: 1.4.0
-        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7)
       '@orqestra/agents':
         specifier: workspace:*
         version: link:../agents
@@ -336,49 +354,15 @@ importers:
       '@orqestra/mcp':
         specifier: workspace:*
         version: link:../mcp
+      '@orqestra/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@orqestra/models':
         specifier: workspace:*
         version: link:../models
       '@orqestra/skills':
         specifier: workspace:*
         version: link:../skills
-      '@orqestra/tools':
-        specifier: workspace:*
-        version: link:../tools
-      drizzle-orm:
-        specifier: ^0.45.4
-        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
-      zod:
-        specifier: ^4.6.7
-        version: 4.6.7
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.20.5
-      typescript:
-        specifier: ^6.0.2
-        version: 6.0.3
-      vitest:
-        specifier: ^5.0.5
-        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
-
-  packages/conversations:
-    dependencies:
-      '@earendil-works/pi-ai':
-        specifier: 1.4.0
-        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(undici@8.10.2)(ws@8.22.0)(zod@4.6.7)
-      '@orqestra/config':
-        specifier: workspace:*
-        version: link:../config
-      '@orqestra/db':
-        specifier: workspace:*
-        version: link:../db
-      '@orqestra/mcp':
-        specifier: workspace:*
-        version: link:../mcp
-      '@orqestra/memory':
-        specifier: workspace:*
-        version: link:../memory
       '@orqestra/tools':
         specifier: workspace:*
         version: link:../tools
@@ -397,6 +381,9 @@ importers:
       web-push:
         specifier: 3.6.7
         version: 3.6.7
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: ^22.10.2

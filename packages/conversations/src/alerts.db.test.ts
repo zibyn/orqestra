@@ -1,9 +1,5 @@
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import {
-	type AgentDefinition,
-	DEFAULT_LIMITS,
-	type OrqestraConfig,
-} from "@orqestra/config";
+import type { AgentDefinition } from "@orqestra/agents";
 import { memoryStore } from "@orqestra/tools/testing";
 import {
 	afterAll,
@@ -14,7 +10,7 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { RunHandle, TaskInput } from "./index.ts";
+import type { OrqestraConfig, RunHandle, TaskInput } from "./index.ts";
 
 // the push service, as web-push reaches it: each push recorded, answered with the status `refuse` gives its endpoint
 const push = vi.hoisted(() => ({
@@ -45,7 +41,8 @@ const url = process.env.TEST_DATABASE_URL;
 if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
-const { createConversations } = await import("./index.ts");
+const { createConversations, DEFAULT_LIMITS } = await import("./index.ts");
+const { noMcpServerDeletes } = await import("./testing.ts");
 
 const vapid = {
 	VAPID_PUBLIC_KEY: "public",
@@ -80,6 +77,7 @@ const base = {
 } as unknown as OrqestraConfig;
 let config = base;
 const conversations = createConversations({
+	...noMcpServerDeletes,
 	store: memoryStore().store,
 	config: async () => config,
 	skillFiles: async () => [],

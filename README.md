@@ -21,10 +21,14 @@ Orqestra 是一个自托管平台：登录的 User 与 AI Agent 对话，身份�
 | `apps/web` | TanStack Start 应用（Node，Nitro 构建），渲染界面 |
 | `apps/api` | Elysia 服务（Bun），登录（`/auth/*`）与 `/api/*`，见 [ADR 0006](docs/adr/0006-api-owns-server-logic.md) |
 | `apps/worker` | BullMQ worker（Bun），执行 Agent 的 Run；队列存在 Postgres 的 `bullmq` schema |
-| `packages/db` | Drizzle schema、client 与迁移 |
-| `packages/conversations` | Conversation 生命周期（Run、Inbox、Subagent、Notification），唯一读写这些表的代码 |
-| `packages/config` | Catalog（pi 内置的 Provider 与 Model）以及 Admin 在数据库中配置的一切 |
-| `packages/tools` | Agent 可用的 Tool |
+| `packages/db` | Drizzle schema、client、迁移、secret 与 live 加载机制 |
+| `packages/models` | Provider、Model、Catalog、价格与 Model 运行时 |
+| `packages/tools` | 内置 Tool 及 Search / Sandbox Provider、Document Parser 的配置 |
+| `packages/mcp` | MCP Server 配置、Connection、OAuth 与协议 |
+| `packages/skills` | Skill 的增删改、zip 与 Skill 文件 |
+| `packages/memory` | Memory 及其改动记录 |
+| `packages/agents` | Agent Definition 与 Turn 解析 |
+| `packages/conversations` | Conversation 生命周期（Run、Inbox、Subagent、Notification）与 Limits，唯一写这些表的代码 |
 
 api 和 worker 共用一个 PostgreSQL；web 只渲染界面，经 api 读写数据，不连数据库、不持有密钥。领域术语见 [`GLOSSARY.md`](GLOSSARY.md)，架构决策见 [`docs/adr/`](docs/adr/)。
 

@@ -1,12 +1,8 @@
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import {
-	type AgentDefinition,
-	DEFAULT_LIMITS,
-	type OrqestraConfig,
-} from "@orqestra/config";
+import type { AgentDefinition } from "@orqestra/agents";
 import { memoryStore } from "@orqestra/tools/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { RunHandle, TaskInput } from "./index.ts";
+import type { OrqestraConfig, RunHandle, TaskInput } from "./index.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -14,7 +10,10 @@ if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
 const { limits } = await import("@orqestra/db/schema");
-const { createConversations, TaskError } = await import("./index.ts");
+const { createConversations, DEFAULT_LIMITS, TaskError } = await import(
+	"./index.ts"
+);
+const { noMcpServerDeletes } = await import("./testing.ts");
 
 const faux = fauxProvider({
 	provider: "faux",
@@ -48,6 +47,7 @@ const base = {
 } as unknown as OrqestraConfig;
 let config = base;
 const conversations = createConversations({
+	...noMcpServerDeletes,
 	store: memoryStore().store,
 	config: async () => config,
 	skillFiles: async () => [],

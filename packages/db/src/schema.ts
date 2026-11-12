@@ -455,7 +455,7 @@ export type SpendingLimit =
 	| { mode: "unlimited" }
 	| { mode: "limited"; usd: number };
 
-// The Limits an Admin set in /console/limits; at most one row, id 1; no row: @orqestra/config's defaults. Durations in seconds
+// The Limits an Admin set in /console/limits; at most one row, id 1; no row: @orqestra/conversations' DEFAULT_LIMITS. Durations in seconds
 export const limits = pgTable(
 	"limits",
 	{

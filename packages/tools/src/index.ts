@@ -4,14 +4,14 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
 import { cut } from "./cut.ts";
 import { type DocumentParser, type ParseFiles, parseTool } from "./parse.ts";
+import { searchProvider } from "./search.ts";
 import {
 	mcpToolRef,
 	type SearchProviderId,
 	type SearchToolName,
 	type ToolRef,
 	toolNames,
-} from "./refs.ts";
-import { searchProvider } from "./search.ts";
+} from "./shared.ts";
 
 /** `fetch` as Orqestra calls it, so a test can stand in for it. */
 export type Fetch = (

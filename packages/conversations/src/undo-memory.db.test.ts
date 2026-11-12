@@ -1,6 +1,6 @@
-import type { OrqestraConfig } from "@orqestra/config";
 import { memoryStore } from "@orqestra/tools/testing";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import type { OrqestraConfig } from "./index.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -10,6 +10,7 @@ const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
 const { memoriesOf } = await import("@orqestra/memory");
 const { createConversations } = await import("./index.ts");
+const { noMcpServerDeletes } = await import("./testing.ts");
 
 const newConversation = async (userId: string) =>
 	(
@@ -24,6 +25,7 @@ describe.skipIf(!url)(
 	"Undoing a Memory change from the Conversation (Postgres)",
 	() => {
 		const conversations = createConversations({
+			...noMcpServerDeletes,
 			store: memoryStore().store,
 			// no Agents: the Conversation is read-only, which undoing ignores
 			config: async () =>

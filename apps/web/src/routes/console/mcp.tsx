@@ -1,4 +1,4 @@
-import { slugify } from "@orqestra/config/shared";
+import { slugify } from "@orqestra/agents/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import {
 	CheckCircle2Icon,

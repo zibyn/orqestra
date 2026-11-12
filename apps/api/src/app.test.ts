@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { Config } from "@orqestra/config/live";
-import type { Conversations } from "@orqestra/conversations";
+import type { Capabilities, Conversations } from "@orqestra/conversations";
 import { createApp, type Session } from "./app.ts";
 
 const ada = { id: "s1", name: "Ada", admin: true };
@@ -21,7 +20,7 @@ function app(user: typeof ada | null, cookies: string[] = []) {
 		session,
 		auth,
 		conversations: {} as Conversations,
-		config: {} as Config,
+		config: {} as Capabilities,
 	});
 	// handle needs its app as this
 	return { handle: (request: Request) => api.handle(request), reads };

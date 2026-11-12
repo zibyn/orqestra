@@ -1,11 +1,5 @@
 import type { Api, Message, Model, Usage } from "@earendil-works/pi-ai";
-import {
-	GENERAL_WORKER,
-	modelRef,
-	type OrqestraConfig,
-	resolveTurn,
-	type ThinkingLevel,
-} from "@orqestra/config";
+import { GENERAL_WORKER, resolveTurn } from "@orqestra/agents";
 import { db, type Tx } from "@orqestra/db";
 import {
 	attachment,
@@ -25,6 +19,7 @@ import type {
 	McpAccess,
 } from "@orqestra/mcp";
 import { type Memories, memoriesOf, memoryOn } from "@orqestra/memory";
+import { modelRef, type ThinkingLevel } from "@orqestra/models";
 import type { ObjectStore, Orrery, SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
@@ -37,6 +32,7 @@ import {
 	requeueBackgroundCalls,
 	startBackgroundCall,
 } from "./background-calls.ts";
+import type { OrqestraConfig } from "./capabilities.ts";
 import { type Recall, recallOf } from "./recall.ts";
 import {
 	AGENT_RUNS_QUEUE,

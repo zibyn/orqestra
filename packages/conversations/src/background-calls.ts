@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { OrqestraConfig } from "@orqestra/config";
 import { db, type Tx } from "@orqestra/db";
 import {
 	backgroundCall,
@@ -20,6 +19,7 @@ import {
 	type TaskRequestOptions,
 } from "@orqestra/mcp";
 import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
+import type { OrqestraConfig } from "./capabilities.ts";
 import {
 	busy,
 	ensureRun,

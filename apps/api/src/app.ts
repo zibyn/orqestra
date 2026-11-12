@@ -1,5 +1,4 @@
-import type { Config } from "@orqestra/config/live";
-import type { Conversations } from "@orqestra/conversations";
+import type { Capabilities, Conversations } from "@orqestra/conversations";
 import type { OrqestraReach } from "@orqestra/mcp";
 import { Elysia } from "elysia";
 import { z } from "zod";
@@ -24,6 +23,7 @@ import { users } from "./users.ts";
 
 export type { ConversationEvent } from "@orqestra/conversations";
 export type { User };
+export type { SaveError, SaveErrors } from "./saved.ts";
 
 /**
  * Reads the signed-in User from a request, refreshing the session when due. Every cookie in
@@ -64,7 +64,7 @@ export function createApp({
 	session: Session;
 	auth: Auth;
 	conversations: Conversations;
-	config: Config;
+	config: Capabilities;
 	// tests that connect no User may leave orqestraUrl out
 } & OrqestraReach) {
 	const user = signedIn(session);

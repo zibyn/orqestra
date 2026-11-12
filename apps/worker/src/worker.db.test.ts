@@ -21,7 +21,7 @@ import {
 	fauxToolCall,
 	type Model,
 } from "@earendil-works/pi-ai";
-import type { AgentDefinition } from "@orqestra/config";
+import type { AgentDefinition } from "@orqestra/agents";
 import type { ConversationEvent } from "@orqestra/conversations";
 import {
 	fakeAuthorizationServer,
@@ -54,12 +54,14 @@ const { asc, eq, sql } = await import("drizzle-orm");
 const { limits, pushSubscription, usage, user } = await import(
 	"@orqestra/db/schema"
 );
-const { createConfig, skillFiles } = await import("@orqestra/config/live");
-const config = createConfig(db);
-const { DEFAULT_LIMITS } = await import("@orqestra/config");
-const { createConversations, MAX_SUBAGENTS_PER_USER_MESSAGE } = await import(
-	"@orqestra/conversations"
-);
+const { skillFiles } = await import("@orqestra/skills");
+const {
+	createCapabilities,
+	createConversations,
+	DEFAULT_LIMITS,
+	MAX_SUBAGENTS_PER_USER_MESSAGE,
+} = await import("@orqestra/conversations");
+const config = createCapabilities(db);
 const { startAgentWorker } = await import("./worker.ts");
 const { otelTelemetry } = await import("./tracing.ts");
 const { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } =
@@ -80,7 +82,7 @@ const connections = memoryConnections();
 const conversations = createConversations({
 	store,
 	config: config.current,
-	skillFiles,
+	skillFiles: (versionId) => skillFiles(db, versionId),
 	fetch: (input, init) => fetchFake(input, init),
 	connections,
 	// the fake MCP Servers are only in the snapshot, so deleting one writes nothing
@@ -338,7 +340,7 @@ describe.skipIf(!url)(
 		let stopWorker: () => Promise<void>;
 		const start = async () => {
 			// faux replies are one shared queue, so runs go one at a time
-			stopWorker = await startAgentWorker(config.current, {
+			stopWorker = await startAgentWorker(config, {
 				concurrency: 1,
 				orrery: () => orrery.client,
 				store,
@@ -662,12 +664,12 @@ describe.skipIf(!url)(
 
 		it("costs requests at an Admin's price from when it is set, keeping what was recorded, and at the Catalog's once it is cleared", async () => {
 			const [model] = faux.models;
-			await config.providers.save({
+			await config.models.providers.save({
 				id: "faux",
 				apiKey: "k",
 				baseUrl: model.baseUrl,
 			});
-			await config.providers.setModelEnabled({
+			await config.models.providers.setModelEnabled({
 				providerId: "faux",
 				modelId: "faux-1",
 				enabled: true,
@@ -685,7 +687,7 @@ describe.skipIf(!url)(
 				);
 			};
 			const setPrice = async (cost: typeof model.cost | null) => {
-				await config.providers.setModelPrice({
+				await config.models.providers.setModelPrice({
 					providerId: "faux",
 					modelId: "faux-1",
 					cost,
@@ -707,7 +709,7 @@ describe.skipIf(!url)(
 				}
 				expect(await usageOf(before[0].conversationId)).toEqual(before);
 			} finally {
-				await config.providers.delete("faux");
+				await config.models.providers.delete("faux");
 				await patch();
 			}
 		});

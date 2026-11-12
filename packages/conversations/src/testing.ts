@@ -203,3 +203,13 @@ export function memoryRun({
 		memories: store,
 	};
 }
+
+/** For `createConversations` in a test that deletes no MCP Server. */
+export const noMcpServerDeletes = {
+	mcpServers: {
+		write: () => Promise.reject(new Error("this test deletes no MCP Server")),
+	},
+	agents: {
+		forget: () => Promise.reject(new Error("this test forgets no Tool")),
+	},
+};

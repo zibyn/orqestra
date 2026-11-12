@@ -1,11 +1,11 @@
-import { type Config, limitsInput } from "@orqestra/config/live";
+import { type Capabilities, limitsInput } from "@orqestra/conversations";
 import { Elysia } from "elysia";
 import { adminOnly } from "./admin.ts";
 import type { SignedIn } from "./app.ts";
 import { saved } from "./saved.ts";
 
 // The Limits, edited by Admins in /console/limits; the next Run reads them
-export const limits = (signedIn: SignedIn, config: Config) =>
+export const limits = (signedIn: SignedIn, config: Capabilities) =>
 	new Elysia({ prefix: "/limits" })
 		.use(signedIn)
 		.derive(adminOnly)

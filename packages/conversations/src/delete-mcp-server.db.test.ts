@@ -8,9 +8,8 @@ if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const schema = await import("@orqestra/db/schema");
 const { eq, sql } = await import("drizzle-orm");
-const { createConfig } = await import("@orqestra/config/live");
-const { createConversations } = await import("./index.ts");
-const config = createConfig(db);
+const { createCapabilities, createConversations } = await import("./index.ts");
+const config = createCapabilities(db);
 
 const general = {
 	name: "General",
@@ -44,7 +43,7 @@ describe.skipIf(!url)("Deleting an MCP Server (Postgres)", () => {
 		},
 		mcpServers: {
 			write: async (fn) => {
-				const done = await config.write(fn);
+				const done = await config.mcpServers.write(fn);
 				steps.push("delete");
 				return done;
 			},

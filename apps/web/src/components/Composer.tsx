@@ -1,4 +1,5 @@
-import { invokedSkill, MAX_UPLOAD_BYTES } from "@orqestra/config/shared";
+import { MAX_UPLOAD_BYTES } from "@orqestra/conversations/shared";
+import { invokedSkill } from "@orqestra/skills/shared";
 import { useQuery } from "@tanstack/react-query";
 import { FileIcon, PlusIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";

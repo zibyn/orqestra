@@ -1,6 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { createConfig } from "@orqestra/config/live";
-import { createConversations } from "@orqestra/conversations";
+import {
+	createCapabilities,
+	createConversations,
+} from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { user as userRecord } from "@orqestra/db/schema";
 import { connectionStore } from "@orqestra/mcp";
@@ -9,7 +11,7 @@ import { memoryStore } from "@orqestra/tools/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 
-const config = createConfig(db);
+const config = createCapabilities(db);
 
 // A User's Connections through the api, against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test.
 // The MCP Server and its authorization server are fakes behind the injected fetch.
@@ -41,7 +43,7 @@ const app = (orqestraUrl: string) =>
 			skillFiles: async () => [],
 			fetch: (input, init) => as.fetch(input, init),
 			connections: connectionStore,
-			mcpServers: config,
+			mcpServers: config.mcpServers,
 			agents: config.agents,
 		}),
 		orqestraUrl,

@@ -4,11 +4,7 @@ import {
 	fauxToolCall,
 	type ToolCall,
 } from "@earendil-works/pi-ai";
-import {
-	type AgentDefinition,
-	DEFAULT_LIMITS,
-	type OrqestraConfig,
-} from "@orqestra/config";
+import type { AgentDefinition } from "@orqestra/agents";
 import {
 	afterAll,
 	beforeAll,
@@ -18,7 +14,8 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { RunHandler } from "./index.ts";
+import type { OrqestraConfig, RunHandler } from "./index.ts";
+import { MAX_UPLOAD_BYTES } from "./shared.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -26,7 +23,8 @@ if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
-const { createConversations, MAX_UPLOAD_BYTES } = await import("./index.ts");
+const { createConversations, DEFAULT_LIMITS } = await import("./index.ts");
+const { noMcpServerDeletes } = await import("./testing.ts");
 const { memoryOrrery, memoryStore } = await import("@orqestra/tools/testing");
 const { ensureRun } = await import("./runs.ts");
 
@@ -67,6 +65,7 @@ const config = {
 let o = memoryOrrery();
 const s = memoryStore();
 const conversations = createConversations({
+	...noMcpServerDeletes,
 	config: async () => config,
 	skillFiles: async () => [],
 	orrery: () => o.client,

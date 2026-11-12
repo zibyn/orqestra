@@ -1,8 +1,8 @@
-import { DEFAULT_LIMITS } from "@orqestra/config";
 import { db } from "@orqestra/db";
 import { limits, usage, user } from "@orqestra/db/schema";
 import { CronExpressionParser } from "cron-parser";
 import { and, eq, gte, sum } from "drizzle-orm";
+import { DEFAULT_LIMITS } from "./limits.ts";
 
 export const SPENDING_LIMIT_USED_UP = "This month's Spending Limit is used up";
 

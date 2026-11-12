@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { Message } from "@earendil-works/pi-ai";
-import { messageText } from "@orqestra/config";
 import { db, type Tx } from "@orqestra/db";
 import {
 	backgroundCall,
@@ -31,6 +30,7 @@ import {
 } from "drizzle-orm";
 import { alertRun } from "./alerts.ts";
 import type { TraceCarrier } from "./serve.ts";
+import { messageText } from "./shared.ts";
 
 /** Locks the row of a Conversation's root, the top-level Conversation of its tree: every Run start and finish in the tree decides under it. */
 export const lockRoot = (tx: Tx, conversationId: string) =>

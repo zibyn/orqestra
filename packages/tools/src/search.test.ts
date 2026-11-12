@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { builtinTools, type ToolService } from "./index.ts";
-import type { SearchProviderId, ToolName } from "./refs.ts";
+import type { SearchProviderId, ToolName } from "./shared.ts";
 
 const officialUrl = {
 	tavily: "https://api.tavily.com",

@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { fauxProvider } from "@earendil-works/pi-ai";
-import type { AgentDefinition, OrqestraConfig } from "@orqestra/config";
-import { createConfig } from "@orqestra/config/live";
-import { createConversations } from "@orqestra/conversations";
+import type { AgentDefinition } from "@orqestra/agents";
+import {
+	createCapabilities,
+	createConversations,
+	type OrqestraConfig,
+} from "@orqestra/conversations";
+import { noMcpServerDeletes } from "@orqestra/conversations/testing";
 import { db } from "@orqestra/db";
 import * as schema from "@orqestra/db/schema";
 import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
@@ -39,6 +43,7 @@ const config = {
 
 let o = memoryOrrery();
 const conversations = createConversations({
+	...noMcpServerDeletes,
 	store: memoryStore().store,
 	config: async () => config,
 	skillFiles: async () => [],
@@ -48,7 +53,7 @@ const conversations = createConversations({
 /** The api as the given User, or signed out. */
 function app(userId: string | null) {
 	const api = createApp({
-		config: createConfig(db),
+		config: createCapabilities(db),
 		session: async () => ({
 			user: userId ? { id: userId, name: userId, admin: false } : null,
 			cookies: [],

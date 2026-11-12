@@ -1,10 +1,12 @@
-import type { OrqestraConfig } from "@orqestra/config";
-import { skillFiles } from "@orqestra/config/live";
 import {
+	type Capabilities,
 	createConversations,
+	type OrqestraConfig,
 	type RunHandle,
 	SpendingLimitReached,
 } from "@orqestra/conversations";
+import { db } from "@orqestra/db";
+import { skillFiles as filesOf } from "@orqestra/skills";
 import type { ObjectStore } from "@orqestra/tools";
 import { type RuntimeDeps, runAgent } from "./runtime/index.ts";
 import { openToolbox } from "./runtime/toolbox.ts";
@@ -86,8 +88,8 @@ export const metered =
 
 /** Works on queued Runs in this process, replying to each, until the returned close function is called. */
 export function startAgentWorker(
-	// read per Run: a Run keeps the config it started with, the next one picks up a reload
-	getConfig: () => Promise<OrqestraConfig>,
+	// `current` read per Run: a Run keeps the config it started with, the next one picks up a reload
+	capabilities: Pick<Capabilities, "current" | "mcpServers" | "agents">,
 	{
 		providerConcurrency = 8,
 		toolbox = openToolbox,
@@ -113,8 +115,11 @@ export function startAgentWorker(
 	},
 ) {
 	const limitProviders = providerLimiter(providerConcurrency);
+	const skillFiles = (versionId: number) => filesOf(db, versionId);
 	return createConversations({
-		config: getConfig,
+		config: capabilities.current,
+		mcpServers: capabilities.mcpServers,
+		agents: capabilities.agents,
 		skillFiles,
 		store,
 		connections,

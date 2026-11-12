@@ -1,4 +1,3 @@
-import { MAX_UPLOAD_BYTES } from "@orqestra/config";
 import { db } from "@orqestra/db";
 import { attachment } from "@orqestra/db/schema";
 import type {
@@ -9,6 +8,7 @@ import type {
 import { and, eq, inArray, lt } from "drizzle-orm";
 import { ConversationError } from "./errors.ts";
 import { ensureSandbox } from "./sandbox.ts";
+import { MAX_UPLOAD_BYTES } from "./shared.ts";
 
 /** Where attachments go in the Sandbox, relative to /workspace. */
 const UPLOADS = "uploads";

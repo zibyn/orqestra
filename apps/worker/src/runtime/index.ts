@@ -6,13 +6,15 @@ import {
 	type TelemetryContext,
 	type TelemetrySpan,
 } from "@earendil-works/pi-telemetry";
-import { messageText, type OrqestraConfig, turnSkills } from "@orqestra/config";
+import { turnSkills } from "@orqestra/agents";
+import type { OrqestraConfig } from "@orqestra/conversations";
 import {
 	type RunHandle,
 	RunTimedOut,
 	SpendingLimitReached,
 	type TraceCarrier,
 } from "@orqestra/conversations";
+import { messageText } from "@orqestra/conversations/shared";
 import {
 	type ConnectionStore,
 	failureReason,

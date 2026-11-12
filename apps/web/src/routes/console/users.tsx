@@ -1,4 +1,4 @@
-import type { UserSpendingLimit } from "@orqestra/config/shared";
+import type { UserSpendingLimit } from "@orqestra/conversations/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { Loader2Icon } from "lucide-react";
 import { useState } from "react";

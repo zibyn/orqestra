@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type McpServices, type McpTool, openMcpTools } from "@orqestra/mcp";
 import { builtinTools, type ToolServices } from "@orqestra/tools";
-import type { ToolRef } from "@orqestra/tools/refs";
+import type { ToolRef } from "@orqestra/tools/shared";
 
 /**
  * Opens the Tools of one Run: the built-in ones and those of the MCP Servers among `allowed` that are available (see openMcpTools).

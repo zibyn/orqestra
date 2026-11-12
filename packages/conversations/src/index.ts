@@ -1,18 +1,9 @@
 import type { Message } from "@earendil-works/pi-ai";
 import {
 	type AgentDefinition,
-	invokedSkill,
-	mcpToolRef,
-	modelRef,
-	type OrqestraConfig,
-	resolveThinking,
 	resolveTurn,
-	type SkillFile,
-	skillBlock,
-	skillInstructions,
-	type ThinkingLevel,
 	turnSkills,
-} from "@orqestra/config";
+} from "@orqestra/agents";
 import { db, type Tx } from "@orqestra/db";
 import {
 	attachment,
@@ -31,7 +22,19 @@ import {
 	revokeConnections,
 } from "@orqestra/mcp";
 import { type Undone, undoChange } from "@orqestra/memory";
+import {
+	modelRef,
+	resolveThinking,
+	type ThinkingLevel,
+} from "@orqestra/models";
+import { skillInstructions } from "@orqestra/skills";
+import {
+	invokedSkill,
+	type SkillFile,
+	skillBlock,
+} from "@orqestra/skills/shared";
 import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
+import { mcpToolRef } from "@orqestra/tools/shared";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import pg from "pg";
 import { alerts } from "./alerts.ts";
@@ -43,6 +46,7 @@ import {
 	endBackgroundCallsOf,
 	runningCalls,
 } from "./background-calls.ts";
+import type { OrqestraConfig } from "./capabilities.ts";
 import { ConversationError } from "./errors.ts";
 import {
 	AGENT_RUNS_QUEUE,
@@ -69,8 +73,13 @@ import {
 	sweepUnsentAttachments,
 } from "./uploads.ts";
 
-export { MAX_UPLOAD_BYTES } from "@orqestra/config";
+export {
+	type Capabilities,
+	createCapabilities,
+	type OrqestraConfig,
+} from "./capabilities.ts";
 export { ConversationError } from "./errors.ts";
+export { DEFAULT_LIMITS, type Limits, limitsInput } from "./limits.ts";
 export {
 	MAX_RECALL_RESULTS,
 	MAX_SNIPPET,
@@ -164,9 +173,9 @@ export function createConversations({
 	/** The Users' Connections, which Background Calls of per-User OAuth MCP Servers are cancelled with. */
 	connections?: ConnectionStore;
 	/** Where an MCP Server is deleted: a transaction, after which every process reloads them. Only the api's deletes one. */
-	mcpServers?: { write: <T>(fn: (tx: Tx) => Promise<T>) => Promise<T> };
+	mcpServers: { write: <T>(fn: (tx: Tx) => Promise<T>) => Promise<T> };
 	/** What forgets a deleted MCP Server in every Agent Definition. Only the api's deletes one. */
-	agents?: { forget: (ref: { tool: `mcp:${string}` }) => Promise<unknown> };
+	agents: { forget: (ref: { tool: `mcp:${string}` }) => Promise<unknown> };
 }) {
 	const mcp = { fetch, connections };
 	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
@@ -682,8 +691,6 @@ export function createConversations({
 		 * deletes it with its Connections (revoked in the background once committed), then removes it from every Agent Definition.
 		 */
 		async deleteMcpServer(mcpServerId: string) {
-			if (!mcpServers || !agents)
-				throw new Error("createConversations got no mcpServers and agents");
 			await endBackgroundCallsOf(config, mcpServerId, mcp);
 			const cleared = await mcpServers.write((tx) =>
 				deleteMcpServer(tx, mcpServerId),

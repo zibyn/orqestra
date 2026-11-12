@@ -4,7 +4,8 @@ import type {
 	Message,
 	Model,
 } from "@earendil-works/pi-ai";
-import { messageText, type OrqestraConfig } from "@orqestra/config";
+import type { OrqestraConfig } from "@orqestra/conversations";
+import { messageText } from "@orqestra/conversations/shared";
 
 /** A title for a Conversation from its first question and answer; none unless the model finished it. */
 export async function generateTitle(

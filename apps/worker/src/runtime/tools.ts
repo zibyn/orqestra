@@ -1,6 +1,6 @@
 import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
-import type { Limits, OrqestraConfig } from "@orqestra/config";
+import type { Limits, OrqestraConfig } from "@orqestra/conversations";
 import {
 	BudgetExceeded,
 	checkSchedule,

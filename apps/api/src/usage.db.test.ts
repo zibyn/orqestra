@@ -1,13 +1,15 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { catalogProviders } from "@orqestra/config";
-import { createConfig } from "@orqestra/config/live";
-import type { Conversations } from "@orqestra/conversations";
+import {
+	type Conversations,
+	createCapabilities,
+} from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { usage, user } from "@orqestra/db/schema";
+import { catalogProviders } from "@orqestra/models";
 import { sql } from "drizzle-orm";
 import { createApp, type User } from "./app.ts";
 
-const config = createConfig(db);
+const config = createCapabilities(db);
 
 // Needs a migrated, throwaway Postgres at TEST_DATABASE_URL (see test-env.ts)
 const url = process.env.TEST_DATABASE_URL;
@@ -218,12 +220,12 @@ describe.skipIf(!url)("/api/usage/mine", () => {
 	});
 
 	it("shows an enabled Model as not disabled", async () => {
-		await config.providers.save({
+		await config.models.providers.save({
 			id: catalog?.id ?? "",
 			apiKey: "k",
 			baseUrl: catalog?.baseUrl ?? "",
 		});
-		await config.providers.setModelEnabled({
+		await config.models.providers.setModelEnabled({
 			providerId: catalog?.id ?? "",
 			modelId: m1?.id ?? "",
 			enabled: true,

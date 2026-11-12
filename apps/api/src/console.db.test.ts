@@ -1,18 +1,18 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { catalogProviders } from "@orqestra/config";
-import { createConfig } from "@orqestra/config/live";
 import {
 	type Conversations,
+	createCapabilities,
 	createConversations,
 } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { backgroundCall, conversation, message } from "@orqestra/db/schema";
 import { fakeMcpServer } from "@orqestra/mcp/testing";
+import { catalogProviders } from "@orqestra/models";
 import { memoryStore } from "@orqestra/tools/testing";
 import { eq, sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 
-const config = createConfig(db);
+const config = createCapabilities(db);
 
 // Through the api against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -46,7 +46,7 @@ describe.skipIf(!url)("the console through the api", () => {
 			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, document_parser, agent, skill, limits cascade`,
 		);
 		// the Tools' config reloads on its own channel, which a truncate does not notify
-		await config.sandboxProvider.delete();
+		await config.tools.sandboxProvider.delete();
 		await config.agents.save({
 			id: "general",
 			create: true,
@@ -229,7 +229,7 @@ describe.skipIf(!url)("the console through the api", () => {
 				config: config.current,
 				skillFiles: async () => [],
 				fetch: fake.fetch,
-				mcpServers: config,
+				mcpServers: config.mcpServers,
 				agents: config.agents,
 			}),
 		});

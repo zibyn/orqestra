@@ -19,16 +19,13 @@ import {
 	SimpleSpanProcessor,
 	TracerProvider,
 } from "@opentelemetry/sdk-trace";
-import {
-	type AgentDefinition,
-	DEFAULT_LIMITS,
-	messageText,
-	resolveTurn,
-} from "@orqestra/config";
-import { zip } from "@orqestra/config/test-zip";
+import { type AgentDefinition, resolveTurn } from "@orqestra/agents";
 import type { Transcript, Turn } from "@orqestra/conversations";
+import { DEFAULT_LIMITS } from "@orqestra/conversations";
+import { messageText } from "@orqestra/conversations/shared";
 import { memoryRun } from "@orqestra/conversations/testing";
 import { fakeMcpServer, memoryConnections } from "@orqestra/mcp/testing";
+import { zip } from "@orqestra/skills/test-zip";
 import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
 import { otelTelemetry, tracing } from "../tracing.ts";
 import { type RuntimeDeps, runAgent } from "./index.ts";

@@ -1,5 +1,5 @@
 // No Node imports: browser code can use this module (as @orqestra/agents/shared)
-import { toolName } from "@orqestra/tools/refs";
+import { toolName } from "@orqestra/tools/shared";
 import { z } from "zod";
 
 /** Every thinking level pi knows; which ones a Model offers is narrowed by `resolveThinking`. */
@@ -96,3 +96,10 @@ export function definitionIssues(def: z.infer<typeof agentDefinition>) {
 		});
 	return issues;
 }
+
+/** A name turned into an Agent or MCP Server id; "" when nothing usable is left (e.g. a Chinese name). */
+export const slugify = (name: string) =>
+	name
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");

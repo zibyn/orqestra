@@ -33,7 +33,7 @@ import {
 	searchToolName,
 	searchToolNames,
 	toolName,
-} from "./refs.ts";
+} from "./shared.ts";
 
 /** NOTIFY channel, no payload: a Search Provider, the Sandbox Provider or the Document Parser changed. */
 const TOOLS_CHANNEL = "tools_changed";

@@ -1,4 +1,4 @@
-import { thinkingLevel } from "@orqestra/config/shared";
+import { thinkingLevel } from "@orqestra/agents/shared";
 import { type Conversations, TaskError } from "@orqestra/conversations";
 import { Elysia } from "elysia";
 import { z } from "zod";

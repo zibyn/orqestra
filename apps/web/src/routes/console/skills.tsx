@@ -1,4 +1,4 @@
-import type { SaveErrors } from "@orqestra/config/shared";
+import type { SaveErrors } from "@orqestra/api";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import {
 	BookOpenIcon,

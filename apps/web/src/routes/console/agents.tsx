@@ -1,12 +1,14 @@
 import {
 	type AgentDefinitionInput,
+	slugify,
+	thinkingLevel,
+} from "@orqestra/agents/shared";
+import {
 	mcpServerOf,
 	mcpToolRef,
 	searchToolNames,
-	slugify,
-	thinkingLevel,
 	toolName,
-} from "@orqestra/config/shared";
+} from "@orqestra/tools/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { PlusIcon, TriangleAlertIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";

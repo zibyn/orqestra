@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./shared": "./src/shared.ts",
     "./testing": "./src/testing.ts"
   },
   "scripts": {
@@ -11,16 +12,19 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.4.0",
-    "@orqestra/config": "workspace:*",
+    "@orqestra/agents": "workspace:*",
     "@orqestra/db": "workspace:*",
     "@orqestra/mcp": "workspace:*",
     "@orqestra/memory": "workspace:*",
+    "@orqestra/models": "workspace:*",
+    "@orqestra/skills": "workspace:*",
     "@orqestra/tools": "workspace:*",
     "bullmq": "^6.5.0",
     "cron-parser": "5.10.2",
     "drizzle-orm": "^0.45.4",
     "pg": "^8.23.1",
-    "web-push": "3.6.7"
+    "web-push": "3.6.7",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

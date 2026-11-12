@@ -5,13 +5,12 @@ const url = process.env.TEST_DATABASE_URL;
 if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
-const { createConfig } = await import("./live.ts");
-const { turnSkills } = await import("./index.ts");
+const { createCapabilities, limitsInput } = await import("./index.ts");
+const { turnSkills } = await import("@orqestra/agents");
 const { availableTools } = await import("@orqestra/tools");
-const { limitsInput } = await import("./live.ts");
-const { zip } = await import("./test-zip.ts");
+const { zip } = await import("@orqestra/skills/test-zip");
 const { decryptSecret } = await import("@orqestra/db/secret");
-const config = createConfig(db);
+const config = createCapabilities(db);
 
 const general = {
 	name: "General",
@@ -29,14 +28,14 @@ const mcp = (id: string) => ({
 	headers: [],
 });
 
-describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
+describe.skipIf(!url)("Capabilities writes (Postgres)", () => {
 	// leaves only a default Agent, as the baseline does, also for the next package's tests
 	const reset = async () => {
 		await db.execute(
 			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, document_parser, agent, skill, limits cascade`,
 		);
 		// the Tools' config reloads on its own channel, which a truncate does not notify
-		await config.sandboxProvider.delete();
+		await config.tools.sandboxProvider.delete();
 		await config.agents.save({
 			id: "general",
 			create: true,
@@ -102,8 +101,8 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 				oauthClientId: null,
 				oauthClientSecret: null,
 			});
-			// written past config, so read by a fresh one
-			const fresh = createConfig(db);
+			// written past the MCP Servers, so read by a fresh one
+			const fresh = createCapabilities(db);
 			try {
 				expect((await fresh.current()).mcpServers.docs.auth).toBe("shared");
 			} finally {
@@ -165,7 +164,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 				skills: ["doc", "pdf"],
 				availableSkills: [],
 			});
-			await config.sandboxProvider.save({
+			await config.tools.sandboxProvider.save({
 				url: "http://127.0.0.1:9",
 				token: "orr_1_s",
 				snapshot: "",
@@ -248,7 +247,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 	it("leaves an MCP Server or Skill an Agent references but that was just deleted unavailable, without failing the load", async () => {
 		await config.mcpServers.save(mcp("docs"));
 		await config.skills.create("pdf", "d");
-		await config.sandboxProvider.save({
+		await config.tools.sandboxProvider.save({
 			url: "http://127.0.0.1:9",
 			token: "orr_1_s",
 			snapshot: "",
@@ -263,7 +262,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 		// deleted past the Agent Definitions, as another snapshot may still hold them
 		await db.execute(sql`delete from mcp_server where id = 'docs'`);
 		await db.execute(sql`delete from skill where name = 'pdf'`);
-		const fresh = createConfig(db);
+		const fresh = createCapabilities(db);
 		try {
 			const loaded = await fresh.current();
 			expect(loaded.defaultAgent).toMatchObject({
