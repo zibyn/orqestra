@@ -18,7 +18,9 @@ const newConversation = async (userId: string) =>
 			.values({ userId, agentId: "a" })
 			.returning()
 	)[0].id;
-afterAll(() => db.$client.end());
+afterAll(async () => {
+	if (url) await db.$client.end();
+});
 
 type Seed = Pick<Memory, "path" | "description" | "body">;
 type Undo = (toolCallId: string) => Promise<Undone | undefined>;
