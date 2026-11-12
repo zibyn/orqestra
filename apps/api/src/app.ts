@@ -112,6 +112,8 @@ export function createApp({
 						if (!stream) return status(404, notFound);
 						set.headers["content-type"] = "text/event-stream";
 						set.headers["cache-control"] = "no-cache";
+						// an nginx in front would otherwise hold events in its buffer until the reply is saved
+						set.headers["x-accel-buffering"] = "no";
 						return new Response(stream);
 					},
 				)

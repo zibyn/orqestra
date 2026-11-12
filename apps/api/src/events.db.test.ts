@@ -50,6 +50,7 @@ describe.skipIf(!url)("/api/conversations/:id/events", () => {
 		);
 		expect(response.status).toBe(200);
 		expect(response.headers.get("content-type")).toBe("text/event-stream");
+		expect(response.headers.get("x-accel-buffering")).toBe("no");
 		// a refresh during the request still reaches the browser
 		expect(response.headers.getSetCookie()).toEqual([
 			"polaris.session=r; Path=/",
