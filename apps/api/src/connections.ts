@@ -1,6 +1,6 @@
 import { mcpServerId } from "@orqestra/config";
 import {
-	config,
+	type Config,
 	connectionStore,
 	deleteConnection,
 	revokeConnections,
@@ -26,6 +26,7 @@ const refused = (code: string) => ({ errors: { serverId: { code } } });
  */
 export const connectionRoutes = (
 	signedIn: SignedIn,
+	config: Config,
 	{ orqestraUrl, fetch }: OrqestraReach & { orqestraUrl: string },
 ) =>
 	new Elysia({ prefix: "/connections" })

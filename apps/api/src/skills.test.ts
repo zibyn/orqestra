@@ -1,9 +1,12 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { config } from "@orqestra/config/live";
+import { createConfig } from "@orqestra/config/live";
 import { SKILL_ZIP_MAX_BYTES } from "@orqestra/config/shared";
 import { zip } from "@orqestra/config/test-zip";
 import type { Conversations } from "@orqestra/conversations";
+import { db } from "@orqestra/db";
 import { createApp, type User } from "./app.ts";
+
+const config = createConfig(db);
 
 const ada: User = { id: "s1", name: "Ada", admin: true };
 const bob: User = { id: "s2", name: "Bob", admin: false };
@@ -12,6 +15,7 @@ const bob: User = { id: "s2", name: "Bob", admin: false };
 function app(user: User | null) {
 	const reads: Request[] = [];
 	const api = createApp({
+		config: config,
 		session: async (request) => {
 			reads.push(request);
 			return { user, cookies: [] };
@@ -121,9 +125,9 @@ describe("an oversized zip", () => {
 	});
 });
 
-const db = process.env.TEST_DATABASE_URL;
+const testDb = process.env.TEST_DATABASE_URL;
 
-describe.skipIf(!db)("an Admin's Skills (Postgres)", () => {
+describe.skipIf(!testDb)("an Admin's Skills (Postgres)", () => {
 	const { handle } = app(ada);
 	const send = async (request: Request) => {
 		const response = await handle(request);

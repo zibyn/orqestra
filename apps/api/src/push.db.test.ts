@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { OrqestraConfig } from "@orqestra/config";
+import { createConfig } from "@orqestra/config/live";
 import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { memoryStore } from "@orqestra/tools/testing";
@@ -17,6 +18,7 @@ const ada: User = { id: "ada", name: "Ada", admin: false };
 
 const app = (user: User | null) => (method: string, body?: unknown) =>
 	createApp({
+		config: createConfig(db),
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(),
 		conversations,

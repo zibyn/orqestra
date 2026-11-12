@@ -1,11 +1,11 @@
-import { config, sandboxProviderInput } from "@orqestra/config/live";
+import { type Config, sandboxProviderInput } from "@orqestra/config/live";
 import { Elysia } from "elysia";
 import { adminOnly } from "./admin.ts";
 import type { SignedIn } from "./app.ts";
 import { saved } from "./saved.ts";
 
 // The Sandbox Provider (orrery), edited by Admins in /console/sandbox. The API Token only goes in.
-export const sandboxProvider = (signedIn: SignedIn) =>
+export const sandboxProvider = (signedIn: SignedIn, config: Config) =>
 	new Elysia({ prefix: "/sandbox-provider" })
 		.use(signedIn)
 		.derive(adminOnly)

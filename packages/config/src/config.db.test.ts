@@ -6,11 +6,13 @@ const url = process.env.TEST_DATABASE_URL;
 if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
-const { config, liveConfig } = await import("./live.ts");
-const { catalogProviders } = await import("./index.ts");
+const { createConfig } = await import("./live.ts");
+const { catalogProviders, turnSkills } = await import("./index.ts");
+const { availableTools } = await import("@orqestra/tools");
 const { skillFiles, limitsInput } = await import("./live.ts");
 const { zip } = await import("./test-zip.ts");
-const { decryptSecret } = await import("./secret.ts");
+const { decryptSecret } = await import("@orqestra/db/secret");
+const config = createConfig(db);
 
 const general = {
 	name: "General",
@@ -234,9 +236,9 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 				oauthClientSecret: null,
 			});
 			// written past config, so read by a fresh one
-			const fresh = liveConfig();
+			const fresh = createConfig(db);
 			try {
-				expect((await fresh.get()).mcpServers.docs.auth).toBe("shared");
+				expect((await fresh.current()).mcpServers.docs.auth).toBe("shared");
 			} finally {
 				await fresh.close();
 			}
@@ -787,10 +789,42 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 		});
 	});
 
-	it("tells every other process to reload after a write", async () => {
-		const elsewhere = liveConfig();
+	it("leaves an MCP Server or Skill an Agent references but that was just deleted unavailable, without failing the load", async () => {
+		await config.mcpServers.save(mcp("docs"));
+		await config.skills.create("pdf", "d");
+		await config.sandboxProvider.save({
+			url: "http://127.0.0.1:9",
+			token: "orr_1_s",
+			snapshot: "",
+			cpu: 2,
+			memory: 2147483648,
+		});
+		await config.agents.save({
+			id: "general",
+			create: false,
+			definition: { ...general, tools: ["mcp:docs"], skills: ["pdf"] },
+		});
+		// deleted past the Agent Definitions, as another snapshot may still hold them
+		await db.execute(sql`delete from mcp_server where id = 'docs'`);
+		await db.execute(sql`delete from skill where name = 'pdf'`);
+		const fresh = createConfig(db);
 		try {
-			expect((await elsewhere.get()).agents.map((a) => a.id)).toEqual([
+			const loaded = await fresh.current();
+			expect(loaded.defaultAgent).toMatchObject({
+				tools: ["mcp:docs"],
+				skills: ["pdf"],
+			});
+			expect(availableTools(loaded)).not.toContain("mcp:docs");
+			expect(turnSkills(loaded, loaded.defaultAgent)).toEqual([]);
+		} finally {
+			await fresh.close();
+		}
+	});
+
+	it("tells every other process to reload after a write", async () => {
+		const elsewhere = createConfig(db);
+		try {
+			expect((await elsewhere.current()).agents.map((a) => a.id)).toEqual([
 				"general",
 			]);
 			await config.agents.save({
@@ -799,7 +833,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 				definition: other,
 			});
 			await eventually(
-				() => elsewhere.get(),
+				() => elsewhere.current(),
 				(c) => c.agents.some((a) => a.id === "other"),
 			);
 		} finally {

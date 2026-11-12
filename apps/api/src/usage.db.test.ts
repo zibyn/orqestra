@@ -1,11 +1,13 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { catalogProviders } from "@orqestra/config";
-import { config } from "@orqestra/config/live";
+import { createConfig } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { usage, user } from "@orqestra/db/schema";
 import { sql } from "drizzle-orm";
 import { createApp, type User } from "./app.ts";
+
+const config = createConfig(db);
 
 // Needs a migrated, throwaway Postgres at TEST_DATABASE_URL (see test-env.ts)
 const url = process.env.TEST_DATABASE_URL;
@@ -16,6 +18,7 @@ const root: User = { id: "root", name: "Root", admin: true };
 
 async function call(user: User | null, path: string) {
 	const api = createApp({
+		config: config,
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(null, { status: 404 }),
 		conversations: {} as Conversations,

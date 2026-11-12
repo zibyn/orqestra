@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { catalogProviders } from "@orqestra/config";
-import { config } from "@orqestra/config/live";
+import { createConfig } from "@orqestra/config/live";
 import {
 	type Conversations,
 	createConversations,
@@ -11,10 +11,13 @@ import { fakeMcpServer, memoryStore } from "@orqestra/tools/testing";
 import { eq, sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 
+const config = createConfig(db);
+
 // Through the api against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
 
 const api = createApp({
+	config: config,
 	session: async () => ({
 		user: { id: "a1", name: "Ada", admin: true },
 		cookies: [],
@@ -212,6 +215,7 @@ describe.skipIf(!url)("the console through the api", () => {
 	it("deletes a disabled MCP Server, cancelling its Background Calls and ending them failed", async () => {
 		const fake = fakeMcpServer({ era: "modern" });
 		const withCalls = createApp({
+			config: config,
 			session: async () => ({
 				user: { id: "a1", name: "Ada", admin: true },
 				cookies: [],

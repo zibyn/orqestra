@@ -1,4 +1,5 @@
-import { db } from "@orqestra/db";
+import type { Db } from "@orqestra/db";
+import { live } from "@orqestra/db/live";
 import {
 	agent,
 	documentParser,
@@ -12,8 +13,9 @@ import {
 	skill,
 	skillVersion,
 } from "@orqestra/db/schema";
+import { decryptSecret, encryptionKey } from "@orqestra/db/secret";
 import { availableTools } from "@orqestra/tools";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { admin, limitsInput, servedBy, storedClient } from "./admin.ts";
 import {
 	loadConfig,
@@ -24,7 +26,6 @@ import {
 	type Settings,
 	toolName,
 } from "./index.ts";
-import { decryptSecret, encryptionKey } from "./secret.ts";
 
 /** NOTIFY channel, no payload: the instance config changed, reload it (web -> web and worker). */
 const CONFIG_CHANNEL = "config_changed";
@@ -62,7 +63,7 @@ export {
 } from "./connections.ts";
 
 /** Everything saved in /console, with API keys decrypted. */
-async function loadSettings(): Promise<Settings> {
+async function loadSettings(db: Db): Promise<Settings> {
 	const key = encryptionKey();
 	const [
 		providers,
@@ -81,7 +82,7 @@ async function loadSettings(): Promise<Settings> {
 		db.select().from(enabledModel),
 		db.select().from(modelPrice),
 		db.select().from(searchProvider),
-		servedBy(),
+		servedBy(db),
 		db.select().from(mcpServer).orderBy(mcpServer.createdAt),
 		db.select().from(agent).orderBy(agent.createdAt),
 		db
@@ -163,71 +164,17 @@ const logWarnings = (config: OrqestraConfig) => {
 };
 
 /**
- * Loads the config on the first `get()`, then reloads it on every CONFIG_CHANNEL notification.
- * `get()` rejects when the first load fails (also on a missing ORQESTRA_ENCRYPTION_KEY); a failed reload keeps the previous config.
- * A Run holds the config it started with, so a reload never changes a Run in progress.
- */
-export function liveConfig() {
-	let current: Promise<OrqestraConfig> | undefined;
-	let listener: Promise<{ release(destroy: boolean): void }> | undefined;
-	let latest = 0;
-	let newest: Promise<void> = Promise.resolve();
-	const load = () => loadSettings().then(loadConfig).then(logWarnings);
-	/** Resolves once the config is at least as fresh as this reload. */
-	const refresh = () => {
-		const next = load();
-		const seq = ++latest;
-		newest = next.then(
-			() => {
-				// an older reload finishing late must not replace a newer one
-				if (seq === latest) current = next;
-				else return newest;
-			},
-			(error) => console.error("config reload failed", error),
-		);
-		return newest;
-	};
-	const start = () => {
-		encryptionKey();
-		// LISTEN before the first load so no change slips in between
-		// shortcut: a dropped connection silently stops reloads; reconnect if that shows up in practice
-		const connected = db.$client.connect().then(async (client) => {
-			await client.query(`LISTEN ${CONFIG_CHANNEL}`);
-			client.on("notification", () => void refresh());
-			return client;
-		});
-		listener = connected;
-		return connected.then(load);
-	};
-	return {
-		get: () => (current ??= start()),
-		/** Tells every process to reload, and reloads this one before resolving. */
-		reload: async () => {
-			await db.execute(sql`select pg_notify(${CONFIG_CHANNEL}, '')`);
-			if (current) await refresh();
-		},
-		close: async () => (await listener)?.release(true),
-	};
-}
-
-/**
  * The instance config: `current()` for Runs and the Agent picker, and per entity what Admins edit in /console.
- * Every write reloads it here and in every other process once committed. Callers check that the User is an Admin.
+ * Loaded on the first `current()`, which rejects when that fails (also on a missing ORQESTRA_ENCRYPTION_KEY);
+ * every write reloads it here and in every other process once committed. Callers check that the User is an Admin.
+ * The api and the worker each create one at startup.
  */
-function createConfig() {
-	const live = liveConfig();
-	return {
-		current: live.get,
-		close: live.close,
-		...admin({
-			current: live.get,
-			write: async (fn) => {
-				const result = await db.transaction(fn);
-				await live.reload();
-				return result;
-			},
-		}),
-	};
+export function createConfig(db: Db) {
+	const config = live(db, {
+		channel: CONFIG_CHANNEL,
+		load: () => loadSettings(db).then(loadConfig).then(logWarnings),
+	});
+	return { ...config, ...admin(config) };
 }
 
-export const config = createConfig();
+export type Config = ReturnType<typeof createConfig>;

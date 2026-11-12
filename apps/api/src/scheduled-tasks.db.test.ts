@@ -5,6 +5,7 @@ import {
 	DEFAULT_LIMITS,
 	type OrqestraConfig,
 } from "@orqestra/config";
+import { createConfig } from "@orqestra/config/live";
 import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { memoryStore } from "@orqestra/tools/testing";
@@ -49,6 +50,7 @@ const admin: User = { id: "root", name: "Root", admin: true };
 
 function app(user: User | null) {
 	const api = createApp({
+		config: createConfig(db),
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(),
 		conversations,

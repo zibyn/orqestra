@@ -1,5 +1,10 @@
-import { config, connectionStore, skillFiles } from "@orqestra/config/live";
+import {
+	connectionStore,
+	createConfig,
+	skillFiles,
+} from "@orqestra/config/live";
 import { createConversations } from "@orqestra/conversations";
+import { db } from "@orqestra/db";
 import { s3Store } from "@orqestra/tools/s3";
 import { z } from "zod";
 import { createApp } from "./app.ts";
@@ -54,6 +59,7 @@ try {
 	process.exit(1);
 }
 
+const config = createConfig(db);
 // a misconfigured instance does not come up
 await config.current().catch((error) => {
 	console.error(error.message);
@@ -65,6 +71,7 @@ createApp({
 	session: rememberUsers(session),
 	auth,
 	orqestraUrl: env.data.ORQESTRA_URL,
+	config,
 	conversations: createConversations({
 		config: config.current,
 		skillFiles,

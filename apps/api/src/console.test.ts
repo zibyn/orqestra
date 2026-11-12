@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { Config } from "@orqestra/config/live";
 import type { Conversations } from "@orqestra/conversations";
 import { createApp, type User } from "./app.ts";
 
@@ -7,6 +8,7 @@ const member = { id: "m1", name: "Max", admin: false };
 
 const app = (user: User | null) => {
 	const api = createApp({
+		config: {} as Config,
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(null, { status: 404 }),
 		conversations: {} as Conversations,

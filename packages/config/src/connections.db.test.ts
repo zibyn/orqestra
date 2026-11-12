@@ -6,7 +6,7 @@ if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const { mcpServer } = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
-const { config, connectionStore } = await import("./live.ts");
+const { connectionStore } = await import("./live.ts");
 const { finishConnection, openToolbox, startConnection } = await import(
 	"@orqestra/tools"
 );
@@ -19,10 +19,7 @@ const never = new AbortController().signal;
 describe.skipIf(!url)("Connections in Postgres", () => {
 	const reset = () => db.execute(sql`truncate mcp_server cascade`);
 	beforeEach(reset);
-	afterAll(async () => {
-		await reset();
-		await config.close();
-	});
+	afterAll(reset);
 
 	it("refreshes once when two Runs meet an expired token together: the second uses the first's new token", async () => {
 		const as = fakeAuthorizationServer();
