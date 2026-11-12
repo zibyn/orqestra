@@ -1,6 +1,6 @@
 import { inflateRawSync } from "node:zlib";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import type { SaveError, SkillFile } from "./shared.ts";
+import type { SkillError, SkillFile } from "./shared.ts";
 
 // A Skill uploaded as a zip, checked against the Agent Skills standard (agentskills.io) and Orqestra's limits.
 
@@ -21,7 +21,7 @@ export const skillName = /^(?=.{1,64}$)[a-z0-9]+(-[a-z0-9]+)*$/;
 const S_IFMT = 0o170000;
 const S_IFLNK = 0o120000;
 
-type Fail = { error: SaveError };
+type Fail = { error: SkillError };
 
 /** Reads the zip's central directory; stored and deflated entries only, no zip64. */
 function unzip(bytes: Uint8Array): SkillFile[] | Fail {

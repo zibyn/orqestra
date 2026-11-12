@@ -296,6 +296,9 @@ importers:
       '@orqestra/mcp':
         specifier: workspace:*
         version: link:../mcp
+      '@orqestra/skills':
+        specifier: workspace:*
+        version: link:../skills
       '@orqestra/tools':
         specifier: workspace:*
         version: link:../tools
@@ -441,6 +444,31 @@ importers:
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.3
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/skills:
+    dependencies:
+      '@earendil-works/pi-coding-agent':
+        specifier: 1.4.0
+        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.89)(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7)
+      '@orqestra/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: ^22.10.2

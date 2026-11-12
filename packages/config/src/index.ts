@@ -9,13 +9,10 @@ import {
 	type ModelThinkingLevel,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import {
-	ModelRegistry,
-	ModelRuntime,
-	stripFrontmatter,
-} from "@earendil-works/pi-coding-agent";
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 // types only: importing @orqestra/mcp would open the database before a test points DATABASE_URL at its own
 import type { McpServer, McpServerSettings } from "@orqestra/mcp";
+import type { SkillInfo } from "@orqestra/skills";
 import type { SandboxProvider, ToolServices } from "@orqestra/tools";
 import type { z } from "zod";
 import {
@@ -29,6 +26,7 @@ import {
 	type ToolRef,
 } from "./shared.ts";
 
+export { type SkillInfo, skillInstructions } from "@orqestra/skills";
 export * from "./shared.ts";
 
 export type ThinkingLevel = ModelThinkingLevel;
@@ -100,14 +98,6 @@ export interface Settings {
 	};
 	/** Omitted when none were saved: DEFAULT_LIMITS. */
 	limits?: Limits;
-	/** Every Skill with its current version. */
-	skills: {
-		name: string;
-		enabled: boolean;
-		versionId: number;
-		description: string;
-		disableModelInvocation: boolean;
-	}[];
 }
 
 /** The Limits an Admin sets in /console/limits; durations in seconds. */
@@ -142,14 +132,6 @@ export const DEFAULT_LIMITS: Limits = {
 	resetTimeZone: "UTC",
 	backgroundCallMaxDuration: 24 * 60 * 60,
 };
-
-/** A Skill Runs can use; read its files with `skillFiles(versionId)`. */
-export interface SkillInfo {
-	/** The current version when the config was loaded. */
-	versionId: number;
-	description: string;
-	disableModelInvocation: boolean;
-}
 
 export interface OrqestraConfig {
 	/** pi's Catalog runtime; stream through `streamSimple` so the configured key is used. */
@@ -253,7 +235,9 @@ export async function catalogProviders() {
  * Resolves the stored Agent Definitions against the configured Providers, Models and Search Providers.
  * Throws a ConfigError naming each bad Agent and field; a Model that is not available only warns.
  */
-export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
+export async function loadConfig(
+	settings: Settings,
+): Promise<Omit<OrqestraConfig, "skills">> {
 	const registry = await catalogRegistry();
 	const enabled = new Set(settings.enabledModels);
 	const models = (await catalogProviders()).flatMap((p) => {
@@ -366,9 +350,6 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		if (enabled) mcpServers[id] = allMcpServers[id];
 	}
 
-	const skills: OrqestraConfig["skills"] = {};
-	for (const { name, enabled, ...skill } of settings.skills)
-		if (enabled) skills[name] = skill;
 	const stored = settings.sandboxProvider;
 	const sandboxProvider = stored?.token
 		? { ...stored, token: stored.token, snapshot: stored.snapshot ?? undefined }
@@ -382,7 +363,6 @@ export async function loadConfig(settings: Settings): Promise<OrqestraConfig> {
 		tools,
 		mcpServers,
 		allMcpServers,
-		skills,
 		sandboxProvider,
 		limits: settings.limits ?? DEFAULT_LIMITS,
 		streamSimple: (model, context, options) => {
@@ -518,7 +498,3 @@ export const turnSkills = (
 				return skill ? [{ name, ...skill }] : [];
 			})
 		: [];
-
-/** A SKILL.md's instructions, without its frontmatter. */
-export const skillInstructions = (skillMd: string) =>
-	stripFrontmatter(skillMd).trim();

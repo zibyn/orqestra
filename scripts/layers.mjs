@@ -10,6 +10,7 @@ const LAYERS = {
 	"@orqestra/db": 0,
 	"@orqestra/mcp": 1,
 	"@orqestra/memory": 1,
+	"@orqestra/skills": 1,
 	"@orqestra/tools": 1,
 	"@orqestra/config": 2, // shortcut: sits between tools and conversations until #122 deletes it
 	"@orqestra/conversations": 3,

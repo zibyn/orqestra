@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // the zip writer the Skill upload tests use, independent of the reader under test
-import { zip } from "../../config/src/test-zip.ts";
+import { zip } from "../../skills/src/test-zip.ts";
 import {
 	builtinTools,
 	type DocumentParser,
