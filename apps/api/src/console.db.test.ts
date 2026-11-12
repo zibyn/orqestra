@@ -45,6 +45,8 @@ describe.skipIf(!url)("the console through the api", () => {
 		await db.execute(
 			sql`truncate provider, enabled_model, search_provider, tool_service, mcp_server, sandbox_provider, document_parser, agent, skill, limits cascade`,
 		);
+		// the Tools' config reloads on its own channel, which a truncate does not notify
+		await config.sandboxProvider.delete();
 		await config.agents.save({
 			id: "general",
 			create: true,

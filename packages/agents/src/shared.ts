@@ -1,5 +1,5 @@
 // No Node imports: browser code can use this module (as @orqestra/agents/shared)
-import { toolNames } from "@orqestra/tools/refs";
+import { toolName } from "@orqestra/tools/refs";
 import { z } from "zod";
 
 /** Every thinking level pi knows; which ones a Model offers is narrowed by `resolveThinking`. */
@@ -20,7 +20,7 @@ export const agentId = z
 
 /** An Agent's Tool entry, as saved in its Definition: a built-in Tool, or `mcp:<id>` with an MCP Server's id (like an Agent's). */
 export const toolRef = z.union([
-	z.enum(toolNames),
+	toolName,
 	z.templateLiteral(["mcp:", agentId]),
 ]);
 

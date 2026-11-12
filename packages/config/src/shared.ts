@@ -2,11 +2,6 @@
 import type { Message } from "@earendil-works/pi-ai";
 import { agentId } from "@orqestra/agents/shared";
 import type { SkillError } from "@orqestra/skills/shared";
-import {
-	searchProviders,
-	searchToolNames,
-	toolNames,
-} from "@orqestra/tools/refs";
 import { z } from "zod";
 
 // shortcut: re-exported until callers import them from @orqestra/agents/shared (#132)
@@ -27,10 +22,13 @@ export {
 	mcpToolRef,
 	type SearchProviderId,
 	type SearchToolName,
+	searchProviderId,
 	searchProviders,
+	searchToolName,
 	searchToolNames,
 	type ToolName,
 	type ToolRef,
+	toolName,
 } from "@orqestra/tools/refs";
 
 /** A Spending Limit: none, or so many dollars a calendar month; $0 lets nothing be spent. */
@@ -65,10 +63,6 @@ export const messageText = (message: Message) =>
 	typeof message.content === "string"
 		? message.content
 		: message.content.map((c) => (c.type === "text" ? c.text : "")).join("");
-
-export const toolName = z.enum(toolNames);
-export const searchToolName = z.enum(searchToolNames);
-export const searchProviderId = z.enum(searchProviders.map((p) => p.id));
 
 /** An MCP Server's id, like an Agent's; never changes, since Agent Definitions and Tool names refer to it. */
 export const mcpServerId = agentId;

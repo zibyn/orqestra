@@ -1,4 +1,5 @@
-// No imports: browser code can use this module (as @orqestra/tools/refs, through @orqestra/config/shared)
+// No Node imports: browser code can use this module (as @orqestra/tools/refs, through @orqestra/config/shared)
+import { z } from "zod";
 
 /** The built-in Tools a Search Provider serves; which one serves each is picked in /console. */
 export const searchToolNames = ["search", "scrape"] as const;
@@ -28,3 +29,7 @@ export const MINERU_URL = "https://mineru.net";
 /** mineru.net's online service, whose API (v4) needs a key; any other address is a self-hosted MinerU. */
 export const isMineruNet = (url: string) =>
 	URL.parse(url)?.hostname === "mineru.net";
+
+export const toolName = z.enum(toolNames);
+export const searchToolName = z.enum(searchToolNames);
+export const searchProviderId = z.enum(searchProviders.map((p) => p.id));
