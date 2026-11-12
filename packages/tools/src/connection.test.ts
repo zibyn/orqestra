@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { testMcpServer } from "./index.ts";
-import { fakeMcpServer, type McpEra } from "./testing.ts";
+import { probeMcpServer, testMcpServer } from "./index.ts";
+import {
+	fakeAuthorizationServer,
+	fakeMcpServer,
+	type McpEra,
+} from "./testing.ts";
 
 const server = {
 	name: "Docs",
@@ -98,5 +102,54 @@ describe("MCP Server connection test", () => {
 			timeoutMs: 60,
 		});
 		expect(result).toMatchObject({ ok: false, reason: "timeout" });
+	});
+});
+
+describe("MCP Server probe", () => {
+	const as = fakeAuthorizationServer({ resource: server.url });
+	const probe = (fetch: typeof as.fetch, headers = {}, preRegistered = false) =>
+		probeMcpServer({ url: server.url, headers, preRegistered }, { fetch });
+
+	it("is shared when it lists its Tools", async () => {
+		const fake = fakeMcpServer({ tools });
+		expect(await probe(fake.fetch)).toMatchObject({
+			auth: "shared",
+			test: { ok: true },
+		});
+	});
+
+	it("is per-User OAuth when it refuses Orqestra and names its authorization server", async () => {
+		expect(await probe(as.fetch)).toEqual({
+			auth: "oauth",
+			test: { ok: true, authorizationServer: as.issuer },
+		});
+	});
+
+	it("is shared when it refuses the Authorization header it was given, or has no OAuth metadata", async () => {
+		expect(
+			await probe(as.fetch, { Authorization: "Bearer wrong" }),
+		).toMatchObject({ auth: "shared", test: { ok: false, reason: "auth" } });
+		const fake = fakeMcpServer({ tools });
+		fake.status = 401;
+		expect(await probe(fake.fetch)).toMatchObject({
+			auth: "shared",
+			test: { ok: false, reason: "auth" },
+		});
+	});
+
+	it("is per-User OAuth with a pre-registered Client, whatever it answers", async () => {
+		const fake = fakeMcpServer({ tools });
+		expect(await probe(fake.fetch, {}, true)).toMatchObject({
+			auth: "oauth",
+			test: { ok: false },
+		});
+	});
+
+	it("cannot tell when it does not answer", async () => {
+		const fake = fakeMcpServer({ tools });
+		fake.down = true;
+		expect(await probe(fake.fetch)).toEqual({
+			test: expect.objectContaining({ ok: false, reason: "unreachable" }),
+		});
 	});
 });

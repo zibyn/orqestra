@@ -47,7 +47,6 @@ import {
 	TableHeader,
 	TableRow,
 } from "#/components/ui/table";
-import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { api, ok } from "#/lib/api";
 import { errorText, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
@@ -223,10 +222,11 @@ function McpServerForm({
 	const [headers, setHeaders] = useState(
 		() => existing?.headers.map((h) => ({ name: h.name, value: "" })) ?? [],
 	);
-	const [auth, setAuth] = useState(existing?.auth ?? "shared");
 	const [clientId, setClientId] = useState(existing?.oauthClientId ?? "");
 	const [clientSecret, setClientSecret] = useState("");
-	const [clientOpen, setClientOpen] = useState(!!existing?.oauthClientId);
+	const [advancedOpen, setAdvancedOpen] = useState(
+		!!existing?.oauthClientId || !!existing?.headers.length,
+	);
 	const [busy, setBusy] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
 	const fieldId = (field: string) => `mcp-${existing?.id ?? "new"}-${field}`;
@@ -242,12 +242,12 @@ function McpServerForm({
 				name,
 				url,
 				enabled: existing?.enabled ?? true,
-				auth,
 				oauthClientId: clientId,
 				oauthClientSecret: clientSecret,
 				headers,
 			});
 			setErrors(saveErrorTexts(result.errors));
+			if (result.errors.id || result.errors.headers) setAdvancedOpen(true);
 			if (!Object.keys(result.errors).length) {
 				await router.invalidate();
 				onSaved(id, result.test);
@@ -280,26 +280,6 @@ function McpServerForm({
 						}}
 					/>
 				</Field>
-				<Field data-invalid={!!errors.id || undefined}>
-					<FieldLabel htmlFor={fieldId("id")}>{m.mcp_server_id()}</FieldLabel>
-					<Input
-						id={fieldId("id")}
-						required
-						disabled={!!existing}
-						className="font-mono"
-						aria-invalid={!!errors.id || undefined}
-						pattern="[a-z0-9][a-z0-9\-]*"
-						value={id}
-						onChange={(e) => {
-							setId(e.target.value);
-							setIdEdited(true);
-						}}
-					/>
-					{!existing && (
-						<FieldDescription>{m.mcp_server_id_hint()}</FieldDescription>
-					)}
-					<FieldError>{errors.id}</FieldError>
-				</Field>
 				<Field>
 					<FieldLabel htmlFor={fieldId("url")}>{m.mcp_server_url()}</FieldLabel>
 					<Input
@@ -310,159 +290,167 @@ function McpServerForm({
 						value={url}
 						onChange={(e) => setUrl(e.target.value)}
 					/>
+					<FieldDescription>{m.mcp_auth_detected_hint()}</FieldDescription>
 				</Field>
-				<FieldSet className="gap-3">
-					<FieldLegend variant="label">{m.mcp_auth()}</FieldLegend>
-					<ToggleGroup
-						variant="outline"
-						spacing={0}
-						className="w-full"
-						value={[auth]}
-						onValueChange={([k]) => k && setAuth(k as typeof auth)}
-					>
-						<ToggleGroupItem value="shared" className="flex-1">
-							{m.mcp_auth_shared()}
-						</ToggleGroupItem>
-						<ToggleGroupItem value="oauth" className="flex-1">
-							{m.mcp_auth_oauth()}
-						</ToggleGroupItem>
-					</ToggleGroup>
-					<FieldDescription>
-						{auth === "shared"
-							? m.mcp_auth_shared_hint()
-							: m.mcp_auth_oauth_hint()}
-					</FieldDescription>
-					{/* only an oauth server has Connections to lose */}
-					{existing?.auth === "oauth" && (
-						<Alert>
-							<AlertDescription>{m.mcp_auth_change_warning()}</AlertDescription>
-						</Alert>
-					)}
-					{auth === "oauth" && (
-						<Collapsible open={clientOpen} onOpenChange={setClientOpen}>
-							<CollapsibleTrigger className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-								<ChevronDownIcon
-									className={`size-4 transition-transform ${clientOpen ? "" : "-rotate-90"}`}
+				{/* only a per-User OAuth server has Connections to lose */}
+				{existing?.auth === "oauth" && (
+					<Alert>
+						<AlertDescription>{m.mcp_auth_change_warning()}</AlertDescription>
+					</Alert>
+				)}
+				{/* open while the name gives no id, which must then be typed */}
+				<Collapsible
+					open={advancedOpen || (!existing && !!name && !id)}
+					onOpenChange={setAdvancedOpen}
+				>
+					<CollapsibleTrigger className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+						<ChevronDownIcon
+							className={`size-4 transition-transform ${advancedOpen ? "" : "-rotate-90"}`}
+						/>
+						{m.mcp_advanced()}
+					</CollapsibleTrigger>
+					<CollapsibleContent className="flex flex-col gap-5 pt-4">
+						<Field data-invalid={!!errors.id || undefined}>
+							<FieldLabel htmlFor={fieldId("id")}>
+								{m.mcp_server_id()}
+							</FieldLabel>
+							<Input
+								id={fieldId("id")}
+								required
+								disabled={!!existing}
+								className="font-mono"
+								aria-invalid={!!errors.id || undefined}
+								pattern="[a-z0-9][a-z0-9\-]*"
+								value={id}
+								onChange={(e) => {
+									setId(e.target.value);
+									setIdEdited(true);
+								}}
+							/>
+							{!existing && (
+								<FieldDescription>{m.mcp_server_id_hint()}</FieldDescription>
+							)}
+							<FieldError>{errors.id}</FieldError>
+						</Field>
+						<FieldSet className="gap-3">
+							<FieldLegend variant="label">{m.mcp_oauth_client()}</FieldLegend>
+							<FieldDescription>{m.mcp_oauth_client_hint()}</FieldDescription>
+							<Field>
+								<FieldLabel htmlFor={fieldId("callback")}>
+									{m.mcp_oauth_callback()}
+								</FieldLabel>
+								<div className="flex gap-2">
+									<Input
+										id={fieldId("callback")}
+										readOnly
+										className="font-mono"
+										value={callbackUrl}
+									/>
+									<Button
+										type="button"
+										size="icon"
+										variant="outline"
+										aria-label={m.copy()}
+										onClick={() =>
+											navigator.clipboard.writeText(callbackUrl).catch(() => {})
+										}
+									>
+										<CopyIcon />
+									</Button>
+								</div>
+							</Field>
+							<Field>
+								<FieldLabel htmlFor={fieldId("client-id")}>
+									{m.mcp_oauth_client_id()}
+								</FieldLabel>
+								<Input
+									id={fieldId("client-id")}
+									className="font-mono"
+									value={clientId}
+									onChange={(e) => setClientId(e.target.value)}
 								/>
-								{m.mcp_oauth_client()}
-							</CollapsibleTrigger>
-							<CollapsibleContent className="flex flex-col gap-3 pt-3">
-								<FieldDescription>{m.mcp_oauth_client_hint()}</FieldDescription>
-								<Field>
-									<FieldLabel htmlFor={fieldId("callback")}>
-										{m.mcp_oauth_callback()}
-									</FieldLabel>
-									<div className="flex gap-2">
+							</Field>
+							<Field>
+								<FieldLabel htmlFor={fieldId("client-secret")}>
+									{m.mcp_oauth_client_secret()}
+								</FieldLabel>
+								<Input
+									id={fieldId("client-secret")}
+									type="password"
+									autoComplete="off"
+									placeholder={
+										existing?.oauthClientSecret?.readable
+											? m.mcp_oauth_client_secret_set()
+											: undefined
+									}
+									value={clientSecret}
+									onChange={(e) => setClientSecret(e.target.value)}
+								/>
+							</Field>
+						</FieldSet>
+						<FieldSet className="gap-3">
+							<FieldLegend variant="label">{m.mcp_headers()}</FieldLegend>
+							<FieldDescription>{m.mcp_headers_shared_hint()}</FieldDescription>
+							{existing && (
+								<FieldDescription>{m.mcp_headers_hint()}</FieldDescription>
+							)}
+							{headers.map((h, i) => {
+								const stored = existing?.headers.find((s) => s.name === h.name);
+								return (
+									// biome-ignore lint/suspicious/noArrayIndexKey: rows have no id until saved
+									<div key={i} className="flex items-center gap-2">
 										<Input
-											id={fieldId("callback")}
-											readOnly
-											className="font-mono"
-											value={callbackUrl}
+											aria-label={m.header_name()}
+											placeholder={m.header_name()}
+											className="w-40 font-mono"
+											required
+											value={h.name}
+											onChange={(e) => setHeader(i, { name: e.target.value })}
+										/>
+										<Input
+											aria-label={m.header_value()}
+											type="password"
+											autoComplete="off"
+											className="flex-1"
+											required={!stored?.readable}
+											placeholder={
+												stored?.readable
+													? m.header_value_set()
+													: m.header_value()
+											}
+											value={h.value}
+											onChange={(e) => setHeader(i, { value: e.target.value })}
 										/>
 										<Button
 											type="button"
-											size="icon"
-											variant="outline"
-											aria-label={m.copy()}
+											size="icon-sm"
+											variant="ghost"
+											aria-label={m.remove()}
 											onClick={() =>
-												navigator.clipboard
-													.writeText(callbackUrl)
-													.catch(() => {})
+												setHeaders(headers.filter((_, j) => j !== i))
 											}
 										>
-											<CopyIcon />
+											<XIcon />
 										</Button>
 									</div>
-								</Field>
-								<Field>
-									<FieldLabel htmlFor={fieldId("client-id")}>
-										{m.mcp_oauth_client_id()}
-									</FieldLabel>
-									<Input
-										id={fieldId("client-id")}
-										className="font-mono"
-										value={clientId}
-										onChange={(e) => setClientId(e.target.value)}
-									/>
-								</Field>
-								<Field>
-									<FieldLabel htmlFor={fieldId("client-secret")}>
-										{m.mcp_oauth_client_secret()}
-									</FieldLabel>
-									<Input
-										id={fieldId("client-secret")}
-										type="password"
-										autoComplete="off"
-										placeholder={
-											existing?.oauthClientSecret?.readable
-												? m.mcp_oauth_client_secret_set()
-												: undefined
-										}
-										value={clientSecret}
-										onChange={(e) => setClientSecret(e.target.value)}
-									/>
-								</Field>
-							</CollapsibleContent>
-						</Collapsible>
-					)}
-				</FieldSet>
-				<FieldSet className="gap-3">
-					<FieldLegend variant="label">{m.mcp_headers()}</FieldLegend>
-					{auth === "oauth" && (
-						<FieldDescription>{m.mcp_oauth_headers_hint()}</FieldDescription>
-					)}
-					{existing && (
-						<FieldDescription>{m.mcp_headers_hint()}</FieldDescription>
-					)}
-					{headers.map((h, i) => {
-						const stored = existing?.headers.find((s) => s.name === h.name);
-						return (
-							// biome-ignore lint/suspicious/noArrayIndexKey: rows have no id until saved
-							<div key={i} className="flex items-center gap-2">
-								<Input
-									aria-label={m.header_name()}
-									placeholder={m.header_name()}
-									className="w-40 font-mono"
-									required
-									value={h.name}
-									onChange={(e) => setHeader(i, { name: e.target.value })}
-								/>
-								<Input
-									aria-label={m.header_value()}
-									type="password"
-									autoComplete="off"
-									className="flex-1"
-									required={!stored?.readable}
-									placeholder={
-										stored?.readable ? m.header_value_set() : m.header_value()
-									}
-									value={h.value}
-									onChange={(e) => setHeader(i, { value: e.target.value })}
-								/>
-								<Button
-									type="button"
-									size="icon-sm"
-									variant="ghost"
-									aria-label={m.remove()}
-									onClick={() => setHeaders(headers.filter((_, j) => j !== i))}
-								>
-									<XIcon />
-								</Button>
-							</div>
-						);
-					})}
-					<Button
-						type="button"
-						size="sm"
-						variant="outline"
-						className="self-start"
-						onClick={() => setHeaders([...headers, { name: "", value: "" }])}
-					>
-						<PlusIcon data-icon="inline-start" />
-						{m.add_header()}
-					</Button>
-					<FieldError>{errors.headers}</FieldError>
-				</FieldSet>
+								);
+							})}
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								className="self-start"
+								onClick={() =>
+									setHeaders([...headers, { name: "", value: "" }])
+								}
+							>
+								<PlusIcon data-icon="inline-start" />
+								{m.add_header()}
+							</Button>
+							<FieldError>{errors.headers}</FieldError>
+						</FieldSet>
+					</CollapsibleContent>
+				</Collapsible>
 				<FieldError>{errors[""]}</FieldError>
 			</FieldGroup>
 		</SheetForm>

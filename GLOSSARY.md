@@ -85,7 +85,7 @@ A capability an Agent can call during a Run, such as Search, Scrape or those of 
 _Avoid_: Function, plugin, skill
 
 **MCP Server**:
-An external service, configured by an Admin, that serves Tools to Agents over the Model Context Protocol. An Agent Definition allows an MCP Server as a whole, and only by naming it; one the Admin has disabled or that cannot be reached is unavailable until it is back, while deleting one removes it from every Agent Definition. The Admin picks how it is signed in to: shared, with the Admin's credentials used for every User, or per User, where each User's calls go through their own Connection.
+An external service, configured by an Admin, that serves Tools to Agents over the Model Context Protocol. An Agent Definition allows an MCP Server as a whole, and only by naming it; one the Admin has disabled or that cannot be reached is unavailable until it is back, while deleting one removes it from every Agent Definition. How it is signed in to is found when the Admin saves it, as Claude does: per User, where each User's calls go through their own Connection, when it signs in with OAuth or the Admin gives a pre-registered Client; otherwise shared, with the request headers the Admin set (an API key, for example) used for every User, who all then see the same data.
 _Avoid_: Connector, integration, plugin
 
 **Connection**:

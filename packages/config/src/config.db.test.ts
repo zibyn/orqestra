@@ -26,7 +26,6 @@ const mcp = (id: string) => ({
 	name: id,
 	url: "http://127.0.0.1:9/mcp",
 	enabled: true,
-	auth: "shared" as "shared" | "oauth",
 	headers: [],
 });
 
@@ -246,7 +245,7 @@ describe.skipIf(!url)("@orqestra/config writes (Postgres)", () => {
 		it("stores a pre-registered Client Secret encrypted, keeps it when left blank, and lists only whether it is readable", async () => {
 			const oauth = {
 				...mcp("docs"),
-				auth: "oauth" as const,
+				// a pre-registered Client makes it per-User OAuth
 				oauthClientId: "orq",
 			};
 			await config.mcpServers.save({ ...oauth, oauthClientSecret: "s3cret" });

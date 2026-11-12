@@ -80,7 +80,6 @@ const oauth = {
 	name: "GitHub",
 	url: `${base}/mcp`,
 	enabled: true,
-	auth: "oauth",
 	headers: [],
 };
 
@@ -97,9 +96,10 @@ describe.skipIf(!url)("per-User OAuth MCP Servers through the api", () => {
 		server.stop();
 	});
 
-	it("refuses an Authorization header, however it is written", async () => {
+	it("refuses an Authorization header beside a pre-registered Client, however it is written", async () => {
 		const { body } = await call("POST", "/mcp-servers", {
 			...oauth,
+			oauthClientId: "orq-client",
 			headers: [
 				{ name: "X-Tenant", value: "t" },
 				{ name: "authorization", value: "Bearer shared" },
@@ -129,23 +129,39 @@ describe.skipIf(!url)("per-User OAuth MCP Servers through the api", () => {
 		]);
 	});
 
-	it("tests it by finding its authorization server, without listing Tools", async () => {
+	it("is per-User OAuth when it refuses Orqestra and names its authorization server, tested without listing Tools", async () => {
 		const { body } = await call("POST", "/mcp-servers", oauth);
 		expect(body).toEqual({
 			errors: {},
 			test: { ok: true, authorizationServer: `${base}/as` },
 		});
+		expect((await call("GET", "/mcp-servers")).body).toMatchObject([
+			{ auth: "oauth" },
+		]);
 	});
 
-	it("fails the test without Protected Resource Metadata, instead of taking the origin for the authorization server", async () => {
+	it("is shared when it refuses Orqestra without Protected Resource Metadata, never taking the origin for an authorization server", async () => {
 		fake.resourceMetadata = false;
 		const { body } = await call("POST", "/mcp-servers", oauth);
 		expect(body.errors).toEqual({});
-		expect(body.test).toMatchObject({
-			ok: false,
-			step: "resource_metadata",
-		});
+		expect(body.test).toMatchObject({ ok: false, reason: "auth" });
 		expect(fake.paths).not.toContain("/.well-known/oauth-authorization-server");
+		expect((await call("GET", "/mcp-servers")).body).toMatchObject([
+			{ auth: "shared" },
+		]);
+	});
+
+	it("keeps how it is signed in to when it does not answer", async () => {
+		await call("POST", "/mcp-servers", oauth);
+		const { body } = await call("POST", "/mcp-servers", {
+			...oauth,
+			create: false,
+			url: "http://127.0.0.1:9/mcp",
+		});
+		expect(body.test).toMatchObject({ ok: false, reason: "unreachable" });
+		expect((await call("GET", "/mcp-servers")).body).toMatchObject([
+			{ auth: "oauth" },
+		]);
 	});
 
 	it("fails the test when the authorization server does not say it supports PKCE S256", async () => {
@@ -159,10 +175,9 @@ describe.skipIf(!url)("per-User OAuth MCP Servers through the api", () => {
 		}
 	});
 
-	it("still tests a shared one by connecting with its headers", async () => {
+	it("is shared with an Authorization header, tested by connecting with it", async () => {
 		const { body } = await call("POST", "/mcp-servers", {
 			...oauth,
-			auth: "shared",
 			headers: [{ name: "Authorization", value: "Bearer shared" }],
 		});
 		expect(body.errors).toEqual({});

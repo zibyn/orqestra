@@ -69,8 +69,7 @@ const github = {
 	name: "GitHub",
 	url: "https://mcp.example.com/mcp",
 	enabled: true,
-	auth: "oauth" as "shared" | "oauth",
-	headers: [],
+	headers: [] as { name: string; value: string }[],
 };
 const save = async (
 	server: Partial<typeof github> & Record<string, unknown>,
@@ -300,7 +299,7 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 
 	it("connects only to an enabled per-User OAuth server, and not twice", async () => {
 		await save({});
-		await save({ id: "shared", auth: "shared", url: "https://s.example.com" });
+		await save({ id: "shared", url: "https://s.example.com" });
 		await save({ id: "off", enabled: false });
 		const code = async (id: string) => {
 			const { status, body } = await call("u1", "POST", `/connections/${id}`);
@@ -407,11 +406,14 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 		expect(as.revoked.map((r) => r.clientId)).toEqual([as.registered[0]]);
 	});
 
-	it("ends every Connection and pending authorization when the Admin changes the URL, auth mode or pre-registered Client, and revokes them", async () => {
+	it("ends every Connection and pending authorization when the Admin changes the URL, makes it shared with an Authorization header, or changes the pre-registered Client, and revokes them", async () => {
 		const client = { oauthClientId: "orq-app", oauthClientSecret: "s3cret" };
 		const changes = [
 			{ url: "https://mcp.example.com/mcp/v2" },
-			{ auth: "shared" as const },
+			{
+				oauthClientId: "",
+				headers: [{ name: "Authorization", value: "Bearer k" }],
+			},
 			{ oauthClientId: "orq-app-2" },
 			{ oauthClientSecret: "other" },
 		];
@@ -422,7 +424,7 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 			await connect("u2");
 			const pending = as.authorize((await start("u3")).href);
 			await save({ create: false, ...client, ...change });
-			if (change.auth) await save({ create: false, ...client });
+			if (change.headers) await save({ create: false, ...client });
 			expect((await listed("u1"))[0].status).toBe("none");
 			expect((await listed("u2"))[0].status).toBe("none");
 			expect(await revocations(2)).toHaveLength(2);
@@ -462,7 +464,7 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 
 	it("lists a per-User OAuth server's connected Users for the Admin: name, when, status, never a token", async () => {
 		await save({});
-		await save({ id: "shared", auth: "shared", url: "https://s.example.com" });
+		await save({ id: "shared", url: "https://s.example.com" });
 		await connect("u1");
 		await connect("u2");
 		await db.execute(

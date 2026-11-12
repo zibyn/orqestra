@@ -499,6 +499,37 @@ export async function testMcpServer(
 	}
 }
 
+/** How an MCP Server is signed in to, as found by testing it; omitted when it could not be told (it did not answer). */
+export type McpProbe = { auth?: "shared" | "oauth"; test: McpTestResult };
+
+/**
+ * Tests a server being saved and finds how it is signed in to, as Claude does: per-User OAuth when a pre-registered Client is
+ * given, or when it refuses the headers and publishes Protected Resource Metadata (RFC 9728); shared, with the headers, when it
+ * lists its Tools or has no such metadata. An Authorization header is a shared credential. Within `timeoutMs` in all; never throws.
+ */
+export async function probeMcpServer(
+	server: Pick<McpServer, "url" | "headers"> & { preRegistered: boolean },
+	{ fetch, timeoutMs = 15_000 }: { fetch?: Fetch; timeoutMs?: number } = {},
+): Promise<McpProbe> {
+	const deadline = Date.now() + timeoutMs;
+	const left = () => Math.max(1, deadline - Date.now());
+	const discover = () =>
+		testMcpServer({ ...server, auth: "oauth" }, { fetch, timeoutMs: left() });
+	if (server.preRegistered) return { auth: "oauth", test: await discover() };
+	const test = await testMcpServer(server, { fetch, timeoutMs });
+	if (test.ok) return { auth: "shared", test };
+	if (test.reason !== "auth") return { test };
+	const bearer = Object.keys(server.headers).some(
+		(h) => h.toLowerCase() === "authorization",
+	);
+	if (bearer) return { auth: "shared", test };
+	const oauth = await discover();
+	// past the first step it has metadata naming an authorization server: OAuth, set up wrong
+	return oauth.ok || oauth.step !== "resource_metadata"
+		? { auth: "oauth", test: oauth }
+		: { auth: "shared", test };
+}
+
 // Finds the authorization server the way connecting does, saying which step failed
 async function findAuthorizationServer(
 	server: Pick<McpServer, "url" | "headers">,

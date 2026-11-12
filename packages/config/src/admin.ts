@@ -19,9 +19,9 @@ import {
 	type DocumentParserTestResult,
 	type McpTestResult,
 	type OrqestraReach,
+	probeMcpServer,
 	type SandboxTestResult,
 	testDocumentParser,
-	testMcpServer,
 	testSandboxProvider,
 } from "@orqestra/tools";
 import { and, desc, eq, max, sql } from "drizzle-orm";
@@ -127,9 +127,7 @@ export const mcpServerInput = z.object({
 	name: z.string().trim().min(1),
 	url: httpUrl,
 	enabled: z.boolean(),
-	// shared: every User sends the headers; oauth: each User connects with their own account
-	auth: z.enum(["shared", "oauth"]).default("shared"),
-	// a Client pre-registered with the authorization server, for oauth; blank: none
+	// a Client pre-registered with the authorization server, making it per-User OAuth; blank: none
 	oauthClientId: z.string().trim().optional(),
 	// blank keeps the stored secret
 	oauthClientSecret: z.string().trim().optional(),
@@ -467,8 +465,9 @@ const mcpServers = ({ write }: Deps) => ({
 	},
 
 	/**
-	 * Once saved, also the connection test's result; `fetch` makes the test's requests and revocations. A new auth mode, URL or
-	 * pre-registered Client ends every Connection to it, revoked in the background once committed.
+	 * Tests it first, which finds how it is signed in to (see probeMcpServer); once saved, also the test's result. `fetch` makes the
+	 * test's requests and revocations. A new auth mode, URL or pre-registered Client ends every Connection to it, revoked in the
+	 * background once committed.
 	 */
 	async save(
 		input: z.infer<typeof mcpServerInput>,
@@ -491,8 +490,8 @@ const mcpServers = ({ write }: Deps) => ({
 				return { errors: { headers: { code: "header_invalid", header } } };
 			if (seen.has(header.toLowerCase()))
 				return { errors: { headers: { code: "header_twice", header } } };
-			// each User's Connection authorizes an oauth server
-			if (input.auth === "oauth" && header.toLowerCase() === "authorization")
+			// each User's Connection authorizes a server with a pre-registered Client
+			if (input.oauthClientId && header.toLowerCase() === "authorization")
 				return { errors: { headers: { code: "header_reserved", header } } };
 			seen.add(header.toLowerCase());
 			const kept = h.value
@@ -509,13 +508,18 @@ const mcpServers = ({ write }: Deps) => ({
 			});
 			plain[header] = value;
 		}
-		const oauthClientId =
-			(input.auth === "oauth" && input.oauthClientId) || null;
+		const oauthClientId = input.oauthClientId || null;
+		const { auth: found, test } = await probeMcpServer(
+			{ url: input.url, headers: plain, preRegistered: !!oauthClientId },
+			{ fetch },
+		);
+		// one that did not answer keeps how it was signed in to, and its Connections
+		const auth = found ?? stored?.auth ?? "shared";
 		const values = {
 			name: input.name,
 			url: input.url,
 			enabled: input.enabled,
-			auth: input.auth,
+			auth,
 			oauthClientId,
 			// a secret belongs to its Client: none without one
 			oauthClientSecret:
@@ -531,7 +535,7 @@ const mcpServers = ({ write }: Deps) => ({
 		// Connections made for another setup must never reach the new one
 		const reset =
 			stored &&
-			(stored.auth !== input.auth ||
+			(stored.auth !== auth ||
 				stored.url !== input.url ||
 				stored.oauthClientId !== oauthClientId ||
 				(!!oauthClientId &&
@@ -547,17 +551,7 @@ const mcpServers = ({ write }: Deps) => ({
 		// shortcut: in the background so the save does not wait on authorization servers; lost if the process exits first
 		if (cleared.length) void revokeConnections(cleared, { fetch });
 		// saved either way, so the Admin can fix the URL or headers later
-		return {
-			errors: {},
-			test: await testMcpServer(
-				{
-					url: input.url,
-					headers: plain,
-					auth: input.auth,
-				},
-				{ fetch },
-			),
-		};
+		return { errors: {}, test };
 	},
 
 	async setEnabled(id: string, enabled: boolean) {
