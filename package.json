@@ -14,7 +14,7 @@
     "db:studio": "pnpm --filter @orqestra/db db:studio",
     "format": "biome format",
     "lint": "biome lint",
-    "check": "biome check"
+    "check": "node scripts/layers.mjs && biome check"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.5",

@@ -1,8 +1,14 @@
 import { MAX_UPLOAD_BYTES } from "@orqestra/config";
 import { db } from "@orqestra/db";
 import { attachment } from "@orqestra/db/schema";
-import type { ObjectStore, Orrery } from "@orqestra/tools";
-import { and, eq, lt } from "drizzle-orm";
+import type {
+	ObjectStore,
+	orrery as orreryClient,
+	SandboxProvider,
+} from "@orqestra/tools";
+import { and, eq, inArray, lt } from "drizzle-orm";
+import { ConversationError } from "./errors.ts";
+import { ensureSandbox } from "./sandbox.ts";
 
 /** Where attachments go in the Sandbox, relative to /workspace. */
 const UPLOADS = "uploads";
@@ -141,20 +147,87 @@ export async function sweepUnsentAttachments(
 	);
 }
 
-/** Copies Attachments from object storage into the ready Sandbox at /workspace/uploads/<name>. */
-export async function copyAttachments(
-	store: ObjectStore,
-	client: Orrery,
-	sandbox: string,
-	attachments: { name: string; key: string }[],
-	{ signal }: { signal?: AbortSignal } = {},
+/**
+ * Sends the Conversation's Attachments `names` (as `upload` returned them) with a user message: marks them sent and,
+ * with a Sandbox Provider, copies them into its Sandbox at /workspace/uploads/<name>. Returns the text telling the Agent
+ * about them and the list the User sees, or undefined with none. Throws ConversationError for a name that is not one
+ * of its Attachments, and whatever the copy fails with, leaving those that were unsent unsent.
+ */
+export async function sendAttachments(
+	{ store, orrery }: { store: ObjectStore; orrery: typeof orreryClient },
+	conversationId: string | undefined,
+	names: string[],
+	{
+		sandboxProvider: provider,
+		parse,
+	}: { sandboxProvider?: SandboxProvider; parse: boolean },
 ) {
-	for (const { name, key } of attachments) {
-		const object = await store.get(key);
-		if (!object)
-			throw new Error(`The Attachment ${name} is missing from storage`);
-		await client.writeFile(sandbox, `${UPLOADS}/${name}`, object.body, {
-			signal,
-		});
+	names = [...new Set(names)];
+	if (!names.length) return undefined;
+	const notAttachment = new ConversationError(
+		"Not an attachment's name",
+		"attachments",
+		"not_attachment",
+	);
+	if (!conversationId) throw notAttachment;
+	// marked sent before they are copied, so the sweep cannot delete one on its way into the Sandbox
+	const rows = await db.transaction(async (tx) => {
+		const found = await tx
+			.select()
+			.from(attachment)
+			.where(
+				and(
+					eq(attachment.conversationId, conversationId),
+					inArray(attachment.name, names),
+				),
+			)
+			.for("update");
+		// a name never stored, swept, or unsafe (stored names are safe) is refused
+		if (found.length !== names.length) throw notAttachment;
+		await tx
+			.update(attachment)
+			.set({ sent: true })
+			.where(
+				inArray(
+					attachment.id,
+					found.map((r) => r.id),
+				),
+			);
+		return found;
+	});
+	const attachments = names.map((name) => ({ name, path: uploadPath(name) }));
+	if (!provider)
+		return {
+			text: `\n\nAttached files${
+				parse ? ", which the Parse tool reads by name" : ""
+			}:\n${names.map((name) => `- ${name}`).join("\n")}`,
+			attachments,
+		};
+	// orrery's 65-second request timeout is too short to copy 50 MB
+	const client = orrery({ ...provider, timeoutMs: 10 * 60_000 });
+	try {
+		const sandbox = await ensureSandbox(conversationId, client, provider);
+		for (const { name, key } of rows) {
+			const object = await store.get(key);
+			if (!object)
+				throw new Error(`The Attachment ${name} is missing from storage`);
+			await client.writeFile(sandbox.id, `${UPLOADS}/${name}`, object.body);
+		}
+	} catch (error) {
+		// not sent after all: those that were unsent are the sweep's again
+		await db
+			.update(attachment)
+			.set({ sent: false })
+			.where(
+				inArray(
+					attachment.id,
+					rows.filter((r) => !r.sent).map((r) => r.id),
+				),
+			);
+		throw error;
 	}
+	return {
+		text: `\n\nAttached files, in your Sandbox:\n${attachments.map((a) => `- ${a.path}`).join("\n")}`,
+		attachments,
+	};
 }
