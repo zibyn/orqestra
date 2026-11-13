@@ -56,16 +56,10 @@ const agent = (over: Partial<AgentDefinition> = {}) =>
 		name: "faux",
 		description: "test Agent",
 		instructions: "",
-		models: ["faux/faux-1"],
-		defaultModel: "faux/faux-1",
-		thinking: {},
 		default: true,
-		memory: false,
 		pickable: true,
-		allModels: false,
 		tools: [],
 		skills: [],
-		unavailableModels: [],
 		...over,
 	}) as AgentDefinition;
 const base = {

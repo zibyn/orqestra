@@ -136,7 +136,7 @@ export function checkSchedule(
 	}
 }
 
-/** Throws TaskError unless the User can pick the Agent, and the Model and thinking level are among those it offers. */
+/** Throws TaskError unless the User can pick the Agent, the Model is enabled and offers the thinking level. */
 function checkTurn(
 	cfg: Snapshots,
 	{
@@ -153,13 +153,13 @@ function checkTurn(
 			"agent_not_pickable",
 		);
 	const picked = cfg.models.find((m) => modelRef(m) === model);
-	if (!picked || !turn.agent.models.includes(model))
+	if (!picked)
 		throw new TaskError(
-			"This Agent does not offer this Model",
+			"This Model is not enabled",
 			"model",
 			"model_unavailable",
 		);
-	if (!resolveThinking(turn.agent.thinking, picked).allowed.includes(thinking))
+	if (!resolveThinking(picked).allowed.includes(thinking))
 		throw new TaskError(
 			"This Model does not offer this thinking level",
 			"thinking",
@@ -267,7 +267,7 @@ export async function fire(
 		const turn = resolveTurn(cfg, task.agentId);
 		const reason = !turn?.agent.pickable
 			? "agent_unavailable"
-			: !turn.agent.models.includes(task.model)
+			: !cfg.models.some((m) => modelRef(m) === task.model)
 				? "model_disabled"
 				: undefined;
 		if (reason) {

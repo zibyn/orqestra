@@ -186,6 +186,8 @@ describe.skipIf(!url)("Capabilities writes (Postgres)", () => {
 			spendingLimit: { mode: "unlimited" as const },
 			resetTimeZone: "UTC",
 			backgroundCallMaxDuration: 86400,
+			compactionReserveTokens: 16384,
+			compactionKeepRecentTokens: 20000,
 		};
 
 		it("are the defaults until an Admin saves them, and Runs read the saved ones at once", async () => {
@@ -195,6 +197,7 @@ describe.skipIf(!url)("Capabilities writes (Postgres)", () => {
 				...defaults,
 				unattendedMaxSteps: 5,
 				maxSubagentDepth: 3,
+				compactionReserveTokens: 1000,
 			};
 			expect(await config.limits.save(changed)).toEqual({ errors: {} });
 			expect(await config.limits.get()).toEqual(changed);

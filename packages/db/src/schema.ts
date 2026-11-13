@@ -15,6 +15,7 @@ import {
 	text,
 	timestamp,
 	unique,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 
@@ -474,6 +475,12 @@ export const limits = pgTable(
 		backgroundCallMaxDuration: integer("background_call_max_duration")
 			.default(86400)
 			.notNull(),
+		compactionReserveTokens: integer("compaction_reserve_tokens")
+			.default(16384)
+			.notNull(),
+		compactionKeepRecentTokens: integer("compaction_keep_recent_tokens")
+			.default(20000)
+			.notNull(),
 	},
 	(table) => [
 		check("limits_single_row", sql`${table.id} = 1`),
@@ -503,8 +510,15 @@ export const enabledModel = pgTable(
 			.notNull()
 			.references(() => provider.id, { onDelete: "cascade" }),
 		modelId: text("model_id").notNull(),
+		// the global default Model; none marked means the first enabled one
+		isDefault: boolean("is_default").default(false).notNull(),
 	},
-	(table) => [primaryKey({ columns: [table.providerId, table.modelId] })],
+	(table) => [
+		primaryKey({ columns: [table.providerId, table.modelId] }),
+		uniqueIndex("enabled_model_one_default")
+			.on(table.isDefault)
+			.where(sql`${table.isDefault}`),
+	],
 );
 
 // An Admin's price for a Model, replacing the Catalog's as a whole; not tied to enabled_model, so disabling the Model keeps it

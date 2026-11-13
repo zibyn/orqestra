@@ -22,16 +22,10 @@ const agent = (id: string, pickable = true) =>
 		name: id,
 		description: "test Agent",
 		instructions: "",
-		models: ["faux/faux-1"],
-		defaultModel: "faux/faux-1",
-		thinking: {},
 		default: id === "faux",
-		memory: false,
 		pickable,
-		allModels: false,
 		tools: [],
 		skills: [],
-		unavailableModels: [],
 	}) as AgentDefinition;
 const config = {
 	agents: [agent("faux"), agent("template", false)],

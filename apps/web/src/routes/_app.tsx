@@ -16,12 +16,13 @@ export const Route = createFileRoute("/_app")({
 		return { user: context.user };
 	},
 	loader: async () => {
-		const [conversations, tasks, agents] = await Promise.all([
+		const [conversations, tasks, agents, models] = await Promise.all([
 			ok(api().api.conversations.get()),
 			ok(api().api["scheduled-tasks"].get()),
 			ok(api().api["agent-options"].get()),
+			ok(api().api["model-options"].get()),
 		]);
-		return { conversations, tasks, agents };
+		return { conversations, tasks, agents, models };
 	},
 	component: AppLayout,
 });

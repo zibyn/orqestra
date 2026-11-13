@@ -1,5 +1,6 @@
 import type { ModelsLive } from "@orqestra/models";
 import {
+	defaultModelInput,
 	modelEnabledInput,
 	modelPriceInput,
 	providerInput,
@@ -44,4 +45,10 @@ export const providers = (
 			"/models/price",
 			async ({ body }) => saved(await models.providers.setModelPrice(body)),
 			{ body: modelPriceInput },
+		)
+		// Only for an enabled Model; it takes over from the one marked before
+		.put(
+			"/models/default",
+			async ({ body }) => saved(await models.providers.setDefaultModel(body)),
+			{ body: defaultModelInput },
 		);

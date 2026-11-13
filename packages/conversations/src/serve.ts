@@ -78,14 +78,6 @@ export class NoSuchTemplate extends Error {
 		super(`There is no template "${template}"`);
 	}
 }
-/** The template has no Model left to run on. */
-export class TemplateOffline extends Error {
-	override name = "TemplateOffline";
-	constructor(readonly template: string) {
-		super(`Template "${template}" has no available Model`);
-	}
-}
-
 /** The reason an Unattended Run's signal aborts with once it has run past the Limits' wall-clock time: a stop, but not the User's. */
 export class RunTimedOut extends Error {
 	override name = "RunTimedOut";
@@ -212,7 +204,7 @@ export type RunHandle = {
 	/** The Run's Subagents; none for a Subagent at the deepest level Subagents may nest to. */
 	subagents?: {
 		/**
-		 * Starts a Subagent per task, numbered in order; throws NoSuchTemplate, TemplateOffline or BudgetExceeded.
+		 * Starts a Subagent per task, numbered in order; throws NoSuchTemplate or BudgetExceeded.
 		 * `trace`: the trace context of the Tool call's span, which the Subagent's first Run goes under and its Notification links to.
 		 */
 		start(
@@ -690,16 +682,12 @@ function subagentsOf(
 			const picked = tasks.map((t) => {
 				const template = cfg.agents.find((a) => a.id === t.template);
 				if (t.template && !template) throw new NoSuchTemplate(t.template);
-				if (template && !template.allModels && !template.models.length)
-					throw new TemplateOffline(template.id);
-				// a template with its own Models runs on its default; otherwise the Subagent inherits the parent's
-				const own =
-					template && !template.allModels && resolveTurn(cfg, template.id);
+				// a Subagent runs on its parent's Model and thinking level
 				return {
 					brief: t.brief,
 					template,
-					model: own ? own.model : parent.model,
-					thinking: own ? own.thinking : parent.thinking,
+					model: parent.model,
+					thinking: parent.thinking,
 				};
 			});
 			const { first, children } = await db.transaction(async (tx) => {

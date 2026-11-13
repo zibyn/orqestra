@@ -13,6 +13,7 @@ import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 export {
 	createModels,
+	defaultModelInput,
 	type ModelsLive,
 	modelEnabledInput,
 	modelPriceInput,
@@ -32,6 +33,8 @@ export interface ModelSettings {
 	}[];
 	/** As `provider/id`. */
 	enabledModels: string[];
+	/** The enabled Model an Admin marked as the default, as `provider/id`. */
+	defaultModel?: string;
 	/** An Admin's prices, by `provider/id`, each replacing the Catalog's `cost` as a whole. */
 	modelPrices: Record<string, Model<Api>["cost"]>;
 }
@@ -49,12 +52,18 @@ export interface Models {
 	registry: ModelRegistry;
 	/** Enabled Models of configured Providers, with the Provider's baseUrl applied. */
 	models: Model<Api>[];
+	/** The one of `models` an Admin marked as the default; without one, the first of `models` is (`defaultModelOf`). */
+	defaultModel?: Model<Api>;
 	/** pi's streamSimple with the Provider's configured API key. */
 	streamSimple: StreamSimple;
 }
 
 export const modelRef = (m: { provider: string; id: string }) =>
 	`${m.provider}/${m.id}`;
+
+/** The default Model: the one an Admin marked, else the first enabled; undefined while none is enabled. */
+export const defaultModelOf = (m: Pick<Models, "models" | "defaultModel">) =>
+	m.defaultModel ?? m.models[0];
 
 /** An Admin's prices as stored, keyed as `ModelSettings.modelPrices`. */
 export const pricesByModel = (
@@ -137,6 +146,7 @@ export async function resolveModels(settings: ModelSettings): Promise<Models> {
 	return {
 		registry,
 		models,
+		defaultModel: models.find((m) => modelRef(m) === settings.defaultModel),
 		streamSimple: (model, context, options) => {
 			const provider = settings.providers.find((p) => p.id === model.provider);
 			if (provider && provider.apiKey === undefined)
@@ -174,25 +184,15 @@ export async function testConnection(
 	}
 }
 
-/**
- * The thinking levels an Agent offers on a Model, and the one selected by default:
- * the Agent's `thinking.default`, else `low`, else the lowest supported level above `off`.
- */
+/** The thinking levels a Model offers, and the one selected by default: `low`, else the lowest supported level above `off`. */
 export function resolveThinking(
-	thinking: { default?: ThinkingLevel; allowed?: ThinkingLevel[] },
 	model: Pick<Model<Api>, "reasoning" | "thinkingLevelMap">,
 ): { allowed: ThinkingLevel[]; default: ThinkingLevel } {
-	const supported = getSupportedThinkingLevels(model as Model<Api>);
-	const allowed = thinking.allowed
-		? supported.filter((l) => thinking.allowed?.includes(l))
-		: supported;
-	// the Agent's levels may not overlap this Model's; fall back to what the Model can do
-	const offered = allowed.length ? allowed : supported;
-	const preferred = [thinking.default, "low"].find(
-		(l): l is ThinkingLevel => !!l && offered.includes(l as ThinkingLevel),
-	);
+	const allowed = getSupportedThinkingLevels(model as Model<Api>);
 	return {
-		allowed: offered,
-		default: preferred ?? offered.find((l) => l !== "off") ?? offered[0],
+		allowed,
+		default: allowed.includes("low")
+			? "low"
+			: (allowed.find((l) => l !== "off") ?? allowed[0]),
 	};
 }

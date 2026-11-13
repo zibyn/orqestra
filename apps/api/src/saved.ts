@@ -27,11 +27,9 @@ export type SaveError =
 				| "header_value_missing"
 				| "header_reserved";
 			header: string;
-	  }
-	| { code: "default_model_not_allowed"; model: string }
-	| { code: "thinking_default_not_allowed"; level: string };
+	  };
 
-/** Field errors by name or path (`apiKey`, `thinking.default`, …; "" for the whole form); empty when it was saved. */
+/** Field errors by name or path (`apiKey`, …; "" for the whole form); empty when it was saved. */
 export type SaveErrors = Record<string, SaveError>;
 
 /** A save's result as it is: 200 when saved (its errors empty), 422 when not. */

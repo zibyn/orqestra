@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-router";
 import { BrainIcon } from "lucide-react";
 import { useState } from "react";
+import { pickModel } from "#/components/Composer";
 import {
 	ConsolePage,
 	DeleteButton,
@@ -49,9 +50,9 @@ type Memory = Data["memories"][number];
 /** The signed-in User's Memories: filter, view and edit, delete one or all, the memory master switch, and a Scheduled Task to tidy them. */
 function MemoryPage() {
 	const { memories, on, limits } = Route.useLoaderData();
-	const { agents } = appRoute.useLoaderData();
-	// only an Agent with memory on can tidy the Memories
-	const tidiers = agents.filter((a) => a.pickable && a.memory);
+	const { agents, models } = appRoute.useLoaderData();
+	const tidiers = agents.filter((a) => a.pickable);
+	const tidyModel = pickModel(models);
 	const tidy = useSheet<TaskDraft>();
 	const router = useRouter();
 	const sheet = useSheet<Memory>();
@@ -104,11 +105,8 @@ function MemoryPage() {
 										name: m.memory_consolidate_name(),
 										prompt: m.memory_consolidate_prompt(),
 										agentId: tidiers[0].id,
-										model: tidiers[0].defaultModel,
-										thinking:
-											tidiers[0].models.find(
-												(x) => x.ref === tidiers[0].defaultModel,
-											)?.thinking.default ?? "off",
+										model: tidyModel.ref,
+										thinking: tidyModel.thinking.default,
 										schedule: { kind: "cron", expr: "0 4 * * *" },
 										endsAt: null,
 										incognito: false,

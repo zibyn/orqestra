@@ -29,7 +29,7 @@ A role the user converses with, such as a general assistant or a translator, def
 _Avoid_: Bot, assistant, model, persona
 
 **Agent Definition**:
-The reusable description of an Agent, maintained by Admins: its name, description, instructions, allowed Models, thinking levels, Tools and Skills, whether it uses memory (off unless the Admin turns it on), and whether Users can pick it. Users start Conversations only with Agents they can pick; any definition can serve as the template for a Subagent.
+The reusable description of an Agent, maintained by Admins: who it is (its name, description and instructions), its Tools and Skills, and whether Users can pick it. It names no Model, thinking level or memory setting: the User picks the Model and thinking level for each message, and their own setting decides memory. Users start Conversations only with Agents they can pick; any definition can serve as the template for a Subagent.
 _Avoid_: Profile, persona, preset
 
 **Subagent**:
@@ -129,7 +129,7 @@ The external service that serves Parse, such as MinerU, whether its online servi
 _Avoid_: OCR Provider, OCR service, Provider
 
 **Model**:
-A specific LLM offered by a Provider; an Agent runs on a Model but is not one. Only Models an Admin has enabled are offered; disabling one removes it from every Agent that allowed it. A Model's price is the Catalog's unless an Admin overrides it to correct it.
+A specific LLM offered by a Provider; an Agent runs on a Model but is not one. Every Agent offers every Model an Admin has enabled, and the one the Admin marks as the default (else the first enabled) is used when the User picks none or picked one since disabled; it also titles Conversations. With no Model enabled, every Agent is offline. A Model's price is the Catalog's unless an Admin overrides it to correct it.
 _Avoid_: Agent, engine
 
 **Provider**:
@@ -171,7 +171,7 @@ _Avoid_: Background run, headless run, autonomous run
 ### Memory
 
 **Memory**:
-One note an Agent keeps about a User across Conversations, such as a preference, a fact about them or work in progress, written by the Agent during a Run and shaped like a file: a path, a short description and a Markdown body. Memories belong to the User, not to an Agent: every Agent whose Agent Definition turns memory on reads and writes the same ones, while a Subagent can only read them. A Memory never expires; the Agent updates or deletes it when it turns out stale or wrong. Only the User can see, edit and delete their Memories, and Orqestra offers an Admin no view of them; turning memory off leaves them unused until it is turned back on, and they outlive the Conversation that wrote them.
+One note an Agent keeps about a User across Conversations, such as a preference, a fact about them or work in progress, written by the Agent during a Run and shaped like a file: a path, a short description and a Markdown body. Memories belong to the User, not to an Agent: every Agent reads and writes the same ones, unless the User turned memory off or the Conversation is Incognito, while a Subagent can only read them. A Memory never expires; the Agent updates or deletes it when it turns out stale or wrong. Only the User can see, edit and delete their Memories, and Orqestra offers an Admin no view of them; turning memory off leaves them unused until it is turned back on, and they outlive the Conversation that wrote them.
 _Avoid_: Fact, profile, note, knowledge
 
 **Memory Index**:

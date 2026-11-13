@@ -52,30 +52,14 @@ const agent = (fields: Partial<AgentDefinition>): AgentDefinition => ({
 	name: "Faux",
 	description: "test Agent",
 	instructions: "You are a test.",
-	models: ["faux/faux-1"],
-	defaultModel: "faux/faux-1",
-	thinking: {},
 	default: false,
-	memory: false,
 	pickable: true,
-	allModels: false,
 	tools: ["search", "scrape"],
 	skills: [],
-	unavailableModels: [],
 	...fields,
 });
 const config = {
-	agents: [
-		agent({}),
-		// a tiny context window so a short history already needs compaction
-		agent({
-			id: "small",
-			instructions: "",
-			models: ["faux/faux-small"],
-			defaultModel: "faux/faux-small",
-			compaction: { reserveTokens: 1000, keepRecentTokens: 50 },
-		}),
-	],
+	agents: [agent({}), agent({ id: "small", instructions: "" })],
 	models: faux.models,
 	tools: {
 		search: {
@@ -87,9 +71,15 @@ const config = {
 	mcpServers: {},
 	allMcpServers: {},
 	skills: {},
-	limits: DEFAULT_LIMITS,
+	// small budgets, so a short history on faux-small's tiny context window already needs compaction
+	limits: {
+		...DEFAULT_LIMITS,
+		compactionReserveTokens: 1000,
+		compactionKeepRecentTokens: 50,
+	},
 };
-const turn = (agentId = "faux") => resolveTurn(config, agentId) as Turn;
+const turn = (agentId = "faux", model?: string) =>
+	resolveTurn(config, agentId, { model }) as Turn;
 
 // Search answers with `results`
 const deps = (results: unknown[] = []) => ({
@@ -222,7 +212,7 @@ describe("runAgent", () => {
 		]);
 		const m = memoryRun({
 			transcript: transcript(user("a".repeat(4000)), old, user("next?")),
-			turn: turn("small"),
+			turn: turn("small", "faux/faux-small"),
 		});
 		await runAgent(m.run, deps());
 
@@ -695,6 +685,8 @@ describe("runAgent with Skills", () => {
 			turn: resolveTurn(cfg, "skilled") as Turn,
 			skillFiles,
 			orrery: o.client,
+			// the prompt holds only the Agent's instructions and its Skills
+			memoryOff: true,
 		}),
 		deps: { config: cfg, openToolbox },
 	});
@@ -982,16 +974,8 @@ describe("runAgent with memory", () => {
 	const memoryConfig = {
 		...config,
 		agents: [
-			agent({ id: "remembers", tools: [], memory: true }),
-			agent({ id: "forgets", tools: [] }),
-			agent({
-				id: "small",
-				tools: [],
-				memory: true,
-				models: ["faux/faux-small"],
-				defaultModel: "faux/faux-small",
-				compaction: { reserveTokens: 1000, keepRecentTokens: 50 },
-			}),
+			agent({ id: "remembers", tools: [] }),
+			agent({ id: "small", tools: [] }),
 		],
 	};
 	const memDeps = { ...deps(), config: memoryConfig };
@@ -1004,7 +988,9 @@ describe("runAgent with memory", () => {
 	) =>
 		memoryRun({
 			transcript: transcript(user("hi")),
-			turn: resolveTurn(memoryConfig, agentId) as Turn,
+			turn: resolveTurn(memoryConfig, agentId, {
+				model: agentId === "small" ? "faux/faux-small" : undefined,
+			}) as Turn,
 			memories: seeded,
 			...options,
 		});
@@ -1026,13 +1012,6 @@ describe("runAgent with memory", () => {
 			},
 		]);
 
-	it("gives an Agent without memory no Memory Tools, Index or instructions", async () => {
-		answer();
-		await runAgent(run("forgets").run, memDeps);
-		expect(prompt(context)).toBe("You are a test.");
-		expect(tools(context)).not.toContain("memory_");
-	});
-
 	it("puts the Memory Index and the memory instructions in the system prompt, and offers the Memory Tools", async () => {
 		answer();
 		await runAgent(run("remembers").run, memDeps);
@@ -1044,7 +1023,7 @@ describe("runAgent with memory", () => {
 			expect(tools(context)).toContain(`"memory_${name}"`);
 	});
 
-	it("leaves memory out entirely while the User has it off, even for an Agent with memory", async () => {
+	it("leaves memory out entirely while the User has it off", async () => {
 		answer();
 		await runAgent(run("remembers", { memoryOff: true }).run, memDeps);
 		expect(prompt(context)).toBe("You are a test.");
@@ -1160,7 +1139,7 @@ describe("runAgent with memory", () => {
 		expect(prompt(context)).toContain("- prefs/language: Replies in English");
 	});
 
-	it("lets a Subagent of an Agent with memory read the Memories and Recall, but not write, and tells it to report what is worth remembering", async () => {
+	it("lets a Subagent read the Memories and Recall, but not write, and tells it to report what is worth remembering", async () => {
 		script([
 			(c) => {
 				context = c;
@@ -1184,7 +1163,7 @@ describe("runAgent with memory", () => {
 		expect(JSON.stringify(results(m)[0].content)).toContain("en");
 	});
 
-	it("gives the general worker no memory", async () => {
+	it("lets the general worker read the Memories too, as any Subagent", async () => {
 		answer();
 		await runAgent(
 			memoryRun({
@@ -1195,12 +1174,13 @@ describe("runAgent with memory", () => {
 			}).run,
 			memDeps,
 		);
-		expect(tools(context)).not.toContain("memory_");
-		expect(tools(context)).not.toContain('"recall"');
+		expect(tools(context)).toContain('"memory_read"');
+		expect(tools(context)).not.toContain('"memory_write"');
+		expect(tools(context)).toContain('"recall"');
 	});
 
 	for (const isSubagent of [false, true])
-		it(`gives an Incognito Conversation's ${isSubagent ? "Subagent" : "Agent"} no memory, though its Agent Definition has it`, async () => {
+		it(`gives an Incognito Conversation's ${isSubagent ? "Subagent" : "Agent"} no memory`, async () => {
 			answer();
 			await runAgent(
 				run("remembers", { incognito: true, isSubagent }).run,
@@ -1210,12 +1190,6 @@ describe("runAgent with memory", () => {
 			expect(tools(context)).not.toContain("memory_");
 			expect(tools(context)).not.toContain('"recall"');
 		});
-
-	it("gives an Agent without memory no Recall", async () => {
-		answer();
-		await runAgent(run("forgets").run, memDeps);
-		expect(tools(context)).not.toContain('"recall"');
-	});
 
 	it("searches the User's past Conversations by keyword and time with Recall, lists them by time, and opens one", async () => {
 		const searched: unknown[] = [];
@@ -1668,7 +1642,7 @@ describe("runAgent traces", () => {
 		const t = traced();
 		const m = memoryRun({
 			transcript: transcript(user("a".repeat(4000)), old, user("next?")),
-			turn: turn("small"),
+			turn: turn("small", "faux/faux-small"),
 			titled: true,
 		});
 		await runAgent(m.run, { ...deps(), telemetry: t.telemetry });
@@ -1716,7 +1690,7 @@ describe("runAgent traces", () => {
 	it("carries the messages, Memory, Tool arguments and results only when content capture is on", async () => {
 		const remembers = {
 			...config,
-			agents: [agent({ id: "remembers", tools: ["search"], memory: true })],
+			agents: [agent({ id: "remembers", tools: ["search"] })],
 		};
 		const said =
 			/hello there|Food taste|likes durian|secret words|hidden result|secret reply|You are a test/;

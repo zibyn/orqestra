@@ -80,6 +80,7 @@ describe.skipIf(!url)("the console through the api", () => {
 				enabledModels: [
 					{
 						id: models[0].id,
+						default: false,
 						cost: (await catalogProviders())[0].models[0].cost,
 						source: "catalog",
 					},
@@ -119,7 +120,7 @@ describe.skipIf(!url)("the console through the api", () => {
 			});
 			await enable(true);
 			expect(await enabledModels()).toEqual([
-				{ id: modelId, cost: catalogCost, source: "catalog" },
+				{ id: modelId, default: false, cost: catalogCost, source: "catalog" },
 			]);
 		});
 
@@ -127,11 +128,11 @@ describe.skipIf(!url)("the console through the api", () => {
 			await enable(true);
 			expect((await price(cost)).status).toBe(200);
 			expect(await enabledModels()).toEqual([
-				{ id: modelId, cost, source: "custom" },
+				{ id: modelId, default: false, cost, source: "custom" },
 			]);
 			expect((await price(null)).status).toBe(200);
 			expect(await enabledModels()).toEqual([
-				{ id: modelId, cost: catalogCost, source: "catalog" },
+				{ id: modelId, default: false, cost: catalogCost, source: "catalog" },
 			]);
 		});
 
@@ -147,7 +148,7 @@ describe.skipIf(!url)("the console through the api", () => {
 			expect(await enabledModels()).toEqual([]);
 			await enable(true);
 			expect(await enabledModels()).toEqual([
-				{ id: modelId, cost, source: "custom" },
+				{ id: modelId, default: false, cost, source: "custom" },
 			]);
 		});
 
@@ -162,7 +163,7 @@ describe.skipIf(!url)("the console through the api", () => {
 			});
 			await enable(true);
 			expect(await enabledModels()).toEqual([
-				{ id: modelId, cost: catalogCost, source: "catalog" },
+				{ id: modelId, default: false, cost: catalogCost, source: "catalog" },
 			]);
 		});
 	});

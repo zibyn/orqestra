@@ -12,7 +12,6 @@ import {
 	type RunHandle,
 	type StreamEvent,
 	TaskError,
-	TemplateOffline,
 	TimerLimitReached,
 	type TraceCarrier,
 } from "@orqestra/conversations";
@@ -204,11 +203,7 @@ export function refusal(error: unknown) {
 		return new Error(
 			`Since the user's last message at most ${error.max} subagents and background calls may be started, or subagents continued, and ${error.used} have been: do the rest of the work yourself.`,
 		);
-	if (
-		error instanceof NoSuchSubagent ||
-		error instanceof NoSuchTemplate ||
-		error instanceof TemplateOffline
-	)
+	if (error instanceof NoSuchSubagent || error instanceof NoSuchTemplate)
 		return new Error(error.message);
 	return error;
 }

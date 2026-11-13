@@ -43,6 +43,7 @@ export const modelEnabledInput = z.object({
 	modelId: z.string(),
 	enabled: z.boolean(),
 });
+export const defaultModelInput = modelEnabledInput.omit({ enabled: true });
 const price = z.number().nonnegative();
 export const modelPriceInput = z.object({
 	providerId: z.string(),
@@ -66,6 +67,7 @@ async function loadModelSettings(db: Db): Promise<ModelSettings> {
 		db.select().from(enabledModel),
 		db.select().from(modelPrice),
 	]);
+	const marked = enabled.find((m) => m.isDefault);
 	return {
 		providers: providers.map((p) => ({
 			id: p.id,
@@ -75,6 +77,8 @@ async function loadModelSettings(db: Db): Promise<ModelSettings> {
 		enabledModels: enabled.map((m) =>
 			modelRef({ provider: m.providerId, id: m.modelId }),
 		),
+		defaultModel:
+			marked && modelRef({ provider: marked.providerId, id: marked.modelId }),
 		modelPrices: pricesByModel(prices),
 	};
 }
@@ -121,6 +125,7 @@ export function createModels(db: Db) {
 						.filter((e) => e.providerId === r.id)
 						.map((e) => ({
 							id: e.modelId,
+							default: e.isDefault,
 							...priceInForce(
 								prices,
 								modelRef({ provider: r.id, id: e.modelId }),
@@ -204,6 +209,28 @@ export function createModels(db: Db) {
 								),
 							),
 			);
+		},
+
+		/** Marks an enabled Model as the default, in place of any other; Runs that start afterwards fall back to it. */
+		async setDefaultModel({
+			providerId,
+			modelId,
+		}: z.infer<typeof defaultModelInput>): Promise<{ errors: Errors }> {
+			const key = and(
+				eq(enabledModel.providerId, providerId),
+				eq(enabledModel.modelId, modelId),
+			);
+			const [enabled] = await db.select().from(enabledModel).where(key);
+			if (!enabled)
+				return { errors: { modelId: { code: "model_not_enabled" } } };
+			await write(async (tx) => {
+				await tx
+					.update(enabledModel)
+					.set({ isDefault: false })
+					.where(eq(enabledModel.isDefault, true));
+				await tx.update(enabledModel).set({ isDefault: true }).where(key);
+			});
+			return { errors: {} };
 		},
 
 		/** Sets an enabled Model's price, or clears it with a null `cost`; Runs that start afterwards are costed at it. */

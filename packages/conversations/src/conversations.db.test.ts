@@ -55,29 +55,23 @@ const faux = fauxProvider({
 const piModels = createModels();
 piModels.setProvider(faux.provider);
 const streamSimple = piModels.streamSimple.bind(piModels);
-const agent = (id: string, model: string): AgentDefinition => ({
+const agent = (id: string): AgentDefinition => ({
 	id,
 	name: id,
 	description: "test Agent",
 	instructions: id === "faux" ? "You are a test." : "",
-	models: [model],
-	defaultModel: model,
-	thinking: {},
 	default: false,
-	memory: false,
 	pickable: true,
-	allModels: false,
 	tools: ["search", "scrape"],
 	skills: [],
-	unavailableModels: [],
 });
-const fauxAgent = agent("faux", "faux/faux-1");
+const fauxAgent = agent("faux");
 const skilled = {
-	...agent("skilled", "faux/faux-1"),
+	...agent("skilled"),
 	skills: ["pdf", "manual", "gone"],
 };
 const config = {
-	agents: [fauxAgent, agent("small", "faux/faux-small"), skilled],
+	agents: [fauxAgent, agent("small"), skilled],
 	models: faux.models,
 	streamSimple,
 	defaultAgent: fauxAgent,
@@ -609,7 +603,7 @@ describe.skipIf(!url)(
 			expect(mine.map((e) => e.type)).toEqual(["start", "delta", "end"]);
 		});
 
-		it("runs a template's Subagent as its Agent, on the template's own Model", async () => {
+		it("runs a template's Subagent as its Agent, on its parent's Model", async () => {
 			let turn: RunHandle["turn"] | undefined;
 			script({
 				parent: [
@@ -636,7 +630,7 @@ describe.skipIf(!url)(
 			const view = await waitFor(() => get(id), idle(6));
 			expect(view?.subagents[0].template).toBe("small");
 			expect(turn?.agent.id).toBe("small");
-			expect(turn?.model.id).toBe("faux-small");
+			expect(turn?.model.id).toBe("faux-1");
 		});
 
 		it("refuses a template that does not exist", async () => {

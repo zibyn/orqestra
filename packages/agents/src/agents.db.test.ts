@@ -6,16 +6,14 @@ if (url) process.env.DATABASE_URL = url;
 const { drizzle } = await import("drizzle-orm/node-postgres");
 const { sql } = await import("drizzle-orm");
 const schema = await import("@orqestra/db/schema");
-const { createModels } = await import("@orqestra/models");
 const { createSkills } = await import("@orqestra/skills");
 const { zip } = await import("@orqestra/skills/test-zip");
 const { createAgents } = await import("./live.ts");
 const db = drizzle(url ?? "", { schema });
-const models = createModels(db);
 const skills = createSkills(db);
 // nothing configured: no Tool or Skill is available to a Run
 const available = async () => ({ tools: {}, mcpServers: {}, skills: {} });
-const agents = createAgents(db, { models, skills, available });
+const agents = createAgents(db, { skills, available });
 
 const general = {
 	name: "General",
@@ -46,7 +44,7 @@ describe.skipIf(!url)("@orqestra/agents writes (Postgres)", () => {
 	beforeEach(reset);
 	afterAll(async () => {
 		await reset();
-		await Promise.all([agents.close(), models.close(), skills.close()]);
+		await Promise.all([agents.close(), skills.close()]);
 		await db.$client.end();
 	});
 
@@ -133,17 +131,16 @@ describe.skipIf(!url)("@orqestra/agents writes (Postgres)", () => {
 					await agents.save({
 						id: "x",
 						create: true,
-						definition: { ...other, models: ["a/b"], defaultModel: "a/c" },
+						// an Agent Definition only says who the Agent is
+						definition: { ...other, models: ["a/b"] },
 					})
 				).errors,
-			).toEqual({
-				defaultModel: { code: "default_model_not_allowed", model: "a/c" },
-			});
+			).toEqual({ "": { code: "invalid", detail: expect.any(String) } });
 		});
 	});
 
 	it("tells every other process to reload after a write", async () => {
-		const elsewhere = createAgents(db, { models, skills, available });
+		const elsewhere = createAgents(db, { skills, available });
 		try {
 			expect((await elsewhere.current()).agents.map((a) => a.id)).toEqual([
 				"general",

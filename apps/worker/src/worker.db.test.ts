@@ -116,16 +116,10 @@ const fauxAgent: AgentDefinition = {
 	name: "Faux",
 	description: "test Agent",
 	instructions: "You are a test.",
-	models: ["faux/faux-1"],
-	defaultModel: "faux/faux-1",
-	thinking: {},
 	default: false,
-	memory: false,
 	pickable: true,
-	allModels: false,
 	tools: ["search", "scrape"],
 	skills: [],
-	unavailableModels: [],
 };
 // a template whose Subagents get a Sandbox: it may use a Skill
 const skilledAgent: AgentDefinition = {
@@ -138,10 +132,7 @@ const skilledAgent: AgentDefinition = {
 const smallAgent: AgentDefinition = {
 	...fauxAgent,
 	id: "small",
-	models: ["faux/faux-small"],
-	defaultModel: "faux/faux-small",
 	tools: [],
-	compaction: { reserveTokens: 1000, keepRecentTokens: 50 },
 };
 // an Agent that may use the MCP Server `slow`, whose `crunch` it puts in the background
 const mcpAgent: AgentDefinition = {
@@ -720,30 +711,49 @@ describe.skipIf(!url)(
 				fauxAssistantMessage("a summary"),
 				fauxAssistantMessage("ok again"),
 			]);
-			const id = await conversations.send(userId, {
-				agentId: "small",
-				text: "word ".repeat(1500),
-			});
-			await waitFor(
-				() => conversations.get(userId, id),
-				(v) => v?.status === "idle" && !!v.title,
-			);
-			// long enough to be kept, so the first Turn is what gets summarized
-			await conversations.send(userId, {
-				conversationId: id,
-				text: "more ".repeat(100),
-			});
-			const rows = await waitFor(
-				() => usageOf(id),
-				(r) => r.length === 4,
-			);
-			expect(rows.map((r) => r.purpose).sort()).toEqual([
-				"compaction",
-				"step",
-				"step",
-				"title",
-			]);
-			expect(rows.every((r) => r.modelId === "faux-small")).toBe(true);
+			// small budgets on faux-small's tiny context window, so the second Turn compacts
+			const loaded = await config.current();
+			const saved = loaded.limits;
+			loaded.limits = {
+				...saved,
+				compactionReserveTokens: 1000,
+				compactionKeepRecentTokens: 50,
+			};
+			try {
+				const id = await conversations.send(userId, {
+					agentId: "small",
+					model: "faux/faux-small",
+					text: "word ".repeat(1500),
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle" && !!v.title,
+				);
+				// long enough to be kept, so the first Turn is what gets summarized
+				await conversations.send(userId, {
+					conversationId: id,
+					model: "faux/faux-small",
+					text: "more ".repeat(100),
+				});
+				const rows = await waitFor(
+					() => usageOf(id),
+					(r) => r.length === 4,
+				);
+				expect(rows.map((r) => r.purpose).sort()).toEqual([
+					"compaction",
+					"step",
+					"step",
+					"title",
+				]);
+				// the title is the default Model's
+				expect(
+					rows
+						.filter((r) => r.purpose !== "title")
+						.every((r) => r.modelId === "faux-small"),
+				).toBe(true);
+			} finally {
+				loaded.limits = saved;
+			}
 		});
 
 		it("records a Subagent's requests for the top-level Conversation's User, under the Agent that sent them", async () => {

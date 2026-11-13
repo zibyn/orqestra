@@ -34,16 +34,10 @@ const agent = (id: string, skills: string[]): AgentDefinition => ({
 	name: id,
 	description: "test Agent",
 	instructions: "",
-	models: ["faux/faux-1"],
-	defaultModel: "faux/faux-1",
-	thinking: {},
 	default: false,
-	memory: false,
 	pickable: true,
-	allModels: false,
 	tools: [],
 	skills,
-	unavailableModels: [],
 });
 const skilled = agent("skilled", ["pdf"]);
 const config = {

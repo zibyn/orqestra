@@ -61,6 +61,14 @@ const fields: {
 		minutes: true,
 		max: 30 * 24 * 60,
 	},
+	{
+		key: "compactionReserveTokens",
+		label: m.limit_compaction_reserve_tokens,
+	},
+	{
+		key: "compactionKeepRecentTokens",
+		label: m.limit_compaction_keep_recent_tokens,
+	},
 ];
 
 /** The instance's Limits, read by the next Run. */

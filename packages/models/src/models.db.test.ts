@@ -75,6 +75,40 @@ describe.skipIf(!url)("@orqestra/models writes (Postgres)", () => {
 				}),
 			).rejects.toThrow(/not in the Catalog/);
 		});
+
+		it("marks one enabled Model as the default, in place of the one before", async () => {
+			await models.providers.save({
+				id: "deepseek",
+				apiKey: "sk",
+				baseUrl: "http://10.0.0.1",
+			});
+			for (const modelId of ["deepseek-flash", "deepseek-v4-pro"])
+				await models.providers.setModelEnabled({
+					providerId: "deepseek",
+					modelId,
+					enabled: true,
+				});
+			expect((await models.current()).defaultModel).toBeUndefined();
+			expect(
+				await models.providers.setDefaultModel({
+					providerId: "deepseek",
+					modelId: "gone",
+				}),
+			).toEqual({ errors: { modelId: { code: "model_not_enabled" } } });
+			for (const modelId of ["deepseek-flash", "deepseek-v4-pro"])
+				expect(
+					await models.providers.setDefaultModel({
+						providerId: "deepseek",
+						modelId,
+					}),
+				).toEqual({ errors: {} });
+			expect((await models.current()).defaultModel?.id).toBe("deepseek-v4-pro");
+			const [configured] = (await models.providers.list()).configured;
+			expect(configured.enabledModels.map((m) => [m.id, m.default])).toEqual([
+				["deepseek-flash", false],
+				["deepseek-v4-pro", true],
+			]);
+		});
 	});
 
 	it("tells every other process to reload after a write", async () => {

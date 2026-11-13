@@ -31,6 +31,7 @@ export const conversationRoutes = (
 			});
 		})
 		.get("/agent-options", () => conversations.agentOptions())
+		.get("/model-options", () => conversations.modelOptions())
 		.get("/conversations", ({ user }) => conversations.list(user.id))
 		/** An empty Conversation to upload attachments into before its first message. */
 		.post(

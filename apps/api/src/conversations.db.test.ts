@@ -24,16 +24,10 @@ const agent = (id: string, pickable = true): AgentDefinition => ({
 	name: id,
 	description: "test Agent",
 	instructions: "",
-	models: ["faux/faux-1"],
-	defaultModel: "faux/faux-1",
-	thinking: {},
 	default: id === "faux",
-	memory: false,
 	pickable,
-	allModels: false,
 	tools: [],
 	skills: [],
-	unavailableModels: [],
 });
 const config = {
 	agents: [agent("faux"), agent("template", false)],
@@ -121,6 +115,21 @@ describe.skipIf(!url)("Conversations through the api", () => {
 		const { status, body } = await app(ada)("GET", "/api/agent-options");
 		expect(status).toBe(200);
 		expect(body.map((a: { id: string }) => a.id)).toEqual(["faux", "template"]);
+	});
+
+	it("lists the enabled Models with their thinking levels, and the default one", async () => {
+		const { status, body } = await app(ada)("GET", "/api/model-options");
+		expect(status).toBe(200);
+		expect(body).toEqual({
+			models: [
+				{
+					ref: "faux/faux-1",
+					name: expect.any(String),
+					thinking: { allowed: ["off"], default: "off" },
+				},
+			],
+			defaultModel: "faux/faux-1",
+		});
 	});
 
 	it("starts an empty Conversation with an Agent", async () => {

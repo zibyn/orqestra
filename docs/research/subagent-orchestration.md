@@ -19,7 +19,7 @@
 - `reply` 给父 Agent 装上 Search/Scrape 和**一个** `subagentTool(...)`（`run.ts:97-111`）。`subagentTool` 每个 Run 只构造一次，所以 `limiter(MAX_SUBAGENTS)` 是**每个 Run 一份**（`tools.ts:153`）。
 - 分配方式：父 LLM 调用 `subagent` 工具，参数是 `tasks: [{ brief, template? }]`，`1..MAX_SUBAGENT_TASKS(8)` 个（`tools.ts:217-229`）。`template` 取自任意 Agent Definition（`config.agents`），工具描述里列出所有模板的 id/name/description（`tools.ts:154-156, 216`）。不传 template 时使用内置的 `GENERAL_WORKER` 提示词（`tools.ts:101-102`）。
 - 每个子任务都是**同进程**内新建的一个 `pi-agent-core` `Agent`：上下文为空，只有 brief 这一条 user 消息（`tools.ts:167-184`）。
-  - Model：模板自己声明了 Models（`!allModels`）就用模板的默认值，否则继承父 Agent 的 model 和 thinking（`tools.ts:163-171`）。
+  - Model：一律继承父 Agent 的 model 和 thinking（ADR 0012 之前，模板自己声明了 Models 时用模板的默认值）。
   - Tools：父 Agent 的 Tools 与模板 `tools` 的交集。子 Agent **拿不到 `subagent` 工具**，所以不能嵌套（`tools.ts:146, 172-178`；GLOSSARY「Subagent … cannot start Subagents of its own」）。
 - 校验：未知的 template id，或者模板没有可用 Model，会直接 `throw`，**整次调用的所有任务都失败**（`tools.ts:231-238`）。
 

@@ -180,6 +180,18 @@ function ModelToggles({
 	const router = useRouter();
 	const [busy, setBusy] = useState<string>();
 	const [error, setError] = useState("");
+	const act = async (id: string, request: () => Promise<unknown>) => {
+		setBusy(id);
+		try {
+			await request();
+			setError("");
+			await router.invalidate();
+		} catch (e) {
+			setError(errorText(e));
+		} finally {
+			setBusy(undefined);
+		}
+	};
 
 	return (
 		<FieldSet>
@@ -195,24 +207,17 @@ function ModelToggles({
 									id={id}
 									checked={!!enabled}
 									disabled={busy === id}
-									onCheckedChange={async (enabled) => {
-										setBusy(id);
-										try {
-											await ok(
+									onCheckedChange={(enabled) =>
+										act(id, () =>
+											ok(
 												api().api.providers.models.put({
 													providerId: provider.id,
 													modelId: model.id,
 													enabled,
 												}),
-											);
-											setError("");
-											await router.invalidate();
-										} catch (e) {
-											setError(errorText(e));
-										} finally {
-											setBusy(undefined);
-										}
-									}}
+											),
+										)
+									}
 								/>
 								<FieldLabel htmlFor={id} className="font-normal">
 									{model.name}
@@ -220,6 +225,28 @@ function ModelToggles({
 										{model.id}
 									</span>
 								</FieldLabel>
+								{enabled?.default && <Badge>{m.default_marker()}</Badge>}
+								{enabled && !enabled.default && (
+									<Button
+										type="button"
+										size="sm"
+										variant="ghost"
+										className="ml-auto"
+										disabled={busy === id}
+										onClick={() =>
+											act(id, () =>
+												ok(
+													api().api.providers.models.default.put({
+														providerId: provider.id,
+														modelId: model.id,
+													}),
+												),
+											)
+										}
+									>
+										{m.set_default_model()}
+									</Button>
+								)}
 							</Field>
 							{enabled?.cost && (
 								<ModelPrice

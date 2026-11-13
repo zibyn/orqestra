@@ -25,16 +25,10 @@ const agent = (id: string, over: Partial<AgentDefinition> = {}) =>
 		name: id,
 		description: "test Agent",
 		instructions: "",
-		models: ["faux/faux-1", "faux/faux-2"],
-		defaultModel: "faux/faux-1",
-		thinking: {},
 		default: id === "faux",
-		memory: false,
 		pickable: true,
-		allModels: false,
 		tools: [],
 		skills: [],
-		unavailableModels: [],
 		...over,
 	}) as AgentDefinition;
 const base = {
@@ -272,7 +266,7 @@ describe.skipIf(!url)(
 			const id = await tasks.create(ada, input());
 			config = {
 				...base,
-				agents: [agent("faux", { models: ["faux/faux-2"] })],
+				models: faux.models.filter((m) => m.id !== "faux-1"),
 			};
 			const paused = await waitFor(
 				() => task(id),

@@ -78,36 +78,23 @@ describe("resolveThinking", () => {
 	};
 
 	it("allows every level the Model supports and defaults to low", () => {
-		expect(resolveThinking({}, flash)).toEqual({
+		expect(resolveThinking(flash)).toEqual({
 			allowed: ["off", "low", "high", "max"],
 			default: "low",
 		});
 	});
 
 	it("defaults to the lowest supported level when low is unsupported", () => {
-		expect(resolveThinking({}, proOnly)).toEqual({
+		expect(resolveThinking(proOnly)).toEqual({
 			allowed: ["off", "high", "max"],
 			default: "high",
 		});
 	});
 
 	it("only offers off for a Model without reasoning", () => {
-		expect(resolveThinking({}, { reasoning: false })).toEqual({
+		expect(resolveThinking({ reasoning: false })).toEqual({
 			allowed: ["off"],
 			default: "off",
 		});
-	});
-
-	it("narrows to the Agent's allowed levels the Model supports", () => {
-		expect(
-			resolveThinking(
-				{ allowed: ["medium", "high", "max"], default: "max" },
-				flash,
-			),
-		).toEqual({ allowed: ["high", "max"], default: "max" });
-	});
-
-	it("ignores a configured default the Model cannot use", () => {
-		expect(resolveThinking({ default: "low" }, proOnly).default).toBe("high");
 	});
 });

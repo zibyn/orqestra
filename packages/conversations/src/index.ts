@@ -24,6 +24,7 @@ import {
 } from "@orqestra/mcp";
 import { type Undone, undoChange } from "@orqestra/memory";
 import {
+	defaultModelOf,
 	modelRef,
 	resolveThinking,
 	type ThinkingLevel,
@@ -104,7 +105,6 @@ export {
 	type RunHandler,
 	RunTimedOut,
 	type StreamEvent,
-	TemplateOffline,
 	type TraceCarrier,
 	type Transcript,
 	type TranscriptMessage,
@@ -247,37 +247,36 @@ export function createConversations({
 		/** The browsers that receive the User's Alerts, pushed as their Runs end. */
 		alerts,
 
-		/** The online Agents, with the Models and thinking levels each offers; new Conversations only use `pickable` ones. */
+		/** The Agents, with the Skills each offers; new Conversations only use `pickable` ones. None while no Model is enabled: they are offline. */
 		async agentOptions() {
 			const cfg = await config();
-			// an Agent without Models is offline
-			return cfg.agents
-				.filter((a) => a.models.length)
-				.map((a) => ({
-					id: a.id,
-					name: a.name,
-					description: a.description,
-					default: a.default,
-					pickable: a.pickable,
-					// whether it can tidy the User's Memories, as their Memory page's consolidation task needs
-					memory: a.memory,
-					defaultModel: a.defaultModel,
-					// the User may invoke those the Agent may not
-					skills: turnSkills(cfg, a).map(({ name, description }) => ({
-						name,
-						description,
-					})),
-					models: a.models.map((ref) => {
-						const model = cfg.models.find((m) => modelRef(m) === ref);
-						return {
-							ref,
-							name: model?.name ?? ref,
-							thinking: model
-								? resolveThinking(a.thinking, model)
-								: { allowed: [], default: "off" as ThinkingLevel },
-						};
-					}),
-				}));
+			if (!cfg.models.length) return [];
+			return cfg.agents.map((a) => ({
+				id: a.id,
+				name: a.name,
+				description: a.description,
+				default: a.default,
+				pickable: a.pickable,
+				// the User may invoke those the Agent may not
+				skills: turnSkills(cfg, a).map(({ name, description }) => ({
+					name,
+					description,
+				})),
+			}));
+		},
+
+		/** The enabled Models, with the thinking levels each offers, and the default one ("" while none is enabled). */
+		async modelOptions() {
+			const cfg = await config();
+			const preferred = defaultModelOf(cfg);
+			return {
+				models: cfg.models.map((model) => ({
+					ref: modelRef(model),
+					name: model.name,
+					thinking: resolveThinking(model),
+				})),
+				defaultModel: preferred ? modelRef(preferred) : "",
+			};
 		},
 
 		list: (userId: string) =>

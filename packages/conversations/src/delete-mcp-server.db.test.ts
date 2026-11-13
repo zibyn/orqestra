@@ -27,7 +27,6 @@ const lives = {
 	limits: createLimits(db),
 	// nothing else is available to a Run here
 	agents: createAgents(db, {
-		models,
 		skills,
 		available: async () => ({ tools: {}, mcpServers: {}, skills: {} }),
 	}),

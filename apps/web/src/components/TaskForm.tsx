@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useRouter } from "@tanstack/react-router";
+import { getRouteApi, Link, useRouter } from "@tanstack/react-router";
 import {
 	CheckCircle2Icon,
 	CircleHelpIcon,
@@ -10,7 +10,11 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { type AgentOption, levelLabels } from "#/components/Composer";
+import {
+	type AgentOption,
+	levelLabels,
+	pickModel,
+} from "#/components/Composer";
 import { Item, ItemList, SheetForm } from "#/components/ConsolePage";
 import { Picker } from "#/components/Picker";
 import { UnreadMark } from "#/components/UnreadMark";
@@ -84,6 +88,8 @@ const REASONS: Record<string, () => string> = {
 	spending_limit: m.firing_spending_limit,
 };
 
+const app = getRouteApi("/_app");
+
 /** Creates (from a draft, if given) or edits a task, its Firings listed below; the server checks it again. */
 export function TaskForm({
 	task,
@@ -103,11 +109,9 @@ export function TaskForm({
 	const [prompt, setPrompt] = useState(d?.prompt ?? "");
 	const [agentId, setAgentId] = useState(d?.agentId ?? agents[0]?.id ?? "");
 	const agent = agents.find((a) => a.id === agentId) ?? agents[0];
-	const [modelRef, setModel] = useState(d?.model ?? agent?.defaultModel);
-	const model =
-		agent?.models.find((x) => x.ref === modelRef) ??
-		agent?.models.find((x) => x.ref === agent.defaultModel) ??
-		agent?.models[0];
+	const { models: options } = app.useLoaderData();
+	const [modelRef, setModel] = useState(d?.model);
+	const model = pickModel(options, modelRef);
 	const [picked, setThinking] = useState(d?.thinking);
 	const thinking =
 		picked && model?.thinking.allowed.includes(picked)
@@ -256,7 +260,7 @@ export function TaskForm({
 							label={m.task_model()}
 							value={model.ref}
 							onChange={setModel}
-							items={agent.models.map((x) => ({
+							items={options.models.map((x) => ({
 								value: x.ref,
 								label: x.name,
 							}))}

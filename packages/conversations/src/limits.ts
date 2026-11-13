@@ -25,6 +25,10 @@ export interface Limits {
 	resetTimeZone: string;
 	/** How long a Background Call is tracked before it is cancelled and ends failed. */
 	backgroundCallMaxDuration: number;
+	/** Tokens kept free for the model's reply: a Run compacts once its context would leave fewer. */
+	compactionReserveTokens: number;
+	/** Tokens of the latest messages a compaction keeps as they are. */
+	compactionKeepRecentTokens: number;
 }
 
 /** The Limits until an Admin saves them. */
@@ -38,6 +42,9 @@ export const DEFAULT_LIMITS: Limits = {
 	spendingLimit: { mode: "unlimited" },
 	resetTimeZone: "UTC",
 	backgroundCallMaxDuration: 24 * 60 * 60,
+	// pi's DEFAULT_COMPACTION_SETTINGS
+	compactionReserveTokens: 16384,
+	compactionKeepRecentTokens: 20000,
 };
 
 const count = z.number().int().positive();
@@ -60,6 +67,8 @@ export const limitsInput = z.object({
 		.int()
 		.min(60)
 		.max(30 * 24 * 60 * 60),
+	compactionReserveTokens: count,
+	compactionKeepRecentTokens: count,
 });
 
 /**

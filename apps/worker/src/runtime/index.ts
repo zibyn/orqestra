@@ -291,13 +291,16 @@ async function reply(
 	const skills = turnSkills(config, turn.agent);
 	const sandbox = config.sandboxProvider ? sandboxTools(run, skills) : [];
 	// a Subagent only reads; none when the User turned memory off; the Index is a snapshot, so writes during the Run leave the prompt (and its cache) alone
-	const memory = turn.agent.memory ? run.memories : undefined;
+	const memory = run.memories;
 	try {
 		const memoryBlock = memory ? memoryPrompt(await memory.index(), sub) : "";
 		const { messages, compaction } = await prepareContext(
 			run.transcript,
 			turn.model,
-			turn.agent.compaction,
+			{
+				reserveTokens: config.limits.compactionReserveTokens,
+				keepRecentTokens: config.limits.compactionKeepRecentTokens,
+			},
 			{ streamFn: streamSimple("compaction"), signal },
 		);
 		if (compaction)

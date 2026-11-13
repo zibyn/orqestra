@@ -1,8 +1,4 @@
-import {
-	type AgentDefinitionInput,
-	slugify,
-	thinkingLevel,
-} from "@orqestra/agents/shared";
+import { type AgentDefinitionInput, slugify } from "@orqestra/agents/shared";
 import {
 	mcpServerOf,
 	mcpToolRef,
@@ -22,7 +18,6 @@ import {
 	SheetForm,
 	useSheet,
 } from "#/components/ConsolePage";
-import { Picker } from "#/components/Picker";
 import { Alert, AlertDescription } from "#/components/ui/alert";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -113,8 +108,6 @@ function AgentItem({
 	);
 
 	const issues = [
-		...agent.unavailableModels.map((model) => m.model_unavailable({ model })),
-		...(agent.models.length === 0 ? [m.agent_no_models()] : []),
 		...missingTools.map((tool) => {
 			const server = mcpServerOf(tool);
 			return server
@@ -166,19 +159,6 @@ function AgentItem({
 				</>
 			}
 		>
-			<div className="flex flex-wrap items-center gap-1.5 text-sm">
-				<span className="mr-1 text-muted-foreground">{m.agent_models()}</span>
-				{agent.models.map((model) => (
-					<Badge
-						key={model}
-						variant={model === agent.defaultModel ? "default" : "secondary"}
-						className="font-mono"
-					>
-						{model}
-						{model === agent.defaultModel && ` · ${m.default_marker()}`}
-					</Badge>
-				))}
-			</div>
 			{issues.length > 0 && (
 				<Alert variant="destructive">
 					<TriangleAlertIcon />
@@ -196,12 +176,6 @@ function AgentItem({
 	);
 }
 
-type AgentThinking = NonNullable<
-	NonNullable<AgentDefinitionInput["thinking"]>["default"]
->;
-
-const AUTO = "auto";
-
 const empty: AgentDefinitionInput = {
 	name: "",
 	description: "",
@@ -213,8 +187,7 @@ const empty: AgentDefinitionInput = {
 /** Creates an Agent, or edits `agent`; its id is fixed once created. */
 function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 	const router = useRouter();
-	const { enabledModels, mcpServers, skills, availableSkills } =
-		Route.useLoaderData();
+	const { mcpServers, skills, availableSkills } = Route.useLoaderData();
 	const [def, setDef] = useState<AgentDefinitionInput>(
 		agent?.definition ?? empty,
 	);
@@ -232,14 +205,7 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 			([key]) => key === field || key.startsWith(`${field}.`),
 		)?.[1];
 
-	// Models still named by the definition stay listed even when no longer enabled, so saving keeps them
-	const modelChoices = [
-		...enabledModels,
-		...(def.models ?? [])
-			.filter((ref) => !enabledModels.some((e) => e.ref === ref))
-			.map((ref) => ({ ref, name: ref })),
-	];
-	// likewise a Skill deleted meanwhile, so the Admin can see and drop it
+	// a Skill deleted meanwhile stays listed, so the Admin can see and drop it
 	const skillChoices = [
 		...skills,
 		...(def.skills ?? []).filter((name) => !skills.includes(name)),
@@ -360,79 +326,6 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 				</UiField>
 				<FieldSeparator />
 				<Toggles
-					label={m.agent_models()}
-					hint={m.agent_models_hint()}
-					error={fieldError("models")}
-					items={modelChoices.map((x) => ({
-						value: x.ref,
-						label: x.name,
-					}))}
-					checked={def.models ?? []}
-					onToggle={(ref, on) => {
-						const models = toggle(def.models, ref, on);
-						update({
-							models,
-							defaultModel:
-								models && def.defaultModel && !models.includes(def.defaultModel)
-									? undefined
-									: def.defaultModel,
-						});
-					}}
-					idPrefix={fieldId("model")}
-				/>
-				<Picker
-					label={m.agent_default_model()}
-					error={fieldError("defaultModel")}
-					value={def.defaultModel ?? AUTO}
-					onChange={(v) => update({ defaultModel: v === AUTO ? undefined : v })}
-					items={[
-						{ value: AUTO, label: m.automatic() },
-						...modelChoices
-							.filter((x) => !def.models || def.models.includes(x.ref))
-							.map((x) => ({ value: x.ref, label: x.name })),
-					]}
-				/>
-				<Toggles
-					label={m.agent_thinking_allowed()}
-					hint={m.agent_thinking_allowed_hint()}
-					error={fieldError("thinking.allowed")}
-					items={thinkingLevel.options.map((l) => ({
-						value: l,
-						label: l,
-					}))}
-					checked={def.thinking?.allowed ?? []}
-					onToggle={(level, on) =>
-						update({
-							thinking: {
-								...def.thinking,
-								allowed: toggle(def.thinking?.allowed, level, on),
-							},
-						})
-					}
-					idPrefix={fieldId("thinking")}
-				/>
-				<Picker
-					label={m.agent_thinking_default()}
-					error={fieldError("thinking.default")}
-					value={def.thinking?.default ?? AUTO}
-					onChange={(v) =>
-						update({
-							thinking: {
-								...def.thinking,
-								default: v === AUTO ? undefined : (v as AgentThinking),
-							},
-						})
-					}
-					items={[
-						{ value: AUTO, label: m.automatic() },
-						...(def.thinking?.allowed ?? thinkingLevel.options).map((l) => ({
-							value: l,
-							label: l,
-						})),
-					]}
-				/>
-				<FieldSeparator />
-				<Toggles
 					label={m.agent_tools()}
 					error={fieldError("tools")}
 					items={[
@@ -475,14 +368,6 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 					idPrefix={fieldId("skill")}
 				/>
 				<FieldSeparator />
-				<SwitchField
-					id={fieldId("memory")}
-					label={m.agent_memory()}
-					hint={m.agent_memory_hint()}
-					error={fieldError("memory")}
-					checked={def.memory ?? false}
-					onChange={(memory) => update({ memory })}
-				/>
 				<SwitchField
 					id={fieldId("pickable")}
 					label={m.agent_pickable()}

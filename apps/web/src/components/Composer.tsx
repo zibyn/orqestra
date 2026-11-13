@@ -1,6 +1,7 @@
 import { MAX_UPLOAD_BYTES } from "@orqestra/conversations/shared";
 import { invokedSkill } from "@orqestra/skills/shared";
 import { useQuery } from "@tanstack/react-query";
+import { getRouteApi } from "@tanstack/react-router";
 import { FileIcon, PlusIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import {
@@ -30,7 +31,18 @@ import { getLocale } from "#/paraglide/runtime";
 export type AgentOption = NonNullable<
 	Awaited<ReturnType<Api["api"]["agent-options"]["get"]>>["data"]
 >[number];
-type Level = AgentOption["models"][number]["thinking"]["default"];
+type ModelOptions = NonNullable<
+	Awaited<ReturnType<Api["api"]["model-options"]["get"]>>["data"]
+>;
+type Level = ModelOptions["models"][number]["thinking"]["default"];
+
+const app = getRouteApi("/_app");
+
+/** The picked Model, else the default one, else the first: every Agent offers every enabled Model. */
+export const pickModel = (options: ModelOptions, ref?: string) =>
+	options.models.find((x) => x.ref === ref) ??
+	options.models.find((x) => x.ref === options.defaultModel) ??
+	options.models[0];
 export type Choice = { model?: string; thinking?: Level };
 
 export const levelLabels: Record<Level, () => string> = {
@@ -59,7 +71,7 @@ export function Composer({
 	agents: AgentOption[];
 	agentId: string;
 	onAgentChange?: (id: string) => void;
-	/** Last message's pick; one the Agent no longer allows falls back to its default. */
+	/** Last message's pick; a Model no longer enabled falls back to the default one. */
 	initial?: Choice;
 	running: boolean;
 	onSend: (
@@ -82,10 +94,8 @@ export function Composer({
 		? spending.data.status
 		: undefined;
 	const agent = agents.find((a) => a.id === agentId) ?? agents[0];
-	const model =
-		agent.models.find((x) => x.ref === picked.model) ??
-		agent.models.find((x) => x.ref === agent.defaultModel) ??
-		agent.models[0];
+	const { models: options } = app.useLoaderData();
+	const model = pickModel(options, picked.model);
 	const thinking =
 		picked.thinking && model.thinking.allowed.includes(picked.thinking)
 			? picked.thinking
@@ -256,12 +266,12 @@ export function Composer({
 					)}
 					{/* the message's own picks sit by Send */}
 					<div className="ml-auto flex items-center gap-1">
-						{agent.models.length > 1 && (
+						{options.models.length > 1 && (
 							<PromptInputMenu
 								label={m.agent_models()}
 								value={model.ref}
 								onChange={(ref) => setPicked({ ...picked, model: ref })}
-								items={agent.models.map((x) => ({
+								items={options.models.map((x) => ({
 									value: x.ref,
 									label: x.name,
 								}))}

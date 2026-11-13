@@ -18,7 +18,6 @@ export function createCapabilities(db: Db) {
 	const skills = createSkills(db);
 	const limits = createLimits(db);
 	const agents = createAgents(db, {
-		models,
 		skills,
 		// what a Run can use now, for the Agent form
 		available: async () => {

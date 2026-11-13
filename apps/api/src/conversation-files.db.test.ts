@@ -19,16 +19,10 @@ const agent = {
 	name: "a",
 	description: "test Agent",
 	instructions: "",
-	models: ["faux/faux-1"],
-	defaultModel: "faux/faux-1",
-	thinking: {},
 	default: false,
-	memory: false,
 	pickable: true,
-	allModels: false,
 	tools: [],
 	skills: [],
-	unavailableModels: [],
 } as AgentDefinition;
 const config = {
 	agents: [agent],
