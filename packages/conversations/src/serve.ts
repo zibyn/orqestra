@@ -36,7 +36,6 @@ import {
 	requeueBackgroundCalls,
 	startBackgroundCall,
 } from "./background-calls.ts";
-import type { OrqestraConfig } from "./capabilities.ts";
 import { metered, providerLimiter } from "./metered.ts";
 import { type Recall, recallOf } from "./recall.ts";
 import {
@@ -59,6 +58,7 @@ import {
 	subagentOf,
 } from "./runs.ts";
 import { ensureSandbox } from "./sandbox.ts";
+import type { Snapshots } from "./snapshots.ts";
 import { SpendingLimitReached, spendingLimitStatus } from "./spending.ts";
 import { fire } from "./tasks.ts";
 import { cancelTimer, ring, setTimer, TIMERS_QUEUE } from "./timers.ts";
@@ -232,7 +232,7 @@ export type RunHandle = {
 };
 
 /** The config a Run's Turn was resolved from, without its Models' unmetered streaming: the Run reaches them through `run.streamSimple`. */
-export type RunConfig = Omit<OrqestraConfig, "streamSimple" | "registry">;
+export type RunConfig = Omit<Snapshots, "streamSimple" | "registry">;
 
 /** Replies to one Run; gets the config the Run's Turn was resolved from. */
 export type RunHandler = (run: RunHandle, config: RunConfig) => Promise<void>;
@@ -251,7 +251,7 @@ export type ServeOptions = {
 /** What Runs are served with, given once to `createConversations`. */
 export type RunDeps = {
 	/** Read as each Run starts: a Run keeps the config it started with. */
-	config: () => Promise<OrqestraConfig>;
+	config: () => Promise<Snapshots>;
 	store: ObjectStore;
 	/** The Sandbox Provider's client. */
 	orrery: (provider: SandboxProvider) => Orrery;
@@ -271,7 +271,7 @@ async function stopped(
 	conv: { id: string; parentId: string | null },
 	result: string,
 	signal: AbortSignal,
-	config: () => Promise<OrqestraConfig>,
+	config: () => Promise<Snapshots>,
 	mcp?: McpAccess,
 ) {
 	await stopSubagents(conv.id, cancelStopped(config, mcp));
@@ -292,7 +292,7 @@ async function stopped(
 async function failed(
 	conversationId: string,
 	error: Error,
-	config: () => Promise<OrqestraConfig>,
+	config: () => Promise<Snapshots>,
 	mcp?: McpAccess,
 ) {
 	const conv = await db.query.conversation.findFirst({
@@ -413,7 +413,7 @@ async function open(
 		mcp,
 		limit,
 	}: RunDeps & { limit: (streamSimple: StreamSimple) => StreamSimple },
-	cfg: OrqestraConfig,
+	cfg: Snapshots,
 	conv: typeof conversation.$inferSelect,
 	root: {
 		incognito: boolean;
@@ -671,7 +671,7 @@ async function open(
  * it hands back its result as a Notification that wakes the parent.
  */
 function subagentsOf(
-	cfg: OrqestraConfig,
+	cfg: Snapshots,
 	conv: typeof conversation.$inferSelect,
 	parent: Turn,
 	saved: () => Promise<unknown>,

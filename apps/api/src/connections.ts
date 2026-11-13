@@ -1,10 +1,11 @@
-import type { Capabilities } from "@orqestra/conversations";
+import type { Agents } from "@orqestra/agents/live";
 import {
 	clientMetadataDocument,
 	connectionStatus,
 	connectionStore,
 	deleteConnection,
 	finishConnection,
+	type McpServersLive,
 	mcpServerId,
 	type OrqestraReach,
 	startConnection,
@@ -22,7 +23,8 @@ const refused = (code: string) => ({ errors: { serverId: { code } } });
  */
 export const connectionRoutes = (
 	signedIn: SignedIn,
-	config: Capabilities,
+	mcpServers: Pick<McpServersLive, "current">,
+	agents: Pick<Agents, "userConnections">,
 	{ orqestraUrl, fetch }: OrqestraReach & { orqestraUrl: string },
 ) =>
 	new Elysia({ prefix: "/connections" })
@@ -37,7 +39,8 @@ export const connectionRoutes = (
 							store: connectionStore,
 							orqestraUrl,
 							fetch,
-							server: (id) => config.current().then((c) => c.allMcpServers[id]),
+							server: (id) =>
+								mcpServers.current().then((c) => c.allMcpServers[id]),
 						},
 						new URL(request.url).searchParams,
 					)
@@ -48,12 +51,12 @@ export const connectionRoutes = (
 			return redirect(`/connections?${to}`, 302);
 		})
 		.derive(signedInOnly)
-		.get("/", ({ user }) => config.agents.userConnections(user.id))
+		.get("/", ({ user }) => agents.userConnections(user.id))
 		// the authorization URL, for the User to open in a popup
 		.post(
 			"/:serverId",
 			async ({ user, params: { serverId }, status }) => {
-				const current = await config.current();
+				const current = await mcpServers.current();
 				const server = current.allMcpServers[serverId];
 				if (server?.auth !== "oauth") return status(404, refused("not_found"));
 				if (!current.mcpServers[serverId])

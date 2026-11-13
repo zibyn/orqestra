@@ -1,15 +1,15 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { turnSkills } from "@orqestra/agents";
+import { limitsInput } from "@orqestra/conversations";
+import { db } from "@orqestra/db";
+import { decryptSecret } from "@orqestra/db/secret";
+import { zip } from "@orqestra/skills/test-zip";
+import { availableTools } from "@orqestra/tools";
+import { sql } from "drizzle-orm";
+import { createCapabilities } from "./capabilities.ts";
 
-// Writes through the interface against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
+// Writes through the interface against a migrated, throwaway Postgres: TEST_DATABASE_URL (see test-env.ts) is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
-if (url) process.env.DATABASE_URL = url;
-const { db } = await import("@orqestra/db");
-const { sql } = await import("drizzle-orm");
-const { createCapabilities, limitsInput } = await import("./index.ts");
-const { turnSkills } = await import("@orqestra/agents");
-const { availableTools } = await import("@orqestra/tools");
-const { zip } = await import("@orqestra/skills/test-zip");
-const { decryptSecret } = await import("@orqestra/db/secret");
 const config = createCapabilities(db);
 
 const general = {

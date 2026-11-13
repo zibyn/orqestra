@@ -1,7 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import {
 	type Conversations,
-	createCapabilities,
 	createConversations,
 } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
@@ -11,6 +10,7 @@ import { catalogProviders } from "@orqestra/models";
 import { memoryStore } from "@orqestra/tools/testing";
 import { eq, sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
+import { createCapabilities } from "./capabilities.ts";
 
 const config = createCapabilities(db);
 

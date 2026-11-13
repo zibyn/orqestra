@@ -21,7 +21,7 @@ import {
 	type SerializedTaskReference,
 	type TaskEnabledSession,
 } from "@modelcontextprotocol/ext-tasks/client";
-import { cut } from "./cut.ts";
+import { cut } from "@orqestra/db/cut";
 import type { Fetch, McpServer } from "./index.ts";
 import { discoverAuthorization, type OAuthDiscoveryStep } from "./oauth.ts";
 

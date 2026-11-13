@@ -1,11 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import {
-	type Conversations,
-	createCapabilities,
-} from "@orqestra/conversations";
+import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
+import { createCapabilities } from "./capabilities.ts";
 
 // Per-User OAuth MCP Servers through the api, against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;

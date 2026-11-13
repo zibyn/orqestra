@@ -14,7 +14,6 @@ import {
 import { CronExpressionParser } from "cron-parser";
 import { and, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { alertRun, sendAlert, taskUrl } from "./alerts.ts";
-import type { OrqestraConfig } from "./capabilities.ts";
 import type { Limits } from "./limits.ts";
 import {
 	countFiring,
@@ -25,6 +24,7 @@ import {
 	runQueue,
 	unschedule,
 } from "./runs.ts";
+import type { Snapshots } from "./snapshots.ts";
 import { spendingLimitStatus } from "./spending.ts";
 
 /** A Scheduled Task as the User saves it. */
@@ -138,7 +138,7 @@ export function checkSchedule(
 
 /** Throws TaskError unless the User can pick the Agent, and the Model and thinking level are among those it offers. */
 function checkTurn(
-	cfg: OrqestraConfig,
+	cfg: Snapshots,
 	{
 		agentId,
 		model,
@@ -215,7 +215,7 @@ function nextOf(task: Task, now = new Date()) {
  * A one-time task, or one whose next Firing is past its end, is finished; one no longer active, or a job its last edit replaced, does nothing.
  */
 export async function fire(
-	config: () => Promise<OrqestraConfig>,
+	config: () => Promise<Snapshots>,
 	taskId: string,
 	jobId: string,
 ) {
@@ -322,7 +322,7 @@ export async function fire(
 }
 
 /** The User's Scheduled Tasks: only their own, Admins included. */
-export function tasksOf(config: () => Promise<OrqestraConfig>) {
+export function tasksOf(config: () => Promise<Snapshots>) {
 	const owned = (userId: string, id: string) =>
 		db.query.scheduledTask.findFirst({
 			where: and(eq(scheduledTask.id, id), eq(scheduledTask.userId, userId)),

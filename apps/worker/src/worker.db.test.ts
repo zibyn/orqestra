@@ -54,12 +54,9 @@ const { asc, eq, sql } = await import("drizzle-orm");
 const { limits, pushSubscription, usage, user } = await import(
 	"@orqestra/db/schema"
 );
-const {
-	createCapabilities,
-	createConversations,
-	DEFAULT_LIMITS,
-	MAX_SUBAGENTS_PER_USER_MESSAGE,
-} = await import("@orqestra/conversations");
+const { createConversations, DEFAULT_LIMITS, MAX_SUBAGENTS_PER_USER_MESSAGE } =
+	await import("@orqestra/conversations");
+const { createCapabilities } = await import("./capabilities.ts");
 const config = createCapabilities(db);
 const { startAgentWorker } = await import("./worker.ts");
 const { otelTelemetry } = await import("./tracing.ts");

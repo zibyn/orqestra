@@ -1,13 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import {
-	type Conversations,
-	createCapabilities,
-} from "@orqestra/conversations";
+import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { usage, user } from "@orqestra/db/schema";
 import { catalogProviders } from "@orqestra/models";
 import { sql } from "drizzle-orm";
 import { createApp, type User } from "./app.ts";
+import { createCapabilities } from "./capabilities.ts";
 
 const config = createCapabilities(db);
 

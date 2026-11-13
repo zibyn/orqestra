@@ -19,7 +19,7 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { ConversationEvent, OrqestraConfig, RunHandle } from "./index.ts";
+import type { ConversationEvent, RunHandle, Snapshots } from "./index.ts";
 import { messageText } from "./shared.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
@@ -92,7 +92,7 @@ const config = {
 	},
 	sandboxProvider: provider,
 	limits: { ...DEFAULT_LIMITS },
-} as unknown as OrqestraConfig;
+} as unknown as Snapshots;
 /** Each Skill version's SKILL.md, as the test has it now. */
 const skillMds = new Map<number, string>();
 /** The Sandbox Provider's client the served Runs' Sandboxes are in; the contract's Sandbox scenario swaps it. */

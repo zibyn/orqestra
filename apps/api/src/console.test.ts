@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import type { Capabilities, Conversations } from "@orqestra/conversations";
+import type { Conversations } from "@orqestra/conversations";
 import { createApp, type User } from "./app.ts";
+import type { Capabilities } from "./capabilities.ts";
 
 const admin = { id: "a1", name: "Ada", admin: true };
 const member = { id: "m1", name: "Max", admin: false };

@@ -1,6 +1,6 @@
 import { memoryStore } from "@orqestra/tools/testing";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import type { OrqestraConfig } from "./index.ts";
+import type { Snapshots } from "./index.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -30,7 +30,7 @@ describe.skipIf(!url)(
 			capabilities: {
 				...noMcpServerDeletes,
 				current: async () =>
-					({ agents: [], models: [] }) as unknown as OrqestraConfig,
+					({ agents: [], models: [] }) as unknown as Snapshots,
 				skillFiles: async () => [],
 			},
 		});

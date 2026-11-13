@@ -4,7 +4,7 @@ import type {
 	Message,
 	Model,
 } from "@earendil-works/pi-ai";
-import type { OrqestraConfig } from "@orqestra/conversations";
+import type { RunHandle } from "@orqestra/conversations";
 import { messageText } from "@orqestra/conversations/shared";
 
 /** A title for a Conversation from its first question and answer; none unless the model finished it. */
@@ -12,7 +12,8 @@ export async function generateTitle(
 	question: Message,
 	answer: AssistantMessage,
 	model: Model<Api>,
-	streamSimple: OrqestraConfig["streamSimple"],
+	/** The Run's, metered: `run.streamSimple("title")`. */
+	streamSimple: ReturnType<RunHandle["streamSimple"]>,
 ) {
 	// no reasoning option: thinking stays off
 	const stream = await streamSimple(model, {

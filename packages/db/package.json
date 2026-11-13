@@ -6,7 +6,8 @@
     ".": "./src/index.ts",
     "./schema": "./src/schema.ts",
     "./live": "./src/live.ts",
-    "./secret": "./src/secret.ts"
+    "./secret": "./src/secret.ts",
+    "./cut": "./src/cut.ts"
   },
   "scripts": {
     "test": "vitest run",

@@ -1,17 +1,14 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { fauxProvider } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/agents";
-import {
-	createCapabilities,
-	createConversations,
-	type OrqestraConfig,
-} from "@orqestra/conversations";
+import { createConversations, type Snapshots } from "@orqestra/conversations";
 import { noMcpServerDeletes } from "@orqestra/conversations/testing";
 import { db } from "@orqestra/db";
 import * as schema from "@orqestra/db/schema";
 import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
+import { createCapabilities } from "./capabilities.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL (see test-env.ts), wiped before every test
 const skip = !process.env.TEST_DATABASE_URL;
@@ -39,7 +36,7 @@ const config = {
 	defaultAgent: agent,
 	skills: {},
 	sandboxProvider: { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 },
-} as unknown as OrqestraConfig;
+} as unknown as Snapshots;
 
 let o = memoryOrrery();
 const conversations = createConversations({

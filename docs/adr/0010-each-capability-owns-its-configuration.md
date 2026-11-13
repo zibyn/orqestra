@@ -21,6 +21,8 @@ L4  api · worker    assembly
     web             only each package's /shared entry and @orqestra/api
 ```
 
+The api and the worker each create every capability's live configuration at startup (their `capabilities.ts`) and give conversations what it uses as constructor dependencies; the api's console routes take the capability they edit. Conversations only puts the snapshots side by side for a Run (`snapshots`), and keeps the Limits' own.
+
 `pnpm check` runs `scripts/layers.mjs`, which reads each workspace package's dependencies and web's imports and fails on an upward, same-layer or cyclic dependency, on a package missing from its table, and on web importing anything but `@orqestra/api` or a `/shared` entry. The table lives in the script, not in another document, and is tightened as each package is created.
 
 ## Research

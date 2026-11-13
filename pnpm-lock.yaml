@@ -286,6 +286,9 @@ importers:
       '@orqestra/memory':
         specifier: workspace:*
         version: link:../../packages/memory
+      '@orqestra/models':
+        specifier: workspace:*
+        version: link:../../packages/models
       '@orqestra/skills':
         specifier: workspace:*
         version: link:../../packages/skills

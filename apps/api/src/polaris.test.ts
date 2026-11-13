@@ -1,8 +1,9 @@
 // Polaris' SDK is written for Node: this runs it on Bun against a fake issuer, from sign-in through a refresh.
 import { afterAll, describe, expect, it } from "bun:test";
-import type { Capabilities, Conversations } from "@orqestra/conversations";
+import type { Conversations } from "@orqestra/conversations";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { createApp } from "./app.ts";
+import type { Capabilities } from "./capabilities.ts";
 import { ADMIN_ENTITLEMENT } from "./identity.ts";
 import { polaris } from "./polaris.ts";
 

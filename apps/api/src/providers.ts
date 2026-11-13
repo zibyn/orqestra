@@ -1,4 +1,4 @@
-import type { Capabilities } from "@orqestra/conversations";
+import type { ModelsLive } from "@orqestra/models";
 import {
 	modelEnabledInput,
 	modelPriceInput,
@@ -11,39 +11,37 @@ import type { SignedIn } from "./app.ts";
 import { saved } from "./saved.ts";
 
 // Providers and enabled Models, edited by Admins in /console/providers. API keys only go in, never back out.
-export const providers = (signedIn: SignedIn, config: Capabilities) =>
+export const providers = (
+	signedIn: SignedIn,
+	models: Pick<ModelsLive, "providers">,
+) =>
 	new Elysia({ prefix: "/providers" })
 		.use(signedIn)
 		.derive(adminOnly)
-		.get("/", () => config.models.providers.list())
-		.post(
-			"/",
-			async ({ body }) => saved(await config.models.providers.save(body)),
-			{
-				body: providerInput,
-			},
-		)
+		.get("/", () => models.providers.list())
+		.post("/", async ({ body }) => saved(await models.providers.save(body)), {
+			body: providerInput,
+		})
 		// Tries the form's unsaved values on one Model
 		.post(
 			"/test",
-			async ({ body }) => ({ error: await config.models.providers.test(body) }),
+			async ({ body }) => ({ error: await models.providers.test(body) }),
 			{ body: providerTestInput },
 		)
 		// Also deletes its key and enabled Models; Runs already using it finish
 		.delete("/:id", async ({ params }) => {
-			await config.models.providers.delete(params.id);
+			await models.providers.delete(params.id);
 		})
 		.put(
 			"/models",
 			async ({ body }) => {
-				await config.models.providers.setModelEnabled(body);
+				await models.providers.setModelEnabled(body);
 			},
 			{ body: modelEnabledInput },
 		)
 		// Only for an enabled Model; a null cost goes back to the Catalog's price
 		.put(
 			"/models/price",
-			async ({ body }) =>
-				saved(await config.models.providers.setModelPrice(body)),
+			async ({ body }) => saved(await models.providers.setModelPrice(body)),
 			{ body: modelPriceInput },
 		);

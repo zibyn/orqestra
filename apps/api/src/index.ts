@@ -1,12 +1,10 @@
-import {
-	createCapabilities,
-	createConversations,
-} from "@orqestra/conversations";
+import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { connectionStore } from "@orqestra/mcp";
 import { s3Store } from "@orqestra/tools/s3";
 import { z } from "zod";
 import { createApp } from "./app.ts";
+import { createCapabilities } from "./capabilities.ts";
 import { polaris } from "./polaris.ts";
 import { rememberUsers } from "./users.ts";
 

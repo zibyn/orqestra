@@ -1,8 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import {
-	createCapabilities,
-	createConversations,
-} from "@orqestra/conversations";
+import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { user as userRecord } from "@orqestra/db/schema";
 import { connectionStore } from "@orqestra/mcp";
@@ -10,6 +7,7 @@ import { fakeAuthorizationServer } from "@orqestra/mcp/testing";
 import { memoryStore } from "@orqestra/tools/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
+import { createCapabilities } from "./capabilities.ts";
 
 const config = createCapabilities(db);
 

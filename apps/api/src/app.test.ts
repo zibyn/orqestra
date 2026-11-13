@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import type { Capabilities, Conversations } from "@orqestra/conversations";
+import type { Conversations } from "@orqestra/conversations";
 import { createApp, type Session } from "./app.ts";
+import type { Capabilities } from "./capabilities.ts";
 
 const ada = { id: "s1", name: "Ada", admin: true };
 

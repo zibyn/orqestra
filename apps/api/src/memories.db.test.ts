@@ -1,11 +1,9 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import {
-	type Conversations,
-	createCapabilities,
-} from "@orqestra/conversations";
+import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { memory } from "@orqestra/db/schema";
 import { createApp, type User } from "./app.ts";
+import { createCapabilities } from "./capabilities.ts";
 
 // Needs a migrated, throwaway Postgres at TEST_DATABASE_URL (see test-env.ts)
 const url = process.env.TEST_DATABASE_URL;

@@ -1,9 +1,10 @@
-import type { Capabilities, Conversations } from "@orqestra/conversations";
+import type { Conversations } from "@orqestra/conversations";
 import type { OrqestraReach } from "@orqestra/mcp";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import { signedInOnly } from "./admin.ts";
 import { agents } from "./agents.ts";
+import type { Capabilities } from "./capabilities.ts";
 import { connectionRoutes } from "./connections.ts";
 import { conversationRoutes, notFound } from "./conversations.ts";
 import { documentParser } from "./document-parser.ts";
@@ -88,18 +89,28 @@ export function createApp({
 					});
 				})
 				.use(user)
-				.use(skills(user, config))
+				.use(skills(user, config.skills, config.agents))
 				.use(conversationRoutes(user, conversations))
 				.use(scheduledTaskRoutes(user, conversations))
 				.use(pushRoutes(user, conversations))
-				.use(providers(user, config))
-				.use(searchProviders(user, config))
-				.use(mcpServers(user, config, conversations, { orqestraUrl, fetch }))
-				.use(connectionRoutes(user, config, { orqestraUrl, fetch }))
-				.use(sandboxProvider(user, config))
-				.use(documentParser(user, config))
-				.use(limits(user, config))
-				.use(agents(user, config))
+				.use(providers(user, config.models))
+				.use(searchProviders(user, config.tools))
+				.use(
+					mcpServers(user, config.mcpServers, conversations, {
+						orqestraUrl,
+						fetch,
+					}),
+				)
+				.use(
+					connectionRoutes(user, config.mcpServers, config.agents, {
+						orqestraUrl,
+						fetch,
+					}),
+				)
+				.use(sandboxProvider(user, config.tools))
+				.use(documentParser(user, config.tools))
+				.use(limits(user, config.limits))
+				.use(agents(user, config.agents))
 				.use(users(user))
 				.use(usageRoutes(user))
 				.derive(signedInOnly)

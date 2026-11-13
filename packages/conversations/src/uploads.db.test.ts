@@ -14,7 +14,7 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { OrqestraConfig, RunHandler } from "./index.ts";
+import type { RunHandler, Snapshots } from "./index.ts";
 import { MAX_UPLOAD_BYTES } from "./shared.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
@@ -60,7 +60,7 @@ const config = {
 	sandboxProvider: { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 },
 	tools: { parse: { baseUrl: "http://mineru", apiKey: "" } },
 	limits: { ...DEFAULT_LIMITS },
-} as unknown as OrqestraConfig;
+} as unknown as Snapshots;
 
 let o = memoryOrrery();
 const s = memoryStore();

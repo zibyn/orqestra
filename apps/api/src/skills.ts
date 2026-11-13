@@ -1,4 +1,5 @@
-import type { Capabilities } from "@orqestra/conversations";
+import type { Agents } from "@orqestra/agents/live";
+import type { Skills } from "@orqestra/skills";
 import {
 	SkillNotFound,
 	skillCreateInput,
@@ -32,7 +33,12 @@ const tooLarge = () =>
 const nameParams = z.object({ name: z.string() });
 
 /** Skills, managed by Admins in the console. */
-export const skills = (signedIn: SignedIn, config: Capabilities) =>
+export const skills = (
+	signedIn: SignedIn,
+	skills: Skills,
+	/** Deleting a Skill goes through the Agents, which then forget it. */
+	agents: Pick<Agents, "deleteSkill">,
+) =>
 	new Elysia({ prefix: "/skills" })
 		.use(signedIn)
 		.derive(adminOnly)
@@ -44,7 +50,7 @@ export const skills = (signedIn: SignedIn, config: Capabilities) =>
 				});
 		})
 		/** Every Skill with its versions, newest first. */
-		.get("", () => config.skills.list())
+		.get("", () => skills.list())
 		// A Skill's zip, the raw body; `?replace=true` once the Admin confirmed adding a version to an existing name.
 		// Not parsed, so a Member is refused and a large zip measured before it is read.
 		.post(
@@ -59,7 +65,7 @@ export const skills = (signedIn: SignedIn, config: Capabilities) =>
 					});
 				const zip = await readAtMost(request.body, SKILL_ZIP_MAX_BYTES);
 				if (!zip) return tooLarge();
-				return saved(await config.skills.upload(zip, query.replace === "true"));
+				return saved(await skills.upload(zip, query.replace === "true"));
 			},
 			{ parse: "none", query: z.object({ replace: z.string().optional() }) },
 		)
@@ -67,34 +73,32 @@ export const skills = (signedIn: SignedIn, config: Capabilities) =>
 		.put(
 			"/:name",
 			async ({ params, body }) =>
-				saved(await config.skills.create(params.name, body.description)),
+				saved(await skills.create(params.name, body.description)),
 			{ params: nameParams, body: skillCreateInput.omit({ name: true }) },
 		)
 		/** A version's files; binary ones without `text`. */
-		.get(
-			"/versions/:id/files",
-			({ params }) => config.skills.files(params.id),
-			{ params: z.object({ id: z.coerce.number().int() }) },
-		)
+		.get("/versions/:id/files", ({ params }) => skills.files(params.id), {
+			params: z.object({ id: z.coerce.number().int() }),
+		})
 		/** Saves the edited files of version `base` as the Skill's new current version. */
 		.post(
 			"/:name/versions",
 			async ({ params, body }) =>
-				saved(await config.skills.edit(params.name, body.base, body.files)),
+				saved(await skills.edit(params.name, body.base, body.files)),
 			{ params: nameParams, body: skillEditInput.omit({ name: true }) },
 		)
 		/** Rolls the Skill back (or forward) to one of its versions. */
 		.put(
 			"/:name/current",
 			async ({ params, body }) => {
-				await config.skills.setCurrent(params.name, body.versionId);
+				await skills.setCurrent(params.name, body.versionId);
 			},
 			{ params: nameParams, body: skillCurrentInput.omit({ name: true }) },
 		)
 		.put(
 			"/:name/enabled",
 			async ({ params, body }) => {
-				await config.skills.setEnabled(params.name, body.enabled);
+				await skills.setEnabled(params.name, body.enabled);
 			},
 			{ params: nameParams, body: skillEnabledInput.omit({ name: true }) },
 		)
@@ -102,7 +106,7 @@ export const skills = (signedIn: SignedIn, config: Capabilities) =>
 		.delete(
 			"/:name",
 			async ({ params }) => {
-				await config.skills.delete(params.name);
+				await agents.deleteSkill(params.name);
 			},
 			{ params: nameParams },
 		);

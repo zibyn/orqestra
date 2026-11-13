@@ -19,7 +19,6 @@ import {
 	type TaskRequestOptions,
 } from "@orqestra/mcp";
 import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
-import type { OrqestraConfig } from "./capabilities.ts";
 import {
 	busy,
 	ensureRun,
@@ -34,6 +33,7 @@ import {
 	waiting,
 } from "./runs.ts";
 import type { TraceCarrier } from "./serve.ts";
+import type { Snapshots } from "./snapshots.ts";
 
 // A Background Call is its `background_call` row: polled by delayed jobs that carry only its id, one at a time,
 // until it ends; a job that finds it gone, ended or polled by a later job does nothing.
@@ -105,7 +105,7 @@ export async function startBackgroundCall(
  * after the interval it suggests, or ends the Background Call.
  */
 export async function pollBackgroundCall(
-	config: () => Promise<OrqestraConfig>,
+	config: () => Promise<Snapshots>,
 	id: string,
 	jobId: string,
 	mcp: McpAccess = {},
@@ -235,7 +235,7 @@ async function cancelAndEnd(
 
 /** Before an Admin deletes the MCP Server, disabled or not: cancels each of its Background Calls still running and ends it failed. */
 export async function endBackgroundCallsOf(
-	config: () => Promise<OrqestraConfig>,
+	config: () => Promise<Snapshots>,
 	mcpServerId: string,
 	{ fetch }: McpAccess = {},
 ) {
@@ -384,7 +384,7 @@ export const runningCalls = (
  * one disabled, deleted or unreachable is given up on.
  */
 export async function askToCancel(
-	config: () => Promise<OrqestraConfig>,
+	config: () => Promise<Snapshots>,
 	calls: CancelledCall[],
 	mcp: McpAccess = {},
 ) {
@@ -412,7 +412,7 @@ export async function askToCancel(
  * saying `body`, which wakes its Conversation only when `wake` says so; then asks their servers to cancel them. Returns those it cancelled.
  */
 async function cancel(
-	config: () => Promise<OrqestraConfig>,
+	config: () => Promise<Snapshots>,
 	conversationId: string,
 	where: SQL | undefined,
 	body: string,
@@ -462,7 +462,7 @@ async function cancel(
  * the Firing may have waited for nothing else either. False when there was none running.
  */
 export async function cancelBackgroundCall(
-	config: () => Promise<OrqestraConfig>,
+	config: () => Promise<Snapshots>,
 	rootId: string,
 	toolCallId: string,
 	mcp?: McpAccess,
@@ -493,7 +493,7 @@ export async function cancelBackgroundCall(
  * wakes nobody and goes with the next input. Its Firing is for the Stop to end, or a later Run's end.
  */
 export async function cancelStoppedCalls(
-	config: () => Promise<OrqestraConfig>,
+	config: () => Promise<Snapshots>,
 	conversationId: string,
 	mcp?: McpAccess,
 ) {
@@ -512,5 +512,5 @@ export async function cancelStoppedCalls(
 
 /** What `stopSubagents` cancels each stopped Subagent's Background Calls with (`runs.ts` cannot import this module). */
 export const cancelStopped =
-	(config: () => Promise<OrqestraConfig>, mcp?: McpAccess) => (id: string) =>
+	(config: () => Promise<Snapshots>, mcp?: McpAccess) => (id: string) =>
 		cancelStoppedCalls(config, id, mcp);

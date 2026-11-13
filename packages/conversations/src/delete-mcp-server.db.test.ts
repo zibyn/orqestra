@@ -8,8 +8,35 @@ if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const schema = await import("@orqestra/db/schema");
 const { eq, sql } = await import("drizzle-orm");
-const { createCapabilities, createConversations } = await import("./index.ts");
-const config = createCapabilities(db);
+const { createConversations, createLimits, snapshots } = await import(
+	"./index.ts"
+);
+const { createAgents } = await import("@orqestra/agents/live");
+const { createMcpServers } = await import("@orqestra/mcp");
+const { createModels } = await import("@orqestra/models");
+const { createSkills } = await import("@orqestra/skills");
+const { createTools } = await import("@orqestra/tools/live");
+const models = createModels(db);
+const skills = createSkills(db);
+const mcpServers = createMcpServers(db);
+const lives = {
+	models,
+	tools: createTools(db),
+	mcpServers,
+	skills,
+	limits: createLimits(db),
+	// nothing else is available to a Run here
+	agents: createAgents(db, {
+		models,
+		skills,
+		available: async () => ({ tools: {}, mcpServers: {}, skills: {} }),
+	}),
+};
+const config = {
+	...lives,
+	current: snapshots(lives),
+	close: () => Promise.all(Object.values(lives).map((l) => l.close())),
+};
 
 const general = {
 	name: "General",

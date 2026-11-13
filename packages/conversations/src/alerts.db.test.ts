@@ -10,7 +10,7 @@ import {
 	it,
 	vi,
 } from "vitest";
-import type { OrqestraConfig, RunHandle, TaskInput } from "./index.ts";
+import type { RunHandle, Snapshots, TaskInput } from "./index.ts";
 
 // the push service, as web-push reaches it: each push recorded, answered with the status `refuse` gives its endpoint
 const push = vi.hoisted(() => ({
@@ -74,7 +74,7 @@ const base = {
 	defaultAgent: agent(),
 	skills: {},
 	limits: { ...DEFAULT_LIMITS, minFiringInterval: 1 },
-} as unknown as OrqestraConfig;
+} as unknown as Snapshots;
 let config = base;
 const conversations = createConversations({
 	store: memoryStore().store,

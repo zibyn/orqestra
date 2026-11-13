@@ -53,7 +53,7 @@ describe.skipIf(!url)("The migration to Memory changes (Postgres)", () => {
 			},
 		});
 
-	it("keeps undoable the Memory changes that were undoable from the Tool results", async () => {
+	it("keeps undoable the Memory changes that were undoable from the Tool results, and those already undone undone", async () => {
 		const [{ id: earlier }] = await db
 			.insert(schema.conversation)
 			.values({ userId: "u1", agentId: "a" })
@@ -118,6 +118,9 @@ describe.skipIf(!url)("The migration to Memory changes (Postgres)", () => {
 		for (const id of ids)
 			if (!(await undoChange("u1", conversationId, id))) undoable.push(id);
 		expect(undoable).toEqual(["created", "edited", "deleted"]);
+		// refused as undone, not as unknown
+		expect(await undoChange("u1", conversationId, "undone")).toBe("undone");
+		expect(await undoChange("u1", conversationId, "failed")).toBe("not_found");
 		expect(await mine.read("p")).toBeUndefined();
 		expect((await mine.read("q"))?.body).toBe("later");
 		expect(await mine.read("r")).toMatchObject({

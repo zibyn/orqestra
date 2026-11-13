@@ -2,7 +2,7 @@
 // A leaf: knows nothing of how the services are stored or configured.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
-import { cut } from "./cut.ts";
+import { cut } from "@orqestra/db/cut";
 import { type DocumentParser, type ParseFiles, parseTool } from "./parse.ts";
 import { searchProvider } from "./search.ts";
 import {

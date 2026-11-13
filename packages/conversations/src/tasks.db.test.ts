@@ -2,7 +2,7 @@ import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/agents";
 import { memoryStore } from "@orqestra/tools/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { OrqestraConfig, RunHandle, TaskInput } from "./index.ts";
+import type { RunHandle, Snapshots, TaskInput } from "./index.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
@@ -44,7 +44,7 @@ const base = {
 	skills: {},
 	// every second, so a test sees Firings come
 	limits: { ...DEFAULT_LIMITS, minFiringInterval: 1 },
-} as unknown as OrqestraConfig;
+} as unknown as Snapshots;
 let config = base;
 const conversations = createConversations({
 	store: memoryStore().store,

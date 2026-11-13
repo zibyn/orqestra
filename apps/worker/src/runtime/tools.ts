@@ -1,6 +1,6 @@
 import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
-import type { Limits, OrqestraConfig } from "@orqestra/conversations";
+import type { Limits, RunConfig } from "@orqestra/conversations";
 import {
 	BudgetExceeded,
 	checkSchedule,
@@ -218,7 +218,7 @@ export function refusal(error: unknown) {
  * Each Subagent works in the background, past the parent's Run; it hands back its result as a Notification that wakes the parent.
  */
 export function subagentTools(
-	config: Pick<OrqestraConfig, "agents">,
+	config: Pick<RunConfig, "agents">,
 	subagents: NonNullable<RunHandle["subagents"]>,
 	/** The trace context of the Tool call's span, by call id. */
 	trace: (toolCallId: string) => TraceCarrier | undefined = () => undefined,

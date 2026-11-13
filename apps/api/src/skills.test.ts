@@ -1,12 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import {
-	type Conversations,
-	createCapabilities,
-} from "@orqestra/conversations";
+import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { SKILL_ZIP_MAX_BYTES } from "@orqestra/skills/shared";
 import { zip } from "@orqestra/skills/test-zip";
 import { createApp, type User } from "./app.ts";
+import { createCapabilities } from "./capabilities.ts";
 
 const config = createCapabilities(db);
 
@@ -142,7 +140,7 @@ describe.skipIf(!testDb)("an Admin's Skills (Postgres)", () => {
 		>;
 	const reset = async () => {
 		for (const s of await config.skills.list())
-			await config.skills.delete(s.name);
+			await config.agents.deleteSkill(s.name);
 	};
 	beforeEach(reset);
 	afterAll(async () => {

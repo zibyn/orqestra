@@ -21,6 +21,7 @@
     "@orqestra/db": "workspace:*",
     "@orqestra/mcp": "workspace:*",
     "@orqestra/memory": "workspace:*",
+    "@orqestra/models": "workspace:*",
     "@orqestra/skills": "workspace:*",
     "@orqestra/tools": "workspace:*"
   },

@@ -19,6 +19,7 @@ import {
 	type ConnectionStore,
 	deleteMcpServer,
 	type Fetch,
+	type McpServersLive,
 	revokeConnections,
 } from "@orqestra/mcp";
 import { type Undone, undoChange } from "@orqestra/memory";
@@ -28,7 +29,11 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/models";
 import { skillInstructions } from "@orqestra/skills";
-import { invokedSkill, skillBlock } from "@orqestra/skills/shared";
+import {
+	invokedSkill,
+	type SkillFile,
+	skillBlock,
+} from "@orqestra/skills/shared";
 import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
 import { mcpToolRef } from "@orqestra/tools/shared";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
@@ -42,7 +47,6 @@ import {
 	endBackgroundCallsOf,
 	runningCalls,
 } from "./background-calls.ts";
-import type { Capabilities, OrqestraConfig } from "./capabilities.ts";
 import { ConversationError } from "./errors.ts";
 import {
 	AGENT_RUNS_QUEUE,
@@ -59,6 +63,7 @@ import {
 	stopSubagents,
 } from "./runs.ts";
 import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
+import type { Snapshots } from "./snapshots.ts";
 import { SPENDING_LIMIT_USED_UP, spendingLimitStatus } from "./spending.ts";
 import { tasksOf } from "./tasks.ts";
 import { cancelTimer } from "./timers.ts";
@@ -69,13 +74,13 @@ import {
 	sweepUnsentAttachments,
 } from "./uploads.ts";
 
-export {
-	type Capabilities,
-	createCapabilities,
-	type OrqestraConfig,
-} from "./capabilities.ts";
 export { ConversationError } from "./errors.ts";
-export { DEFAULT_LIMITS, type Limits, limitsInput } from "./limits.ts";
+export {
+	createLimits,
+	DEFAULT_LIMITS,
+	type Limits,
+	limitsInput,
+} from "./limits.ts";
 export {
 	MAX_RECALL_RESULTS,
 	MAX_SNIPPET,
@@ -105,6 +110,7 @@ export {
 	type TranscriptMessage,
 	type Turn,
 } from "./serve.ts";
+export { type Snapshots, snapshots } from "./snapshots.ts";
 export {
 	SpendingLimitReached,
 	spendingLimitStatus,
@@ -147,14 +153,15 @@ const ownedSubagent = async (userId: string, id: string) => {
 	return row as { parentId: string; number: number } | undefined;
 };
 
-/** What of the Capabilities Conversations use. */
-export type ConversationCapabilities = Pick<
-	Capabilities,
-	"current" | "skillFiles"
-> & {
-	mcpServers: Pick<Capabilities["mcpServers"], "write">;
+/** What of the capabilities Conversations use. */
+export interface ConversationCapabilities {
+	/** Every capability's snapshot, side by side: `snapshots(...)` of their lives. */
+	current: () => Promise<Snapshots>;
+	/** A Skill version's files. */
+	skillFiles: (versionId: number) => Promise<SkillFile[]>;
+	mcpServers: Pick<McpServersLive, "write">;
 	agents: { forget: (ref: { tool: `mcp:${string}` }) => Promise<unknown> };
-};
+}
 
 /** Every outside dependency of Conversations and their Runs, given once: the Runs' handler gets what it needs from its RunHandle. */
 export function createConversations({
@@ -184,7 +191,7 @@ export function createConversations({
 	const mcp = { fetch, connections };
 	/** The User's text, with the current SKILL.md of the Skill it invokes as `/skill:name` put in, so later versions leave it as sent. */
 	async function expandSkill(
-		cfg: OrqestraConfig,
+		cfg: Snapshots,
 		agent: Pick<AgentDefinition, "skills">,
 		text: string,
 	) {

@@ -8,15 +8,12 @@ import {
 } from "bun:test";
 import { fauxProvider } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/agents";
-import {
-	createCapabilities,
-	createConversations,
-	type OrqestraConfig,
-} from "@orqestra/conversations";
+import { createConversations, type Snapshots } from "@orqestra/conversations";
 import { noMcpServerDeletes } from "@orqestra/conversations/testing";
 import { db } from "@orqestra/db";
 import { memoryStore } from "@orqestra/tools/testing";
 import { createApp, type User } from "./app.ts";
+import { createCapabilities } from "./capabilities.ts";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL, wiped before every test (see test-env.ts)
 const url = process.env.TEST_DATABASE_URL;
@@ -43,7 +40,7 @@ const config = {
 	models: faux.models,
 	defaultAgent: agent("faux"),
 	skills: {},
-} as unknown as OrqestraConfig;
+} as unknown as Snapshots;
 const conversations = createConversations({
 	store: memoryStore().store,
 	capabilities: {

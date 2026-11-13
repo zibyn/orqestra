@@ -6,13 +6,11 @@ import {
 	it,
 	setSystemTime,
 } from "bun:test";
-import {
-	type Conversations,
-	createCapabilities,
-} from "@orqestra/conversations";
+import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { sql } from "drizzle-orm";
 import { createApp, type User } from "./app.ts";
+import { createCapabilities } from "./capabilities.ts";
 import { rememberUsers } from "./users.ts";
 
 // Needs a migrated, throwaway Postgres at TEST_DATABASE_URL (see test-env.ts)

@@ -1,7 +1,7 @@
-import { createCapabilities } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { connectionStore } from "@orqestra/mcp";
 import { s3Store } from "@orqestra/tools/s3";
+import { createCapabilities } from "./capabilities.ts";
 import { tracing } from "./tracing.ts";
 import { startAgentWorker } from "./worker.ts";
 

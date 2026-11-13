@@ -7,9 +7,8 @@ const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
 const { conversation } = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
-const { createCapabilities, createConversations } = await import(
-	"@orqestra/conversations"
-);
+const { createConversations } = await import("@orqestra/conversations");
+const { createCapabilities } = await import("./capabilities.ts");
 const config = createCapabilities(db);
 const { createApp } = await import("./app.ts");
 
