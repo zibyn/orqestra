@@ -105,7 +105,6 @@ export function AppSidebar({
 			<SidebarContent>
 				{!!tasks.length && (
 					<SidebarGroup>
-						<SidebarGroupLabel>{m.tasks_page()}</SidebarGroupLabel>
 						<SidebarMenu>
 							{tasks.map((t) => (
 								<TaskItem key={t.id} task={t} />
