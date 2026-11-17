@@ -136,6 +136,10 @@
   body {
     @apply bg-background text-foreground;
     }
+  /* overscroll shows the body: match the inset sidebar wrapper's bg-sidebar */
+  body:has([data-variant="inset"]) {
+    @apply bg-sidebar;
+    }
   html {
     @apply font-sans antialiased;
     font-optical-sizing: auto;
