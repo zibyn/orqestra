@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Message } from "@earendil-works/pi-ai";
-import { db, type Tx } from "@orqestra/db";
+import { type Db, db, type Tx } from "@orqestra/db";
 import {
 	backgroundCall,
 	conversation,
@@ -25,6 +25,7 @@ import {
 	inArray,
 	isNotNull,
 	isNull,
+	lt,
 	or,
 	sql,
 } from "drizzle-orm";
@@ -395,7 +396,7 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 }
 
 /** A Subagent's latest reply, which one stopped while it waits for its own passes on: none for one still queued. */
-async function lastAnswer(tx: Tx, conversationId: string) {
+async function lastAnswer(tx: Db | Tx, conversationId: string) {
 	const [last] = await tx
 		.select({ message: message.message })
 		.from(message)
@@ -408,6 +409,38 @@ async function lastAnswer(tx: Tx, conversationId: string) {
 		.orderBy(desc(message.id))
 		.limit(1);
 	return last ? messageText(last.message as Message) : "";
+}
+
+/** Characters of a previous Firing's report a Firing's Agent is given; the start of a longer one is kept. */
+export const MAX_PREVIOUS_REPORT = 8_000;
+/** How many earlier Firings are looked through for one that reported something, past those that ended quietly. */
+const PREVIOUS_FIRINGS = 5;
+
+/**
+ * What the latest of a task's Firings before `firingId` that reported anything last replied, and when it fired, so the next one
+ * reports only what is new: none for its first, or when those Conversations are gone or Incognito.
+ */
+export async function previousReport(taskId: string, firingId: number) {
+	const earlier = await db
+		.select({ conversationId: conversation.id, firedAt: firing.firedAt })
+		.from(firing)
+		.innerJoin(conversation, eq(conversation.id, firing.conversationId))
+		.where(
+			and(
+				eq(firing.taskId, taskId),
+				lt(firing.id, firingId),
+				eq(conversation.incognito, false),
+			),
+		)
+		.orderBy(desc(firing.id))
+		.limit(PREVIOUS_FIRINGS);
+	for (const f of earlier) {
+		const text = (await lastAnswer(db, f.conversationId)).trim();
+		// shortcut: a report past MAX_PREVIOUS_REPORT loses its end; summarise it instead if reports run that long
+		if (text)
+			return { firedAt: f.firedAt, text: text.slice(0, MAX_PREVIOUS_REPORT) };
+	}
+	return undefined;
 }
 
 /**
@@ -675,11 +708,12 @@ export async function endSubagent(conversationId: string, ended: Ended) {
  * With `finish`, an inbox without a wake input ends the Run instead: the Conversation goes idle and Unread, and a Subagent's settles with how it `finish`ed.
  * A `"question"` finish waits for the User: only their message goes on, and it ends awaiting their reply, its Timer cancelled.
  * A top-level Run ends completed, or `"partial"` at an Unattended Run's step cap; a Firing's Run records how (see `endFiring`).
+ * A `"quiet"` finish, an Unattended Run with nothing to report, ends completed but leaves Unread as it was.
  * That is checked under the same lock a sender starts a Run under, so no input is left behind.
  */
 export async function drain(
 	conversationId: string,
-	finish: boolean | "question" | "partial" | (() => Ended) = false,
+	finish: boolean | "question" | "partial" | "quiet" | (() => Ended) = false,
 ) {
 	let parentId: string | undefined;
 	const delivered = await db.transaction(async (tx) => {
@@ -741,12 +775,12 @@ export async function drain(
 			// asking a Question cancels the Timer: the User's answer is what it waits for
 			if (finish === "question")
 				await tx.delete(timer).where(eq(timer.conversationId, conversationId));
-			// it ends with its reply, which the User has yet to see
+			// it ends with its reply, which the User has yet to see, unless it had nothing to report
 			await tx
 				.update(conversation)
 				.set({
 					status: "idle",
-					unread: true,
+					...(finish === "quiet" ? {} : { unread: true }),
 					awaitingReply: finish === "question",
 				})
 				.where(eq(conversation.id, conversationId));
@@ -754,7 +788,7 @@ export async function drain(
 			await endFiring(
 				tx,
 				conversationId,
-				finish === true ? "completed" : finish,
+				finish === true || finish === "quiet" ? "completed" : finish,
 			);
 		}
 		// pi UserMessages

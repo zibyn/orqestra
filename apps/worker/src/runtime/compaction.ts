@@ -57,7 +57,7 @@ export async function prepareContext(
 		model,
 		undefined, // auth comes from the registry through streamFn
 		undefined,
-		undefined,
+		HANDOFF,
 		signal,
 		undefined,
 		streamFn,
@@ -72,6 +72,18 @@ export async function prepareContext(
 		},
 	};
 }
+
+/**
+ * What pi's summary must also carry for this Conversation alone, as a handoff to the Agent that goes on from it:
+ * the state Orqestra keeps outside the messages, and what the User said in their own words. Memories stay for what outlives it.
+ */
+export const HANDOFF = `This summary is a handoff: the same agent continues this conversation from it alone. Also keep, under Critical Context:
+- The user's own requests, corrections and stated preferences, quoted word for word where the exact wording matters.
+- Subagents by number: each one's task, whether it is still working or how it ended, and what it reported.
+- Background tool calls still under way, a timer set and its note, and a question awaiting the user's answer.
+- Files by their full paths: attachments, and files written in the sandbox and what each holds.
+- Memories written or changed in this conversation, by path.
+Say plainly what is not yet done or not yet known: never fill a gap with a guess.`;
 
 // how pi itself feeds a summary back to the model
 const summaryMessage = (summary: string): Message => ({

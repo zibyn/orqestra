@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
 import {
@@ -55,6 +56,12 @@ const text = (t: string) => [{ type: "text" as const, text: t }];
 // infers `execute`'s params from `parameters`, then fits the Agent's untyped Tool list
 const tool = <T extends TSchema>(t: AgentTool<T>) => t as unknown as AgentTool;
 
+/** Where an Agent's relative paths and commands start: a Subagent's own folder, so the Agents of one tree do not write over one another's files by default. */
+export const workdir = (
+	run: Pick<RunHandle, "isSubagent" | "conversationId">,
+) =>
+	run.isSubagent ? `/workspace/subagents/${run.conversationId}` : "/workspace";
+
 /** Under SKILLS_DIR: each written Skill's version, by name. */
 const VERSIONS = ".versions.json";
 
@@ -72,6 +79,12 @@ const tail = (s: string) =>
  */
 export function sandboxTools(run: RunHandle, skills: Skills): AgentTool[] {
 	const signal = run.signal;
+	const dir = workdir(run);
+	const resolve = (path: string) =>
+		workspacePath(posix.isAbsolute(path) ? path : `${dir}/${path}`);
+	const own = run.isSubagent
+		? ` It is your own folder in a sandbox you share with the agent that started you: name the files you leave for it, with their full paths, in your final answer.`
+		: "";
 	let written = false;
 	let queue: Promise<unknown> = Promise.resolve();
 
@@ -140,11 +153,11 @@ export function sandboxTools(run: RunHandle, skills: Skills): AgentTool[] {
 				"Read a text file in your sandbox under /workspace, such as a skill's SKILL.md. Use bash for anything else.",
 			parameters: Type.Object({
 				path: Type.String({
-					description: "Absolute, or relative to /workspace",
+					description: `Absolute, or relative to ${dir}`,
 				}),
 			}),
 			execute: async (_id, { path }) => {
-				const relative = workspacePath(path);
+				const relative = resolve(path);
 				if (!relative)
 					throw new Error("read reaches only /workspace: use bash elsewhere");
 				const { id, client } = await ready();
@@ -167,18 +180,22 @@ export function sandboxTools(run: RunHandle, skills: Skills): AgentTool[] {
 		tool({
 			name: "bash",
 			label: "Bash",
-			description:
-				"Run a bash command in your sandbox, with /workspace as the working directory and internet access. It runs until it ends. Returns its exit code, stdout and stderr.",
+			description: `Run a bash command in your sandbox, with ${dir} as the working directory and internet access. It runs until it ends. Returns its exit code, stdout and stderr.${own}`,
 			parameters: Type.Object({
 				command: Type.String({ description: "The command" }),
 			}),
 			execute: async (_id, { command }) => {
 				const { id, client } = await ready();
-				const r = await runCommand(client, id, command, { signal }).catch(
-					(error) => {
-						throw explain(error);
-					},
-				);
+				const r = await runCommand(
+					client,
+					id,
+					run.isSubagent
+						? `mkdir -p ${quote(dir)} && cd ${quote(dir)} || exit 1; ${command}`
+						: command,
+					{ signal },
+				).catch((error) => {
+					throw explain(error);
+				});
 				const lines = [
 					r.exit !== null
 						? `Exit code: ${r.exit}`
@@ -199,14 +216,14 @@ export function sandboxTools(run: RunHandle, skills: Skills): AgentTool[] {
 				"Attach a file in your sandbox under /workspace to your reply, for the user to download: a copy of it as it is now, so attach it once it is final.",
 			parameters: Type.Object({
 				path: Type.String({
-					description: "An existing file; absolute, or relative to /workspace",
+					description: `An existing file; absolute, or relative to ${dir}`,
 				}),
 			}),
 			execute: async (_id, { path }) => {
 				const refused = new Error(
 					`${path} is not an existing file under /workspace`,
 				);
-				const relative = workspacePath(path);
+				const relative = resolve(path);
 				if (!relative) throw refused;
 				const { id, client } = await ready();
 				// resolved, so a symlink cannot lead out of /workspace

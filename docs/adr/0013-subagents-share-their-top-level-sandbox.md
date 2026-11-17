@@ -15,7 +15,7 @@ Skills are no longer cleared and rewritten on each Run's first call: the Agents 
 
 ## Consequences
 
-- Agents of one tree, the parent and Subagents running in parallel, can overwrite one another's files; only the briefs keep them apart.
+- Agents of one tree, the parent and Subagents running in parallel, can overwrite one another's files through absolute paths; since ADR 0014 each Subagent starts in a folder of its own, and otherwise only the briefs keep them apart.
 - An Agent is told only of the Skills its own Agent Definition allows, but the files of every Skill a Run of its tree wrote are in the Sandbox.
 - Dropping or deleting a Subagent leaves the Sandbox, which goes with the top-level Conversation; Subagents' own Sandboxes from before stay theirs until deleted with them.
 - When the Sandbox has to be created again (lost, not just stopped), only the Run that created it writes its Skills again; another Run of the tree that already wrote its own finds them gone until its next Run.

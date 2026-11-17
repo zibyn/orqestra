@@ -173,7 +173,8 @@ const userId = "u1";
 // a command that runs until it is canceled, one that writes a report, and the check attach makes
 const orrery = memoryOrrery({
 	exec: (command, files) => {
-		if (command === "sleep 1000") return { running: true };
+		// a Subagent's command comes after the cd into its own folder
+		if (command.endsWith("sleep 1000")) return { running: true };
 		if (command === "make report")
 			files.set("out/report.txt", new TextEncoder().encode("first"));
 		const report = files.get("out/report.txt");
@@ -551,9 +552,13 @@ describe.skipIf(!url)(
 			});
 			const calls = (prefix: string) =>
 				Promise.resolve(orrery.calls.filter((c) => c.startsWith(prefix)));
-			await waitFor(
+			const execs = await waitFor(
 				() => calls("createExec"),
 				(c) => c.some((x) => x.endsWith(" sleep 1000")),
+			);
+			// in its own folder of the shared Sandbox
+			expect(execs?.find((x) => x.endsWith(" sleep 1000"))).toContain(
+				"cd '/workspace/subagents/",
 			);
 			await conversations.stop(userId, id);
 			const canceled = await waitFor(
@@ -1437,6 +1442,46 @@ describe.skipIf(!url)(
 					status: "completed",
 					url: `/c/${id}`,
 				});
+			});
+
+			it("tells a Firing what the one before reported, and lets it end quietly, without Unread or an Alert", async () => {
+				await alerted();
+				script({ parent: [fauxAssistantMessage("News A")] });
+				const taskId = await conversations.tasks.create(userId, input());
+				const firings = async () =>
+					(await conversations.tasks.get(userId, taskId))?.firings ?? [];
+				await waitFor(firings, (f) => f[0]?.outcome === "completed");
+				await waitFor(runAlerts, (p) => p.length === 1);
+
+				let prompt = "";
+				script({
+					parent: [
+						(context) => {
+							prompt = JSON.stringify(context.messages);
+							return fauxAssistantMessage(
+								fauxToolCall("nothing_to_report", { reason: "no news" }),
+							);
+						},
+					],
+				});
+				await conversations.tasks.update(userId, taskId, input());
+				const [second] = await waitFor(
+					firings,
+					(f) => f.length === 2 && f[0].outcome === "completed",
+				);
+				expect(prompt).toContain(
+					JSON.stringify("<previous_report>\nNews A\n</previous_report>").slice(
+						1,
+						-1,
+					),
+				);
+				const view = await conversations.get(
+					userId,
+					second.conversationId as string,
+				);
+				expect(view?.unread).toBe(false);
+				await new Promise((r) => setTimeout(r, 300));
+				expect(await runAlerts()).toHaveLength(1);
 			});
 
 			it("ends a Firing waiting on its Question as a Question once its Background Call ends", async () => {

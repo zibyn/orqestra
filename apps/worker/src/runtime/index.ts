@@ -26,7 +26,9 @@ import {
 	backgrounded,
 	draftTool,
 	MAX_SUBAGENT_STEPS,
+	previousReportPrompt,
 	questionTool,
+	quietTool,
 	refusal,
 	relay,
 	STEP_LIMIT,
@@ -323,10 +325,15 @@ async function reply(
 		let refused: unknown;
 		// only the top-level Agent asks the User; the step that asked ends the Run
 		const question = questionTool();
+		// only an Unattended top-level Run may end without a report: nobody asked it anything
+		const quiet = run.unattended && !sub ? quietTool() : undefined;
 		const agent = new Agent({
 			initialState: {
 				systemPrompt:
-					turn.agent.instructions + skillsPrompt(skills) + memoryBlock,
+					turn.agent.instructions +
+					skillsPrompt(skills) +
+					memoryBlock +
+					previousReportPrompt(run.previousReport),
 				model: turn.model,
 				thinkingLevel: turn.thinking,
 				// every Tool call is a child of the Run's span
@@ -340,6 +347,7 @@ async function reply(
 						? subagentTools(config, run.subagents, (id) => carriers.get(id))
 						: []),
 					...(sub ? [] : [question.tool, draftTool(config.limits)]),
+					...(quiet ? [quiet.tool] : []),
 					...(run.timer ? timerTools(run.timer) : []),
 				].map(
 					traceToolCalls(
@@ -360,7 +368,9 @@ async function reply(
 			},
 			sessionId: conversationId,
 			finishTurn: () =>
-				++steps >= maxSteps || question.asked ? { action: "end" } : undefined,
+				++steps >= maxSteps || question.asked || quiet?.ended
+					? { action: "end" }
+					: undefined,
 			// inputs that arrived during a step go to the model right after it
 			prepareNextTurnWithContext: async ({ context }) => {
 				const messages = await run.deliver();
@@ -423,9 +433,11 @@ async function reply(
 			}
 			next = await run.finish(sub || run.unattended ? ended() : undefined, {
 				question: question.asked,
+				quiet: quiet?.ended,
 			});
 			if (!next.length) break;
 			question.reset();
+			quiet?.reset();
 		}
 		span.setAttributes({ "orqestra.run.outcome": ended().outcome });
 		if (sub) return;

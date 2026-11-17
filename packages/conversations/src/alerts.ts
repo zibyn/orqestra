@@ -68,7 +68,8 @@ export const taskUrl = (taskId: string) => `/tasks?task=${taskId}`;
 
 /**
  * A top-level Conversation's Run ended as `status`: Alerts its User, unless the Conversation is a Firing's
- * whose task has Alerts off and it ended completed or partial, or whose Firing has not ended yet: its Alert comes with the Run that ends it.
+ * whose task has Alerts off and it ended completed or partial, or whose Firing has not ended yet: its Alert comes with the Run that ends it;
+ * nor for one that completed with no reply the User has not seen (a quiet end, or one they already read).
  */
 export async function alertRun(conversationId: string, status: AlertStatus) {
 	const [conv] = await db
@@ -78,12 +79,15 @@ export async function alertRun(conversationId: string, status: AlertStatus) {
 			taskName: scheduledTask.name,
 			alertOnComplete: scheduledTask.alertOnComplete,
 			firing: firing.outcome,
+			unread: conversation.unread,
 		})
 		.from(conversation)
 		.leftJoin(scheduledTask, eq(scheduledTask.id, conversation.scheduledTaskId))
 		.leftJoin(firing, eq(firing.conversationId, conversation.id))
 		.where(eq(conversation.id, conversationId));
 	if (!conv || conv.firing === "running") return;
+	// nothing the User has not seen: a quiet end, or one they already read
+	if (status === "completed" && !conv.unread) return;
 	if (
 		conv.alertOnComplete === false &&
 		(status === "completed" || status === "partial")

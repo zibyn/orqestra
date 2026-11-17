@@ -82,6 +82,41 @@ export function questionTool() {
 	};
 }
 
+/** The system prompt's block for a Firing's Run: what the task's last Firing reported, so this one reports only what is new. */
+export const previousReportPrompt = (report: RunHandle["previousReport"]) =>
+	report
+		? `\n\nYou are running a scheduled task that ran before. Its last run, at ${report.firedAt.toISOString()}, reported this to the user:\n<previous_report>\n${report.text.replaceAll("</previous_report", "<\\/previous_report")}\n</previous_report>\nDo not repeat what it already reported: report what is new or has changed since, and say so plainly when nothing has.`
+		: "";
+
+/** An Unattended Run's way to end without a report: the Conversation is left as it was, not Unread, and no Alert goes out. */
+export function quietTool() {
+	let ended = false;
+	const quiet = tool({
+		name: "nothing_to_report",
+		label: "Nothing to report",
+		description:
+			"End your reply without telling the user anything, when this run found nothing new or worth their attention: they get no alert and the conversation is not marked unread. Use it only when you have nothing to report; anything the user should see belongs in a normal reply instead.",
+		parameters: Type.Object({
+			reason: Type.String({
+				description: "Why there is nothing to report, in a sentence",
+			}),
+		}),
+		execute: async () => {
+			ended = true;
+			return { content: text("Ending quietly."), details: undefined };
+		},
+	});
+	return {
+		tool: quiet,
+		get ended() {
+			return ended;
+		},
+		reset() {
+			ended = false;
+		},
+	};
+}
+
 /** The top-level Agent's Tools for coming back to the Conversation later: set its one Timer, or cancel it. */
 export function timerTools(timer: NonNullable<RunHandle["timer"]>) {
 	const set = tool({
@@ -195,7 +230,7 @@ export const STEP_LIMIT =
 	"You have reached your step limit and can no longer use tools. Reply now with your final answer from what you have so far, saying what is left undone.";
 
 const NOTIFIED =
-	"Each subagent's final answer comes to you by itself as a <task-notification>, once it finishes: do not poll. Until the results you need are in, you may tell the user what you are doing and end your reply.";
+	"Each subagent's final answer comes to you by itself as a <task-notification>, once it finishes: do not poll. Until the results you need are in, you may tell the user what you are doing and end your reply. Tell the user only what a subagent's notification says it did or found, and which subagents are still working: never guess at a result that has not come in.";
 
 /** What the model is told when its Subagent request or Background Call is refused. */
 export function refusal(error: unknown) {
@@ -229,7 +264,7 @@ export function subagentTools(
 	const spawn = tool({
 		name: "subagent",
 		label: "Subagent",
-		description: `Start subagents on tasks. They work in the background, in parallel, from a blank context, so you can keep working. They share your sandbox: files you leave under /workspace are theirs to read, and theirs yours, so give each its own paths to write to. Use them for self-contained work such as research. Each brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
+		description: `Start subagents on tasks. They work in the background, in parallel, from a blank context, so you can keep working. They share your sandbox: files you leave under /workspace are theirs to read, and theirs yours. Each works in a folder of its own under /workspace/subagents/ and names in its answer the files it left you; give it absolute paths for anything it should read or write elsewhere. Use them for self-contained work such as research. Each brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
 		parameters: Type.Object({
 			tasks: Type.Array(
 				Type.Object({

@@ -51,6 +51,7 @@ import {
 	lastModel,
 	lockRoot,
 	notify,
+	previousReport,
 	STOP_CHANNEL,
 	SUBAGENT_RUNS_QUEUE,
 	spend,
@@ -115,6 +116,8 @@ export type RunHandle = {
 	/** The Scheduled Task whose Firing started the top-level Conversation, and that Firing; none otherwise. */
 	scheduledTaskId?: string;
 	firingId?: number;
+	/** A Firing's top-level Run: what the task's last Firing to report anything replied, and when it fired; none otherwise (see `previousReport`). */
+	previousReport?: { firedAt: Date; text: string };
 	/**
 	 * Where the Run's span goes: a Subagent's first Run under `parent`, the Tool call that started it; any other Run a root of its own,
 	 * linked to the Tool calls that set going the work whose inputs woke it (a Subagent continued, a Notification). None for a User's message.
@@ -156,8 +159,12 @@ export type RunHandle = {
 	 * Ends the reply: returns the inputs that arrived meanwhile, to reply to next, or none, and the Run is over.
 	 * A Subagent reports its `outcome`, and so does an Unattended Run; a stopped Run is over whatever it reports, a timed-out Subagent ending partial.
 	 * A reply that asked the User a `question` waits for them: only a message of theirs goes on, Notifications wait with it.
+	 * A `quiet` one, an Unattended Run with nothing to report, ends completed without making the Conversation Unread, so without an Alert.
 	 */
-	finish(outcome?: Ended, options?: { question?: boolean }): Promise<Message[]>;
+	finish(
+		outcome?: Ended,
+		options?: { question?: boolean; quiet?: boolean },
+	): Promise<Message[]>;
 	/**
 	 * The Run's Model requests for `purpose`, each with the Provider's configured key: first checked against the User's
 	 * Spending Limit as it stands then, throwing SpendingLimitReached unsent once it is used up, then recorded as Usage once
@@ -470,6 +477,10 @@ async function open(
 		rootConversationId: conv.rootId,
 		scheduledTaskId: root.scheduledTaskId ?? undefined,
 		firingId: root.firingId,
+		previousReport:
+			!sub && !incognito && root.scheduledTaskId && root.firingId !== undefined
+				? await previousReport(root.scheduledTaskId, root.firingId)
+				: undefined,
 		trace: {
 			parent: traces.find((t) => t.parent)?.parent,
 			links: traces.flatMap((t) => (t.link ? [t.link] : [])),
@@ -543,7 +554,7 @@ async function open(
 			});
 			await saved();
 		},
-		async finish(outcome, { question = false } = {}) {
+		async finish(outcome, { question = false, quiet = false } = {}) {
 			if (signal.aborted) {
 				end();
 				await stopped(
@@ -566,7 +577,9 @@ async function open(
 				sub
 					? () => outcome ?? { outcome: "completed", result: "" }
 					: status === "completed"
-						? true
+						? quiet
+							? "quiet"
+							: true
 						: status,
 			)) as Message[];
 			await saved();

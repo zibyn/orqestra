@@ -41,11 +41,11 @@ The input that hands a finished Subagent's result, or how a Background Call ende
 _Avoid_: Callback, event, result message
 
 **Alert**:
-What Orqestra sends to a User's browser, once they have turned Alerts on there, when background work has a result for them: a top-level Conversation's Run ended other than by the User stopping it, an Agent asked a Question, a Firing failed, or a Scheduled Task was paused or finished on its own. It names the Conversation or Scheduled Task and how it stands, never what the Agent wrote, and opening it shows that Conversation, or the Scheduled Task when no Conversation came of it. A browser already showing that Conversation shows no Alert. A Subagent finishing, a Background Call ending or a Timer ringing sends none of its own; the Run they lead to does. A Scheduled Task can be set not to alert when it completes, but its failures and Questions always alert.
+What Orqestra sends to a User's browser, once they have turned Alerts on there, when background work has a result for them: a top-level Conversation's Run ended other than by the User stopping it, an Agent asked a Question, a Firing failed, or a Scheduled Task was paused or finished on its own. A Run that completes with no reply the User has not seen, such as an Unattended Run with nothing to report, sends none. It names the Conversation or Scheduled Task and how it stands, never what the Agent wrote, and opening it shows that Conversation, or the Scheduled Task when no Conversation came of it. A browser already showing that Conversation shows no Alert. A Subagent finishing, a Background Call ending or a Timer ringing sends none of its own; the Run they lead to does. A Scheduled Task can be set not to alert when it completes, but its failures and Questions always alert.
 _Avoid_: Notification (that is a Subagent's or Background Call's result), push, notice, message
 
 **Unread**:
-How a top-level Conversation stands once a Run has ended with a reply the User has not seen, until they open it. A Run the User stopped leaves it as it was, and a Subagent's Conversation is never unread itself.
+How a top-level Conversation stands once a Run has ended with a reply the User has not seen, until they open it. A Run the User stopped, or an Unattended Run that ended with nothing to report, leaves it as it was, and a Subagent's Conversation is never unread itself.
 _Avoid_: New, unseen, badge
 
 **Timer**:
@@ -65,7 +65,7 @@ A Scheduled Task an Agent proposes in a Conversation, shown to the User as a car
 _Avoid_: Proposal, suggestion, template
 
 **Firing**:
-One time a Scheduled Task comes due: it starts a new Conversation, with its own Sandbox, whose first message is the task's prompt, sent as the User's message but marked as sent by the task. A Firing ends only once its Conversation has stopped running and every Subagent and Background Call it started has finished; its outcome, and any Alert, come then. A Firing that comes due while the previous one has not ended, or whose User has used up their Spending Limit, is skipped and recorded; one whose Agent can no longer be picked, or whose Model is disabled, fails.
+One time a Scheduled Task comes due: it starts a new Conversation, with its own Sandbox, whose first message is the task's prompt, sent as the User's message but marked as sent by the task. Its Agent is also told what the task's latest earlier Firing that reported anything last replied, so it reports only what is new; an Incognito one is told nothing, nor told of. A Firing ends only once its Conversation has stopped running and every Subagent and Background Call it started has finished; its outcome, and any Alert, come then. A Firing that comes due while the previous one has not ended, or whose User has used up their Spending Limit, is skipped and recorded; one whose Agent can no longer be picked, or whose Model is disabled, fails.
 _Avoid_: Trigger, occurrence, scheduled run, execution
 
 **Inbox**:
@@ -101,7 +101,7 @@ A folder of know-how in the Agent Skills format, added by an Admin by upload or 
 _Avoid_: Plugin, prompt, template, Tool
 
 **Sandbox**:
-The isolated machine where an Agent reads its Skills, runs their scripts and works on files, served by the Sandbox Provider. A Conversation gets one the first time its Agent needs it, whenever a Sandbox Provider is configured, with or without Skills; it sleeps when idle and wakes with its files intact, until the Conversation is deleted. A Subagent works in the Sandbox of its top-level Conversation, so files pass between the Agents of one tree, each told only of the Skills its own Agent Definition allows, though the files of every one written there stay. Reading and running in it are Tools, served by the Sandbox Provider.
+The isolated machine where an Agent reads its Skills, runs their scripts and works on files, served by the Sandbox Provider. A Conversation gets one the first time its Agent needs it, whenever a Sandbox Provider is configured, with or without Skills; it sleeps when idle and wakes with its files intact, until the Conversation is deleted. A Subagent works in the Sandbox of its top-level Conversation, from a folder of its own under `/workspace/subagents/` where its commands and relative paths start, naming in its result the files it leaves; so files pass between the Agents of one tree, each told only of the Skills its own Agent Definition allows, though the files of every one written there stay. Reading and running in it are Tools, served by the Sandbox Provider.
 _Avoid_: Container, VM, workspace, code interpreter
 
 **Sandbox Provider**:
@@ -160,12 +160,16 @@ _Avoid_: Upload, artifact, document
 One input, a user message, a Notification or a Timer's note, and the Agent's reply to it, with the Model and thinking level picked for that input. Compaction never splits a Turn.
 _Avoid_: Exchange, round
 
+**Compaction**:
+What replaces a Conversation's earlier Turns with a summary once it nears its Model's context length, keeping the latest Turns as they are. The summary is a handoff for that Conversation alone: it keeps what the Agent needs to go on, the User's own words where they matter, its Subagents, Background Calls, Timer and Question, and the files and Memories it touched, and says what is not yet known. It writes no Memory.
+_Avoid_: Handoff note, Memory, truncation
+
 **Run**:
 The work of producing one Turn's reply: a queued job a worker picks up, which streams the reply, saves it and can be stopped, or retried once it has failed. A Conversation has at most one Run at a time; inputs that arrive meanwhile are delivered between its steps, and it ends only once none are left. Each Subagent runs in Runs of its own, and the User stopping a Conversation stops its Subagents too and cancels its Timer and its Background Calls; a Run that fails cancels no Background Call.
 _Avoid_: Job, task, generation
 
 **Unattended Run**:
-A Run started by a Firing's prompt or a Timer's note, in a Conversation where no User message has arrived since, together with the Runs of the Subagents it starts. It stops after a limited number of steps or a limited time, set by the Admin, ending with what it has so far, and is never retried on its own. The User's next message in that Conversation makes its later Runs ordinary ones again.
+A Run started by a Firing's prompt or a Timer's note, in a Conversation where no User message has arrived since, together with the Runs of the Subagents it starts. It stops after a limited number of steps or a limited time, set by the Admin, ending with what it has so far, and is never retried on its own. It may end with nothing to report instead of a reply: it has completed, but its Conversation is not made Unread and no Alert goes out. The User's next message in that Conversation makes its later Runs ordinary ones again.
 _Avoid_: Background run, headless run, autonomous run
 
 ### Memory
