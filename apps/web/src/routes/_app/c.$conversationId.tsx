@@ -424,6 +424,8 @@ function ConversationView() {
 						agents={agents}
 						// null only for a Subagent's Conversation, which is read-only and shows no Composer
 						agentId={conversation.agentId ?? ""}
+						// only worth naming when the User had others to pick from
+						showAgent={agents.filter((a) => a.pickable).length > 1}
 						initial={
 							lastUser && {
 								model: lastUser.model,

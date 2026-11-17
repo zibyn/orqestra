@@ -8,6 +8,7 @@ import {
 import { useRef, useState } from "react";
 import { Composer } from "#/components/Composer";
 import { Switch } from "#/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "#/components/ui/toggle-group";
 import { api, ok } from "#/lib/api";
 import { uploadFiles } from "#/lib/uploads";
 import { m } from "#/paraglide/messages";
@@ -47,6 +48,28 @@ function NewConversation() {
 						)}
 					</p>
 				)}
+				{agents.length > 1 && agentId && (
+					// an Agent is the whole Conversation's, so it is picked here, not by each message's Model and thinking
+					<div className="flex max-w-2xl flex-col items-center gap-2">
+						<ToggleGroup
+							variant="outline"
+							aria-label={m.agent()}
+							className="flex-wrap justify-center"
+							value={[agentId]}
+							// pressing the picked one again would unpick it; one is always picked
+							onValueChange={([id]) => id && setAgentId(id)}
+						>
+							{agents.map((a) => (
+								<ToggleGroupItem key={a.id} value={a.id}>
+									{a.name}
+								</ToggleGroupItem>
+							))}
+						</ToggleGroup>
+						<p className="text-sm text-muted-foreground">
+							{agents.find((a) => a.id === agentId)?.description}
+						</p>
+					</div>
+				)}
 				{agentId && (
 					// chosen here only: a started Conversation keeps it
 					<div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -66,7 +89,6 @@ function NewConversation() {
 				<Composer
 					agents={agents}
 					agentId={agentId}
-					onAgentChange={setAgentId}
 					running={false}
 					onStop={() => {}}
 					onSend={async ({ files, ...input }) => {

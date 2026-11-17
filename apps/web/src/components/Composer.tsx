@@ -56,13 +56,13 @@ export const levelLabels: Record<Level, () => string> = {
 };
 
 /**
- * Message input with the Agent (new Conversations only), Model and thinking pickers; a picker with one option is hidden.
+ * Message input with the Model and thinking pickers (a picker with one option is hidden), and the Agent's name when `showAgent`.
  * Attachments are picked here; `onSend` uploads them.
  */
 export function Composer({
 	agents,
 	agentId,
-	onAgentChange,
+	showAgent,
 	initial,
 	running,
 	onSend,
@@ -70,7 +70,8 @@ export function Composer({
 }: {
 	agents: AgentOption[];
 	agentId: string;
-	onAgentChange?: (id: string) => void;
+	/** Names the Conversation's Agent; it is picked when the Conversation starts, not here. */
+	showAgent?: boolean;
 	/** Last message's pick; a Model no longer enabled falls back to the default one. */
 	initial?: Choice;
 	running: boolean;
@@ -256,13 +257,10 @@ export function Composer({
 					>
 						<PlusIcon />
 					</InputGroupButton>
-					{onAgentChange && agents.length > 1 && (
-						<PromptInputMenu
-							label={m.agent()}
-							value={agent.id}
-							onChange={onAgentChange}
-							items={agents.map((a) => ({ value: a.id, label: a.name }))}
-						/>
+					{showAgent && (
+						<span className="truncate px-2 text-sm text-muted-foreground">
+							{agent.name}
+						</span>
 					)}
 					{/* the message's own picks sit by Send */}
 					<div className="ml-auto flex items-center gap-1">

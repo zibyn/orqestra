@@ -281,6 +281,7 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 					<Textarea
 						id={fieldId("description")}
 						required
+						placeholder={m.agent_description_placeholder()}
 						value={def.description}
 						onChange={(e) => update({ description: e.target.value })}
 					/>
