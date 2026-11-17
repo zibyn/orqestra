@@ -1,16 +1,19 @@
 import type { User } from "@orqestra/api";
 import {
 	Link,
+	useLocation,
 	useNavigate,
 	useParams,
 	useRouter,
 } from "@tanstack/react-router";
 import {
+	BrainIcon,
 	CalendarClockIcon,
 	EyeOffIcon,
 	Loader2Icon,
 	MoreHorizontalIcon,
 	PencilIcon,
+	PlugIcon,
 	SquarePenIcon,
 	Trash2Icon,
 	XCircleIcon,
@@ -67,6 +70,12 @@ export function AppSidebar({
 	conversations: Listed[];
 	tasks: Task[];
 }) {
+	const { pathname } = useLocation();
+	const nav = [
+		{ to: "/tasks", label: m.tasks_page(), icon: CalendarClockIcon },
+		{ to: "/memory", label: m.memory_page(), icon: BrainIcon },
+		{ to: "/connections", label: m.connections_page(), icon: PlugIcon },
+	] as const;
 	return (
 		<Sidebar variant="inset">
 			<SidebarHeader>
@@ -79,6 +88,19 @@ export function AppSidebar({
 					<SquarePenIcon />
 					{m.new_conversation()}
 				</Button>
+				<SidebarMenu>
+					{nav.map((item) => (
+						<SidebarMenuItem key={item.to}>
+							<SidebarMenuButton
+								isActive={pathname.startsWith(item.to)}
+								render={<Link to={item.to} />}
+							>
+								<item.icon />
+								{item.label}
+							</SidebarMenuButton>
+						</SidebarMenuItem>
+					))}
+				</SidebarMenu>
 			</SidebarHeader>
 			<SidebarContent>
 				{!!tasks.length && (

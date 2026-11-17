@@ -1,12 +1,9 @@
 import type { User } from "@orqestra/api";
 import { Link } from "@tanstack/react-router";
 import {
-	BrainIcon,
-	CalendarClockIcon,
 	ChevronsUpDownIcon,
 	CoinsIcon,
 	LogOutIcon,
-	PlugIcon,
 	SettingsIcon,
 } from "lucide-react";
 import { AlertSwitch } from "#/components/AlertSwitch";
@@ -37,7 +34,7 @@ function signOut() {
 	form.submit();
 }
 
-/** The user menu at the foot of a sidebar: theme, language, this browser's Alerts, Memory, My Usage, /console for Admins, sign out. */
+/** The user menu at the foot of a sidebar: theme, language, this browser's Alerts, My Usage, /console for Admins, sign out. */
 export function NavUser({ user }: { user: User }) {
 	return (
 		<SidebarMenu>
@@ -65,21 +62,9 @@ export function NavUser({ user }: { user: User }) {
 						<ThemeSwitcher />
 						<ParaglideLocaleSwitcher />
 						<AlertSwitch />
-						<DropdownMenuItem render={<Link to="/memory" />}>
-							<BrainIcon />
-							{m.memory_page()}
-						</DropdownMenuItem>
 						<DropdownMenuItem render={<Link to="/usage" />}>
 							<CoinsIcon />
 							{m.usage_page()}
-						</DropdownMenuItem>
-						<DropdownMenuItem render={<Link to="/tasks" />}>
-							<CalendarClockIcon />
-							{m.tasks_page()}
-						</DropdownMenuItem>
-						<DropdownMenuItem render={<Link to="/connections" />}>
-							<PlugIcon />
-							{m.connections_page()}
 						</DropdownMenuItem>
 						{user.admin && (
 							<DropdownMenuItem render={<Link to="/console" />}>
