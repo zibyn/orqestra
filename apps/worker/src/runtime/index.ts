@@ -18,7 +18,7 @@ import { messageText } from "@orqestra/conversations/shared";
 import { failureReason, type McpTool } from "@orqestra/mcp";
 import { inputContent, outputContent } from "../tracing.ts";
 import { prepareContext } from "./compaction.ts";
-import { memoryPrompt, memoryTools, recallTool } from "./memory.ts";
+import { memoryPrompt, memoryTools, OVERVIEW, recallTool } from "./memory.ts";
 import { sandboxTools, skillsPrompt } from "./sandbox.ts";
 import { generateTitle } from "./title.ts";
 import type { openToolbox } from "./toolbox.ts";
@@ -293,7 +293,9 @@ async function reply(
 	// a Subagent only reads; none when the User turned memory off; the Index is a snapshot, so writes during the Run leave the prompt (and its cache) alone
 	const memory = run.memories;
 	try {
-		const memoryBlock = memory ? memoryPrompt(await memory.index(), sub) : "";
+		const memoryBlock = memory
+			? memoryPrompt(await memory.index(), sub, await memory.read(OVERVIEW))
+			: "";
 		const { messages, compaction } = await prepareContext(
 			run.transcript,
 			turn.model,

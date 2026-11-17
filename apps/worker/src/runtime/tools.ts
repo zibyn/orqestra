@@ -229,7 +229,7 @@ export function subagentTools(
 	const spawn = tool({
 		name: "subagent",
 		label: "Subagent",
-		description: `Start subagents on tasks. They work in the background, in parallel, from a blank context, so you can keep working. Use them for self-contained work such as research. Each brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
+		description: `Start subagents on tasks. They work in the background, in parallel, from a blank context, so you can keep working. They share your sandbox: files you leave under /workspace are theirs to read, and theirs yours, so give each its own paths to write to. Use them for self-contained work such as research. Each brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
 		parameters: Type.Object({
 			tasks: Type.Array(
 				Type.Object({

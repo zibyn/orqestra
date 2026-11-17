@@ -55,6 +55,9 @@ const text = (t: string) => [{ type: "text" as const, text: t }];
 // infers `execute`'s params from `parameters`, then fits the Agent's untyped Tool list
 const tool = <T extends TSchema>(t: AgentTool<T>) => t as unknown as AgentTool;
 
+/** Under SKILLS_DIR: each written Skill's version, by name. */
+const VERSIONS = ".versions.json";
+
 /** `s` as one single-quoted bash word. */
 const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 
@@ -64,7 +67,7 @@ const tail = (s: string) =>
 		: s;
 
 /**
- * The Tools that read files and run commands in the Conversation's Sandbox. The Sandbox is got ready on the
+ * The Tools that read files and run commands in the Sandbox of the Conversation's tree. The Sandbox is got ready on the
  * first call, and the Skills written into it then, and again whenever it had to be created or started.
  */
 export function sandboxTools(run: RunHandle, skills: Skills): AgentTool[] {
@@ -72,23 +75,43 @@ export function sandboxTools(run: RunHandle, skills: Skills): AgentTool[] {
 	let written = false;
 	let queue: Promise<unknown> = Promise.resolve();
 
+	// the Sandbox is shared with the other Agents of the Conversation's tree, whose Skills may differ: write only the
+	// Skills not there at their version, leaving the others; VERSIONS records each one's version
 	async function writeSkills(id: string, client: Orrery) {
+		const versions: Record<string, number> = await client
+			.readFile(id, `.skills/${VERSIONS}`, { signal })
+			.then((bytes) => JSON.parse(new TextDecoder().decode(bytes)))
+			.catch((error) => {
+				// none yet, or unreadable: write every Skill
+				if (error instanceof OrreryError && error.status !== 404) throw error;
+				return {};
+			});
+		const stale = skills.filter((s) => versions[s.name] !== s.versionId);
+		if (!stale.length) return;
 		const cleared = await runCommand(
 			client,
 			id,
-			`rm -rf ${SKILLS_DIR} && mkdir -p ${SKILLS_DIR}`,
+			`rm -rf ${stale.map((s) => quote(`${SKILLS_DIR}/${s.name}`)).join(" ")} && mkdir -p ${SKILLS_DIR}`,
 			{ signal },
 		);
 		if (cleared.exit !== 0)
 			throw new Error(`Could not clear ${SKILLS_DIR}: ${cleared.stderr}`);
 		const files = await Promise.all(
-			skills.map(async (s) =>
+			stale.map(async (s) =>
 				(await run.skillFiles(s.versionId)).map((f) => ({
 					path: `${s.name}/${f.path}`,
 					content: f.content,
 				})),
 			),
 		);
+		for (const s of stale) versions[s.name] = s.versionId;
+		// shortcut: two Runs writing at once may each drop the other's entry, which only makes a later Run write that Skill again
+		files.push([
+			{
+				path: VERSIONS,
+				content: Buffer.from(JSON.stringify(versions)),
+			},
+		]);
 		await client.uploadArchive(id, ".skills", tar(files.flat()), { signal });
 	}
 	// one at a time, so parallel Tool calls create, start and write once

@@ -692,9 +692,10 @@ describe("runAgent with Skills", () => {
 	});
 	// what bash does for these commands
 	const shell = (command: string, fs: Map<string, Uint8Array<ArrayBuffer>>) => {
-		if (command.includes("rm -rf /workspace/.skills"))
+		// rm -rf of each quoted Skill folder
+		for (const [, dir] of command.matchAll(/'\/workspace\/(\.skills\/[^']+)'/g))
 			for (const path of fs.keys())
-				if (path.startsWith(".skills/")) fs.delete(path);
+				if (path.startsWith(`${dir}/`)) fs.delete(path);
 		return { stdout: command === "echo hi" ? "hi\n" : "" };
 	};
 	const toolResults = (m: ReturnType<typeof memoryRun>) =>
@@ -813,6 +814,7 @@ describe("runAgent with Skills", () => {
 		const id = m.sandboxId as string;
 		// every Skill the Agent may use is written, the one the model may not invoke too
 		expect([...o.files(id).keys()].sort()).toEqual([
+			".skills/.versions.json",
 			".skills/manual/SKILL.md",
 			".skills/pdf/SKILL.md",
 			".skills/pdf/scripts/x.py",
@@ -825,32 +827,50 @@ describe("runAgent with Skills", () => {
 		);
 	});
 
-	it("writes the current Skills again after starting a Sandbox Idle Stop stopped", async () => {
+	it("writes the Skills again only when the Sandbox lacks them at their version, leaving other Agents' Skills", async () => {
 		const o = memoryOrrery({ exec: shell });
 		const { m, deps } = setup(o);
 		script([
 			fauxAssistantMessage(fauxToolCall("bash", { command: "echo hi" })),
 			() => {
-				// stopped between two steps, and the Admin uploaded a new version meanwhile
-				o.stop(m.sandboxId as string);
-				current.pdf = 2;
+				const id = m.sandboxId as string;
+				const files = o.files(id);
+				// stopped between two steps; meanwhile a Subagent's Run left a Skill of its own,
+				// and one wrote an older pdf, as a Run that started before an Admin's upload would
+				o.stop(id);
+				files.set(
+					".skills/other/SKILL.md",
+					new TextEncoder().encode("# Other"),
+				);
+				files.set(".skills/pdf/SKILL.md", new TextEncoder().encode("# PDF v2"));
+				files.delete(".skills/pdf/scripts/x.py");
+				files.set(
+					".skills/.versions.json",
+					new TextEncoder().encode(
+						JSON.stringify({ pdf: 2, manual: 3, other: 9 }),
+					),
+				);
 				return fauxAssistantMessage(
 					fauxToolCall("read", { path: ".skills/pdf/SKILL.md" }),
 				);
 			},
 			fauxAssistantMessage("done"),
 		]);
-		try {
-			await runAgent(m.run, deps);
-		} finally {
-			current.pdf = 1;
-		}
+		await runAgent(m.run, deps);
 
-		expect(resultText(toolResults(m)[1])).toBe("# PDF v2");
-		expect(o.calls).toContain(`startSandbox ${m.sandboxId}`);
-		// the old version's script is gone
-		expect(o.files(m.sandboxId as string).has(".skills/pdf/scripts/x.py")).toBe(
-			false,
+		const id = m.sandboxId as string;
+		expect(resultText(toolResults(m)[1])).toBe("# PDF v1");
+		expect(o.calls).toContain(`startSandbox ${id}`);
+		expect(o.files(id).has(".skills/pdf/scripts/x.py")).toBe(true);
+		expect(o.files(id).has(".skills/other/SKILL.md")).toBe(true);
+		expect(
+			JSON.parse(
+				new TextDecoder().decode(o.files(id).get(".skills/.versions.json")),
+			),
+		).toEqual({ pdf: 1, manual: 3, other: 9 });
+		// manual was there at its version: only pdf is written again
+		expect(o.calls.filter((c) => c.startsWith("uploadArchive"))).toHaveLength(
+			2,
 		);
 	});
 
@@ -1091,6 +1111,57 @@ describe("runAgent with memory", () => {
 		expect([...m.memories.values()]).toMatchObject([
 			{ path: "prefs/language", body: "zh" },
 		]);
+	});
+
+	it("replaces or deletes a Memory only once the Run has read it as it stands", async () => {
+		const write = (body: string) =>
+			fauxToolCall("memory_write", {
+				path: "prefs/language",
+				description: "Replies in English",
+				body,
+			});
+		script([
+			fauxAssistantMessage([
+				write("unread"),
+				fauxToolCall("memory_delete", { path: "prefs/language" }),
+			]),
+			// calls of one step may run at once: the read goes in a step of its own
+			fauxAssistantMessage([
+				fauxToolCall("memory_read", { path: "prefs/language" }),
+			]),
+			fauxAssistantMessage([write("read")]),
+			fauxAssistantMessage([write("again")]),
+			fauxAssistantMessage("done"),
+		]);
+		const m = run("remembers");
+		await runAgent(m.run, memDeps);
+		const [unread, del, , read, again] = results(m);
+		expect(unread.isError).toBe(true);
+		expect(JSON.stringify(unread.content)).toContain("memory_read");
+		expect(del.isError).toBe(true);
+		expect(read.isError).toBe(false);
+		expect(again.isError).toBe(false);
+		expect(m.memories.get("prefs/language")?.body).toBe("again");
+	});
+
+	it("shows the Memory Overview's body whole, ahead of the Index that leaves it out", async () => {
+		answer();
+		await runAgent(
+			run("remembers", {
+				memories: [
+					{ path: "overview", description: "About them", body: "Prefers tea." },
+					{ path: "prefs/drink", description: "Drinks", body: "tea" },
+				],
+			}).run,
+			memDeps,
+		);
+		const p = prompt(context);
+		expect(p).toContain('<memory_overview path="overview">\nPrefers tea.\n');
+		expect(p).not.toContain("- overview:");
+		expect(p.indexOf("<memory_overview")).toBeLessThan(
+			p.indexOf("<memory_index>"),
+		);
+		expect(p).toContain("- prefs/drink: Drinks");
 	});
 
 	it("cuts a long Memory Index, saying how many Memories it left out", async () => {

@@ -1742,7 +1742,8 @@ describe.skipIf(!url)(
 				.where(sql`${schema.conversation.parentId} = ${id}`);
 			await ensureSandbox(sub.id, o.client, provider);
 			await sandboxed(o).retry(userId, id);
-			expect(o.state("sb1")).toBe("deleted");
+			// the Subagent worked in its parent's Sandbox, which stays with the parent
+			expect(o.state("sb1")).toBe("ready");
 			const view = await waitFor(
 				() => get(id),
 				(v) => v?.status === "idle",
@@ -2805,12 +2806,12 @@ describe.skipIf(!url)(
 			const rows = () =>
 				db.select({ id: schema.conversation.id }).from(schema.conversation);
 
-			it("gives a Subagent's Conversation a Sandbox of its own, and deletes both with the Conversation", async () => {
+			it("gives a Subagent its top-level Conversation's Sandbox, and deletes it with the Conversation", async () => {
 				const { o, withSandboxes, parent, sandboxes } = await setup();
-				expect(sandboxes).toEqual(["sb1", "sb2"]);
+				expect(sandboxes).toEqual(["sb1", "sb1"]);
 				await withSandboxes.delete(userId, parent.id);
 				expect(await rows()).toEqual([]);
-				expect(sandboxes.map(o.state)).toEqual(["deleted", "deleted"]);
+				expect(o.state("sb1")).toBe("deleted");
 			});
 
 			it("deletes the Conversation when orrery cannot be reached, and logs the Sandboxes left behind", async () => {
@@ -2822,7 +2823,6 @@ describe.skipIf(!url)(
 					expect(await rows()).toEqual([]);
 					expect(log.mock.calls.map((c) => c[0])).toEqual([
 						expect.stringContaining("sb1"),
-						expect.stringContaining("sb2"),
 					]);
 				} finally {
 					log.mockRestore();

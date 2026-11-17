@@ -35,6 +35,8 @@ export type Memory = Pick<
 	typeof memory.$inferSelect,
 	"path" | "description" | "body" | "conversationId" | "updatedAt"
 >;
+/** What a Memory says: what `seen` compares. */
+export type Content = Pick<Memory, "description" | "body">;
 
 /**
  * One User's Memories, as their Agent reads and writes them; `before` is the Memory as it was.
@@ -44,12 +46,16 @@ export type Memories = {
 	/** Path and description of each, latest updated first: the Memory Index. */
 	index(): Promise<Pick<Memory, "path" | "description">[]>;
 	read(path: string): Promise<Memory | undefined>;
-	/** Creates or replaces the Memory at `path`; of two at once the later wins. */
+	/**
+	 * Creates or replaces the Memory at `path`; of two at once the later wins, unless `seen` is given:
+	 * the Memory there as the caller last read it, null for none, refused (InvalidMemory) when it is no longer so.
+	 */
 	write(
 		path: string,
 		description: string,
 		body: string,
 		toolCallId?: string,
+		seen?: Content | null,
 	): Promise<{ before?: Memory }>;
 	/** Replaces `old`, which must occur once in the body, with `replacement`. */
 	edit(
@@ -58,7 +64,12 @@ export type Memories = {
 		replacement: string,
 		toolCallId?: string,
 	): Promise<{ before: Memory }>;
-	delete(path: string, toolCallId?: string): Promise<{ before: Memory }>;
+	/** Refused, as `write`, when `seen` is given and the Memory is no longer as the caller last read it. */
+	delete(
+		path: string,
+		toolCallId?: string,
+		seen?: Content | null,
+	): Promise<{ before: Memory }>;
 	/** Those whose path, description or body matches the regex `pattern`, ignoring case. */
 	grep(pattern: string): Promise<Memory[]>;
 };
@@ -84,6 +95,22 @@ export function checkMemory(path: string, description: string, body: string) {
 		throw new InvalidMemory(
 			`The body has ${bytes} bytes; at most ${MAX_MEMORY_BODY} are allowed. Shorten it, or split it into several memories.`,
 		);
+}
+
+/** Refuses a replace or delete of a Memory that is no longer as the caller last read it, `seen` (null for none), so a change it never saw is not lost. */
+export function checkSeen(
+	path: string,
+	now: Content | undefined,
+	seen: Content | null | undefined,
+) {
+	if (seen === undefined) return;
+	if (now?.description === seen?.description && now?.body === seen?.body)
+		return;
+	throw new InvalidMemory(
+		now
+			? `The memory at ${path} has changed since you last read it, or you have not read it yet: read it with memory_read, then try again.`
+			: `The memory at ${path} was deleted since you last read it: check with memory_read whether to write it again.`,
+	);
 }
 
 export const tooMany = () =>
@@ -209,7 +236,6 @@ async function upsert(
 	return true;
 }
 
-type Content = Pick<Memory, "description" | "body">;
 const content = (m: Content | undefined) =>
 	m && { description: m.description, body: m.body };
 
@@ -303,10 +329,11 @@ export function memoriesOf(userId: string, conversationId: string): Memories {
 				.where(eq(memory.userId, userId))
 				.orderBy(desc(memory.updatedAt), memory.path),
 		read: (path) => find(db, path),
-		write: async (path, description, body, toolCallId) => {
+		write: async (path, description, body, toolCallId, seen) => {
 			checkMemory(path, description, body);
 			return locked(async (tx) => {
 				const before = await find(tx, path);
+				checkSeen(path, before, seen);
 				if (
 					!(await upsert(tx, userId, path, !!before, {
 						description,
@@ -335,8 +362,9 @@ export function memoriesOf(userId: string, conversationId: string): Memories {
 				});
 				return { before };
 			}),
-		delete: (path, toolCallId) =>
+		delete: (path, toolCallId, seen) =>
 			locked(async (tx) => {
+				if (seen !== undefined) checkSeen(path, await find(tx, path), seen);
 				const [before] = await tx
 					.delete(memory)
 					.where(at(path))

@@ -109,6 +109,34 @@ for (const adapter of adapters)
 			expect((await mine.read("q"))?.body).toBe("b");
 		});
 
+		it("refuses to replace or delete a Memory that is no longer as the caller last saw it", async () => {
+			const one = { description: "d", body: "one" };
+			await mine.write("p", "d", "one", undefined, null);
+			await expect(mine.write("p", "d", "x", undefined, null)).rejects.toThrow(
+				/not read it yet/,
+			);
+			await mine.edit("p", "one", "two"); // another Run's change
+			await expect(mine.write("p", "d", "x", undefined, one)).rejects.toThrow(
+				MemoryError,
+			);
+			await expect(mine.delete("p", undefined, one)).rejects.toThrow(
+				/changed since/,
+			);
+			expect((await mine.read("p"))?.body).toBe("two");
+			const two = { description: "d", body: "two" };
+			await mine.write("p", "d", "three", undefined, two);
+			await mine.delete("p");
+			await expect(
+				mine.write("p", "d", "x", undefined, {
+					description: "d",
+					body: "three",
+				}),
+			).rejects.toThrow(/deleted since/);
+			await mine.write("p", "d", "four", undefined, null);
+			await mine.delete("p", undefined, { description: "d", body: "four" });
+			expect(await mine.read("p")).toBeUndefined();
+		});
+
 		it("edits a Memory's body by replacing text that occurs once, and refuses otherwise", async () => {
 			await mine.write("p", "d", "likes tea, likes cake");
 			await mine.edit("p", "tea", "coffee");

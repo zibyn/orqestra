@@ -101,7 +101,7 @@ A folder of know-how in the Agent Skills format, added by an Admin by upload or 
 _Avoid_: Plugin, prompt, template, Tool
 
 **Sandbox**:
-The isolated machine where an Agent reads its Skills, runs their scripts and works on files, served by the Sandbox Provider. A Conversation gets one the first time its Agent needs it, whenever a Sandbox Provider is configured, with or without Skills; it sleeps when idle and wakes with its files intact, until the Conversation is deleted. A Subagent gets a Sandbox of its own. Reading and running in it are Tools, served by the Sandbox Provider.
+The isolated machine where an Agent reads its Skills, runs their scripts and works on files, served by the Sandbox Provider. A Conversation gets one the first time its Agent needs it, whenever a Sandbox Provider is configured, with or without Skills; it sleeps when idle and wakes with its files intact, until the Conversation is deleted. A Subagent works in the Sandbox of its top-level Conversation, so files pass between the Agents of one tree, each told only of the Skills its own Agent Definition allows, though the files of every one written there stay. Reading and running in it are Tools, served by the Sandbox Provider.
 _Avoid_: Container, VM, workspace, code interpreter
 
 **Sandbox Provider**:
@@ -175,8 +175,12 @@ One note an Agent keeps about a User across Conversations, such as a preference,
 _Avoid_: Fact, profile, note, knowledge
 
 **Memory Index**:
-The list of a User's Memories, one line each with its path and description, that an Agent sees as its Run starts; it reads a Memory's body only when it needs it.
+The list of a User's Memories, one line each with its path and description, that an Agent sees as its Run starts, the Memory Overview left out; it reads a Memory's body only when it needs it.
 _Avoid_: Memory file, summary, profile
+
+**Memory Overview**:
+The one Memory at the path `overview`, a short summary of what matters most about the User that names the Memories holding the detail; its whole body is in every Run's prompt, ahead of the Memory Index, which leaves it out. Any Agent that writes memory keeps it, a Memory Tidying above all; until one writes it, a Run has none.
+_Avoid_: Profile, summary, pinned memory
 
 **Recall**:
 The Tool that finds a User's past Conversations by keyword, lists those had in a span of time, and opens them, so an Agent can use what was said before even if no Memory holds it, and check what a Memory was written from. It comes and goes with memory, and never finds an Incognito Conversation.

@@ -1,5 +1,7 @@
 import {
+	type Content,
 	checkMemory,
+	checkSeen,
 	InvalidMemory,
 	MAX_GREP_RESULTS,
 	MAX_MEMORIES,
@@ -10,8 +12,6 @@ import {
 	tooMany,
 	type Undone,
 } from "./index.ts";
-
-type Content = Pick<Memory, "description" | "body">;
 
 /**
  * A User's Memories kept in memory, by path, with the same limits, errors and undo as `memoriesOf` and `undoChange`
@@ -50,9 +50,10 @@ export function inMemoryMemories(
 		index: async () =>
 			latest().map(({ path, description }) => ({ path, description })),
 		read: async (path) => store.get(path),
-		write: async (path, description, body, toolCallId) => {
+		write: async (path, description, body, toolCallId, seen) => {
 			checkMemory(path, description, body);
 			const before = store.get(path);
+			checkSeen(path, before, seen);
 			if (!before && store.size >= MAX_MEMORIES) throw tooMany();
 			store.delete(path);
 			put({ path, description, body });
@@ -71,7 +72,8 @@ export function inMemoryMemories(
 			});
 			return { before };
 		},
-		delete: async (path, toolCallId) => {
+		delete: async (path, toolCallId, seen) => {
+			checkSeen(path, store.get(path), seen);
 			const before = get(path);
 			store.delete(path);
 			record(toolCallId, path, before, undefined);

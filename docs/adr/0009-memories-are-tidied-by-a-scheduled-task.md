@@ -17,4 +17,4 @@ We built it from a Scheduled Task, not a background job of its own, because that
 
 - A tidying finds when it last ran by searching Recall for its own prompt; a User who rewrites the prompt's first line makes it start again from seven days back.
 - It is offered only when some Agent the User can pick uses memory, and changes nothing while the User has memory off.
-- It and a Conversation the User has at the same time may write the same Memory; the later write wins, as between any two Runs.
+- It and a Conversation the User has at the same time may write the same Memory. An edit applies to the Memory as it then stands; a replace or delete is refused once the Memory is no longer as that Run last read it, and the Agent reads it again, so neither Run loses the other's change.
