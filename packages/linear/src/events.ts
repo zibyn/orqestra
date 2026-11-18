@@ -149,7 +149,7 @@ export async function queueLinearEvent(event: LinearEvent) {
 	});
 }
 
-/** Works on queued events one at a time, in the order Linear sent them, until the returned worker is closed. */
+/** Works on queued events one at a time, in the order they were queued (a retried one goes later), until the returned worker is closed. */
 export async function serveLinearEvents(
 	handle: (event: LinearEvent) => Promise<void>,
 ) {
