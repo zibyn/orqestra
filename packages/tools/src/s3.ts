@@ -49,7 +49,7 @@ export function s3Store(
 					),
 					Bun.sleep(CLEANUP_MS).then(() => false),
 				]);
-				// given up on after a while too, though it may still land: the key is not put again
+				// given up on after a while too, though it may still land: harmless for an Attachment, whose key is not put again; for a parse-cache entry it only costs a re-parse
 				if (answered)
 					await Promise.race([
 						s3.delete(key),
