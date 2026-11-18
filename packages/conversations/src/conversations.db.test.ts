@@ -2689,7 +2689,11 @@ describe.skipIf(!url)(
 			for (const [name, scenario, expected, setup = {}] of scenarios) {
 				it(`${name} (Postgres)`, async () => {
 					runOrrery = memoryOrrery();
-					let result: unknown;
+					// the handler's own answer: finish commits idle before the handler returns
+					let answer!: (v: unknown) => void;
+					const result = new Promise<unknown>((r) => {
+						answer = r;
+					});
 					override = async (run) => {
 						// set as the Run goes, since a used-up limit refuses the message that would start it
 						if (setup.spendingLimit !== undefined) {
@@ -2699,28 +2703,30 @@ describe.skipIf(!url)(
 								usd: setup.spendingLimit,
 							});
 						}
-						result = await scenario(run, {
-							push: async (t) => {
-								await send(t, run.conversationId);
-							},
-							// written once the reply's stream ends, not awaited by it
-							usage: async () => {
-								for (let i = 0; i < 20; i++) {
-									const rows = await db.select().from(schema.usage);
-									if (rows.length) return rows.map(counted);
-									await new Promise((r) => setTimeout(r, 50));
-								}
-								return [];
-							},
-							orrery: runOrrery,
-						});
+						answer(
+							await scenario(run, {
+								push: async (t) => {
+									await send(t, run.conversationId);
+								},
+								// written once the reply's stream ends, not awaited by it
+								usage: async () => {
+									for (let i = 0; i < 20; i++) {
+										const rows = await db.select().from(schema.usage);
+										if (rows.length) return rows.map(counted);
+										await new Promise((r) => setTimeout(r, 50));
+									}
+									return [];
+								},
+								orrery: runOrrery,
+							}),
+						);
 					};
 					const id = await send("one");
 					await waitFor(
 						() => get(id),
 						(v) => v?.status === "idle" && !v.messages.some((m) => m.queued),
 					);
-					expect(result).toEqual(expected);
+					expect(await result).toEqual(expected);
 				});
 
 				it(`${name} (memoryRun)`, async () => {
