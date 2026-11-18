@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
+import { memoryStore } from "@orqestra/db/store";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";
@@ -9,7 +10,7 @@ import { createCapabilities } from "./capabilities.ts";
 const url = process.env.TEST_DATABASE_URL;
 
 const api = createApp({
-	config: createCapabilities(db),
+	config: createCapabilities(db, memoryStore().store),
 	session: async () => ({
 		user: { id: "a1", name: "Ada", admin: true },
 		cookies: [],

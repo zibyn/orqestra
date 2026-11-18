@@ -42,7 +42,7 @@ cp .env.example .env   # 填写各项，密钥用 openssl rand -base64 32 生成
 docker compose up -d
 ```
 
-Compose 启动八个服务：`postgres`、`rustfs`（存放 Attachment 的对象存储）、`bucket`（创建 bucket 后退出）、`migrate`（执行数据库迁移后退出）、`api`、`web`、`worker` 和 `caddy`（唯一对外端口，默认 3000，可用 `PORT` 修改；`/api/*`、`/auth/*` 转给 api，其余转给 web）。默认拉取 `ghcr.io/zibyn/orqestra-api`、`ghcr.io/zibyn/orqestra-web`、`ghcr.io/zibyn/orqestra-worker` 与 `ghcr.io/zibyn/orqestra-migrate` 的 `latest` 镜像；用 `ORQESTRA_VERSION=0.1.0` 固定版本，或用 `docker compose up -d --build` 从源码构建。
+Compose 启动八个服务：`postgres`、`rustfs`（存放 Attachment 与 Skill 文件的对象存储）、`bucket`（创建 bucket 后退出）、`migrate`（执行数据库迁移后退出）、`api`、`web`、`worker` 和 `caddy`（唯一对外端口，默认 3000，可用 `PORT` 修改；`/api/*`、`/auth/*` 转给 api，其余转给 web）。默认拉取 `ghcr.io/zibyn/orqestra-api`、`ghcr.io/zibyn/orqestra-web`、`ghcr.io/zibyn/orqestra-worker` 与 `ghcr.io/zibyn/orqestra-migrate` 的 `latest` 镜像；用 `ORQESTRA_VERSION=0.1.0` 固定版本，或用 `docker compose up -d --build` 从源码构建。
 
 升级：`docker compose pull && docker compose up -d`，迁移会在 api 和 worker 启动前自动执行。
 
@@ -58,7 +58,7 @@ Compose 启动八个服务：`postgres`、`rustfs`（存放 Attachment 的对象
 | `POLARIS_SECRET` | 是 | 加密会话 Cookie（至少 32 字符）；更换后所有人需重新登录 |
 | `DATABASE_URL` | Compose 外必填 | PostgreSQL 连接串；Compose 根据 `POSTGRES_PASSWORD` 自动生成 |
 | `POSTGRES_PASSWORD` | 否 | Compose 内置 Postgres 的密码，默认 `orqestra` |
-| `S3_ENDPOINT` | Compose 外必填 | 存放 Attachment 的 S3 兼容对象存储（RustFS、MinIO、S3、R2 等）地址；Compose 内默认用内置的 RustFS。缺少任一 `S3_*` 必填项时 api 和 worker 不启动 |
+| `S3_ENDPOINT` | Compose 外必填 | 存放 Attachment 与 Skill 文件的 S3 兼容对象存储（RustFS、MinIO、S3、R2 等）地址；Compose 内默认用内置的 RustFS。缺少任一 `S3_*` 必填项时 api 和 worker 不启动 |
 | `S3_BUCKET` | Compose 外必填 | bucket 名，需事先建好；Compose 内默认 `orqestra`，由 `bucket` 服务创建 |
 | `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | Compose 外必填 | 对象存储的访问密钥；Compose 内同时作为 RustFS 的管理员密钥，默认 `orqestra` / `orqestra-secret` |
 | `S3_REGION` | 否 | 对象存储的 region，服务需要时填写 |

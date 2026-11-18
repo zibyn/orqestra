@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { memoryStore } from "@orqestra/tools/testing";
+import { memoryStore } from "@orqestra/db/store";
 import type { Session } from "./app.ts";
 
 // GET /api/conversations/:id/events against the real @orqestra/conversations: needs TEST_DATABASE_URL, which src/test-env.ts sets up
@@ -9,7 +9,7 @@ const { conversation } = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
 const { createConversations } = await import("@orqestra/conversations");
 const { createCapabilities } = await import("./capabilities.ts");
-const config = createCapabilities(db);
+const config = createCapabilities(db, memoryStore().store);
 const { createApp } = await import("./app.ts");
 
 const ada = { id: "ada", name: "Ada", admin: false };

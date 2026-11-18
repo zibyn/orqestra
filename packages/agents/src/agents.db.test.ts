@@ -6,11 +6,12 @@ if (url) process.env.DATABASE_URL = url;
 const { drizzle } = await import("drizzle-orm/node-postgres");
 const { sql } = await import("drizzle-orm");
 const schema = await import("@orqestra/db/schema");
+const { memoryStore } = await import("@orqestra/db/store");
 const { createSkills } = await import("@orqestra/skills");
 const { zip } = await import("@orqestra/skills/test-zip");
 const { createAgents } = await import("./live.ts");
 const db = drizzle(url ?? "", { schema });
-const skills = createSkills(db);
+const skills = createSkills(db, memoryStore().store);
 // nothing configured: no Tool or Skill is available to a Run
 const available = async () => ({ tools: {}, mcpServers: {}, skills: {} });
 const agents = createAgents(db, { skills, available });

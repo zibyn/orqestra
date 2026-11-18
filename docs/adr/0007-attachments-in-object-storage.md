@@ -4,7 +4,7 @@ status: accepted
 
 # Attachments live in object storage
 
-Attachments used to be files in the Conversation's Sandbox, with Orqestra keeping only their name and path, so they needed a Sandbox Provider, vanished with the Sandbox, and could not be read by a Tool outside it such as Parse. Now Orqestra keeps every Attachment's original, the User's uploads and the files the Agent attaches, in S3-compatible object storage (RustFS in development and tests), set like Postgres in the deployment's environment and required for the api and worker to start; a Sandbox only ever gets a copy. Unlike Skill files ([0004](0004-skill-files-in-postgres.md)), Attachments are up to 50 MB each and grow with use, so Postgres is the wrong place for them, and keeping the Sandbox as a fallback would mean two storage paths to explain and test.
+Attachments used to be files in the Conversation's Sandbox, with Orqestra keeping only their name and path, so they needed a Sandbox Provider, vanished with the Sandbox, and could not be read by a Tool outside it such as Parse. Now Orqestra keeps every Attachment's original, the User's uploads and the files the Agent attaches, in S3-compatible object storage (RustFS in development and tests), set like Postgres in the deployment's environment and required for the api and worker to start; a Sandbox only ever gets a copy. Unlike Skill files then ([0004](0004-skill-files-in-postgres.md); since [0017](0017-skill-files-in-object-storage.md) in object storage too), Attachments are up to 50 MB each and grow with use, so Postgres is the wrong place for them, and keeping the Sandbox as a fallback would mean two storage paths to explain and test.
 
 ## Consequences
 

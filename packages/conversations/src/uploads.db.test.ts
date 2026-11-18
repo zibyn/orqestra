@@ -25,7 +25,8 @@ const schema = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
 const { createConversations, DEFAULT_LIMITS } = await import("./index.ts");
 const { noMcpServerDeletes } = await import("./testing.ts");
-const { memoryOrrery, memoryStore } = await import("@orqestra/tools/testing");
+const { memoryStore } = await import("@orqestra/db/store");
+const { memoryOrrery } = await import("@orqestra/tools/testing");
 const { ensureRun } = await import("./runs.ts");
 
 const faux = fauxProvider({ provider: "faux", models: [{ id: "faux-1" }] });

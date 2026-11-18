@@ -9,9 +9,9 @@ status: accepted
 Packages are layered, and a package may depend only on packages of a lower layer, never on one of its own layer:
 
 ```
-L0  db              schema · client · migrations · secret · live(load)
+L0  db              schema · client · migrations · secret · live(load) · ObjectStore
 L1  models          Provider · Model · Catalog · prices · Model runtime · connection test
-    tools           Search / Sandbox / Parse adapters and their Providers
+    tools           Search / Sandbox / Parse adapters and their Providers · S3 adapter
     mcp             MCP Server · Connection · OAuth · protocol · poll/cancel primitives
     skills          Skill · zip · Skill files · skillBlock
     memory          Memory · its change records

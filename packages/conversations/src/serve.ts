@@ -12,6 +12,7 @@ import {
 	type UsagePurpose,
 	usage,
 } from "@orqestra/db/schema";
+import type { ObjectStore } from "@orqestra/db/store";
 import type {
 	BackgroundCallStart,
 	ConnectionStore,
@@ -24,7 +25,7 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/models";
 import type { SkillFile } from "@orqestra/skills/shared";
-import type { ObjectStore, Orrery, SandboxProvider } from "@orqestra/tools";
+import type { Orrery, SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { alertRun } from "./alerts.ts";

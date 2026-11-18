@@ -16,13 +16,13 @@ import {
 	user,
 } from "@orqestra/db/schema";
 import { encryptSecret } from "@orqestra/db/secret";
+import { memoryStore } from "@orqestra/db/store";
 import { linearWebhookEvent } from "@orqestra/linear/events";
 import {
 	agentSessionEvent,
 	fakeLinear,
 	signed,
 } from "@orqestra/linear/testing";
-import { memoryStore } from "@orqestra/tools/testing";
 import { eq, sql } from "drizzle-orm";
 import { handleLinearEvent, reportingToLinear } from "./linear.ts";
 

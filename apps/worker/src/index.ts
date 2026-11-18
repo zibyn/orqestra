@@ -1,5 +1,6 @@
 import { db } from "@orqestra/db";
 import { connectionStore } from "@orqestra/mcp";
+import { backfillSkillFiles } from "@orqestra/skills";
 import { s3Store } from "@orqestra/tools/s3";
 import { createCapabilities } from "./capabilities.ts";
 import { tracing } from "./tracing.ts";
@@ -9,7 +10,11 @@ if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set");
 // throws on missing S3_* variables
 const store = s3Store();
 
-const config = createCapabilities(db);
+// files from before ADR 0017, moved before a Run reads them; the api does the same, whichever starts first
+const moved = await backfillSkillFiles(db, store);
+if (moved) console.log(`moved ${moved} Skill file(s) to object storage`);
+
+const config = createCapabilities(db, store);
 // throws on a missing ORQESTRA_ENCRYPTION_KEY or invalid stored config so the worker never starts with it
 const loaded = await config.current();
 console.log(

@@ -130,5 +130,4 @@ export function builtinTools(
 
 export * from "./orrery.ts";
 export * from "./sandbox.ts";
-export type { ObjectStore } from "./store.ts";
 export { tar } from "./tar.ts";

@@ -253,6 +253,13 @@
       "when": 1795017315519,
       "tag": "0035_git_host",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1795017340256,
+      "tag": "0036_skill_files_in_object_storage",
+      "breakpoints": true
     }
   ]
 }

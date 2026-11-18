@@ -745,7 +745,12 @@ export const skillFile = pgTable(
 			.references(() => skillVersion.id, { onDelete: "cascade" }),
 		// relative to the Skill's folder: SKILL.md, scripts/…
 		path: text("path").notNull(),
-		content: bytea("content").notNull(),
+		// hex; the bytes are the object at skills/<Skill name>/<sha256> (ADR 0017), which the Skill's versions share.
+		// Null only for a file from before, until backfillSkillFiles has moved its content there.
+		sha256: text("sha256"),
+		size: integer("size"),
+		// shortcut: files from before ADR 0017 keep their bytes here, read only by backfillSkillFiles; a later migration drops it
+		content: bytea("content"),
 	},
 	(table) => [primaryKey({ columns: [table.versionId, table.path] })],
 );

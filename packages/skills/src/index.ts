@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { stripFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { Db, Tx } from "@orqestra/db";
 import { live } from "@orqestra/db/live";
 import { skill, skillFile, skillVersion } from "@orqestra/db/schema";
-import { and, desc, eq, max, sql } from "drizzle-orm";
+import type { ObjectStore } from "@orqestra/db/store";
+import { and, desc, eq, isNotNull, isNull, max, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { SkillErrors, SkillFile } from "./shared.ts";
 import {
@@ -15,7 +17,7 @@ import {
 /** NOTIFY channel, no payload: a Skill changed, reload them (web -> web and worker). */
 const SKILLS_CHANNEL = "skills_changed";
 
-/** A Skill Runs can use; read its files with `skillFiles(db, versionId)`. */
+/** A Skill Runs can use; read its files with `skillFiles(db, store, versionId)`. */
 export interface SkillInfo {
 	/** The current version when the Skills were loaded. */
 	versionId: number;
@@ -52,13 +54,136 @@ export class SkillNotFound extends Error {
 	}
 }
 
-/** A version's files, paths relative to the Skill's folder; for Runs, by the `versionId` of `current()`. */
-export const skillFiles = (db: Db, versionId: number) =>
-	db
-		.select({ path: skillFile.path, content: skillFile.content })
+// A Skill's files are objects named by their bytes under its name (ADR 0017): its versions share those they have in common,
+// and deleting the Skill deletes them all
+const skillPrefix = (name: string) => `skills/${name}/`;
+const objectKey = (name: string, sha256: string) =>
+	`${skillPrefix(name)}${sha256}`;
+const hash = (content: Uint8Array) =>
+	createHash("sha256").update(content).digest("hex");
+
+/** Locks the Skill until the transaction ends, so its writers put and delete its objects one at a time. */
+const lockSkill = (tx: Tx, name: string) =>
+	tx
+		.select({ name: skill.name })
+		.from(skill)
+		.where(eq(skill.name, name))
+		.for("update");
+
+/**
+ * Puts the files the Skill's objects lack, with the Skill locked. One a file of the Skill already names is never put again,
+ * since a put that fails deletes its key.
+ */
+async function putFiles(
+	tx: Tx,
+	store: ObjectStore,
+	name: string,
+	files: { sha256: string; content: Uint8Array }[],
+) {
+	const stored = await tx
+		.selectDistinct({ sha256: skillFile.sha256 })
 		.from(skillFile)
-		.where(eq(skillFile.versionId, versionId))
+		.innerJoin(skillVersion, eq(skillFile.versionId, skillVersion.id))
+		.where(and(eq(skillVersion.skillName, name), isNotNull(skillFile.sha256)));
+	const known = new Set(stored.map((f) => f.sha256));
+	const missing = new Map(
+		files.filter((f) => !known.has(f.sha256)).map((f) => [f.sha256, f]),
+	);
+	await Promise.all(
+		[...missing.values()].map((f) =>
+			store.put(
+				objectKey(name, f.sha256),
+				new Response(f.content).body as ReadableStream<Uint8Array>,
+			),
+		),
+	);
+}
+
+/** A version's files, paths relative to the Skill's folder, or only the one at `path`; for Runs, by the `versionId` of `current()`. */
+export async function skillFiles(
+	db: Db,
+	store: ObjectStore,
+	versionId: number,
+	path?: string,
+): Promise<SkillFile[]> {
+	const rows = await db
+		.select({
+			path: skillFile.path,
+			sha256: skillFile.sha256,
+			name: skillVersion.skillName,
+		})
+		.from(skillFile)
+		.innerJoin(skillVersion, eq(skillFile.versionId, skillVersion.id))
+		.where(
+			and(
+				eq(skillFile.versionId, versionId),
+				path === undefined ? undefined : eq(skillFile.path, path),
+			),
+		)
 		.orderBy(skillFile.path);
+	return Promise.all(
+		rows.map(async (f) => {
+			// none when the Skill is being deleted, or the file is from before and not yet moved
+			const object = f.sha256 && (await store.get(objectKey(f.name, f.sha256)));
+			if (!object)
+				throw new Error(
+					`Skill file ${f.name}/${f.path} is not in object storage`,
+				);
+			const content = new Uint8Array(
+				await new Response(object.body).arrayBuffer(),
+			);
+			return { path: f.path, content };
+		}),
+	);
+}
+
+/**
+ * Moves the content of the files from before ADR 0017 into object storage, a version at a time, recording each one's
+ * sha256 and size. The api and worker run it on starting: run again, after an interruption or by both at once, it moves
+ * only what is left. Resolves to how many files it moved.
+ */
+export async function backfillSkillFiles(db: Db, store: ObjectStore) {
+	let moved = 0;
+	for (;;) {
+		const [next] = await db
+			.select({ versionId: skillFile.versionId, name: skillVersion.skillName })
+			.from(skillFile)
+			.innerJoin(skillVersion, eq(skillFile.versionId, skillVersion.id))
+			.where(isNull(skillFile.sha256))
+			.orderBy(skillFile.versionId)
+			.limit(1);
+		if (!next) return moved;
+		moved += await db.transaction(async (tx) => {
+			await lockSkill(tx, next.name);
+			// read under the lock: another process may have moved them meanwhile
+			const left = await tx
+				.select({ path: skillFile.path, content: skillFile.content })
+				.from(skillFile)
+				.where(
+					and(
+						eq(skillFile.versionId, next.versionId),
+						isNull(skillFile.sha256),
+					),
+				);
+			const files = left.map(({ path, content }) => {
+				if (!content) throw new Error(`Skill file ${path} has no content`);
+				return { path, content, sha256: hash(content) };
+			});
+			await putFiles(tx, store, next.name, files);
+			for (const f of files)
+				await tx
+					.update(skillFile)
+					.set({ sha256: f.sha256, size: f.content.length })
+					.where(
+						and(
+							eq(skillFile.versionId, next.versionId),
+							eq(skillFile.path, f.path),
+						),
+					);
+			return files.length;
+		});
+	}
+}
 
 /** Enabled Skills with their current version, by name; the others are unavailable. */
 async function loadSkills(db: Db) {
@@ -82,6 +207,7 @@ async function loadSkills(db: Db) {
 /** Adds the Skill as its new current version, adding the Skill itself when it is new; one that exists needs `replace`. */
 async function addVersion(
 	tx: Tx,
+	store: ObjectStore,
 	{ name, description, disableModelInvocation, files }: SkillFiles,
 	replace: boolean,
 ): Promise<SkillErrors> {
@@ -91,12 +217,11 @@ async function addVersion(
 		.onConflictDoNothing()
 		.returning({ name: skill.name });
 	if (!inserted.length && !replace) return { name: { code: "skill_exists" } };
-	// locks the Skill, so two saves cannot take the same number
-	await tx
-		.select({ name: skill.name })
-		.from(skill)
-		.where(eq(skill.name, name))
-		.for("update");
+	// two saves cannot take the same number, nor write the Skill's objects at once
+	await lockSkill(tx, name);
+	const hashed = files.map((f) => ({ ...f, sha256: hash(f.content) }));
+	// before the version is committed, so no version names a file not yet stored
+	await putFiles(tx, store, name, hashed);
 	const [{ last }] = await tx
 		.select({ last: max(skillVersion.number) })
 		.from(skillVersion)
@@ -110,9 +235,14 @@ async function addVersion(
 			disableModelInvocation,
 		})
 		.returning({ id: skillVersion.id });
-	await tx
-		.insert(skillFile)
-		.values(files.map((f) => ({ versionId: version.id, ...f })));
+	await tx.insert(skillFile).values(
+		hashed.map((f) => ({
+			versionId: version.id,
+			path: f.path,
+			sha256: f.sha256,
+			size: f.content.length,
+		})),
+	);
 	await tx
 		.update(skill)
 		.set({ currentVersionId: version.id })
@@ -133,7 +263,7 @@ function asText(content: Uint8Array) {
  * The Skills: `current()` for Runs, and what Admins edit in /console. Loaded on the first `current()`;
  * every write reloads it here and in every other process once committed. Callers check that the User is an Admin.
  */
-export function createSkills(db: Db) {
+export function createSkills(db: Db, store: ObjectStore) {
 	const skills = live(db, {
 		channel: SKILLS_CHANNEL,
 		load: () => loadSkills(db),
@@ -178,7 +308,9 @@ export function createSkills(db: Db) {
 			const parsed = parseSkillZip(zip);
 			if ("error" in parsed) return { errors: { file: parsed.error } };
 			const { name } = parsed.skill;
-			const errors = await write((tx) => addVersion(tx, parsed.skill, replace));
+			const errors = await write((tx) =>
+				addVersion(tx, store, parsed.skill, replace),
+			);
 			return { errors, name };
 		},
 
@@ -205,13 +337,15 @@ export function createSkills(db: Db) {
 					},
 				};
 			return {
-				errors: await write((tx) => addVersion(tx, checked.skill, false)),
+				errors: await write((tx) =>
+					addVersion(tx, store, checked.skill, false),
+				),
 			};
 		},
 
 		/** A version's files for the console editor: `text` only for those that are UTF-8 text, the rest can only be kept or dropped. */
 		files: async (versionId: number) =>
-			(await skillFiles(db, versionId)).map(({ path, content }) => {
+			(await skillFiles(db, store, versionId)).map(({ path, content }) => {
 				const text = asText(content);
 				return {
 					path,
@@ -234,7 +368,7 @@ export function createSkills(db: Db) {
 				);
 			if (!version) throw new SkillNotFound("base");
 			const old = new Map(
-				(await skillFiles(db, base)).map((f) => [f.path, f.content]),
+				(await skillFiles(db, store, base)).map((f) => [f.path, f.content]),
 			);
 			const contents: SkillFile[] = [];
 			for (const { path, text } of files) {
@@ -250,7 +384,7 @@ export function createSkills(db: Db) {
 			const checked = checkSkill(contents, name);
 			if ("error" in checked) return { errors: { file: checked.error } };
 			return {
-				errors: await write((tx) => addVersion(tx, checked.skill, true)),
+				errors: await write((tx) => addVersion(tx, store, checked.skill, true)),
 			};
 		},
 
@@ -282,10 +416,16 @@ export function createSkills(db: Db) {
 			if (!updated.length) throw new SkillNotFound("versionId");
 		},
 
-		/** Also deletes its versions; Agent Definitions that name it are left to their owner. */
+		/** Also deletes its versions and their files; Agent Definitions that name it are left to their owner. */
 		delete: (name: string) =>
 			write(async (tx) => {
-				await tx.delete(skill).where(eq(skill.name, name));
+				const deleted = await tx
+					.delete(skill)
+					.where(eq(skill.name, name))
+					.returning({ name: skill.name });
+				// before the commit, holding the row, so a new Skill of that name puts its files only after; should this
+				// fail midway, the Skill stays with some files gone, and deleting it again finishes
+				if (deleted.length) await store.deletePrefix(skillPrefix(name));
 			}),
 	};
 }

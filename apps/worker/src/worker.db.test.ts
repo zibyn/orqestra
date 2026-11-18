@@ -23,13 +23,15 @@ import {
 } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/agents";
 import type { ConversationEvent } from "@orqestra/conversations";
+import { memoryStore } from "@orqestra/db/store";
 import { fakeLinear } from "@orqestra/linear/testing";
 import {
 	fakeAuthorizationServer,
 	fakeMcpServer,
 	memoryConnections,
 } from "@orqestra/mcp/testing";
-import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
+import { zip } from "@orqestra/skills/test-zip";
+import { memoryOrrery } from "@orqestra/tools/testing";
 import { createPostgresBackend, Worker } from "bullmq";
 import { openToolbox } from "./runtime/toolbox.ts";
 
@@ -59,7 +61,9 @@ const { encryptSecret } = await import("@orqestra/db/secret");
 const { createConversations, DEFAULT_LIMITS, MAX_SUBAGENTS_PER_USER_MESSAGE } =
 	await import("@orqestra/conversations");
 const { createCapabilities } = await import("./capabilities.ts");
-const config = createCapabilities(db);
+// one store, as the api and worker share one
+const { store } = memoryStore();
+const config = createCapabilities(db, store);
 const { startAgentWorker } = await import("./worker.ts");
 const { otelTelemetry } = await import("./tracing.ts");
 const { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } =
@@ -73,8 +77,6 @@ const telemetry = otelTelemetry(
 );
 const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
-// one store, as the api and worker share one
-const { store } = memoryStore();
 /** The Users' Connections to per-User OAuth MCP Servers, as the worker reads them. */
 const connections = memoryConnections();
 const conversations = createConversations({
@@ -748,6 +750,64 @@ describe.skipIf(!url)(
 			expect(await download()).toBe("first");
 			await orrery.client.deleteSandbox(row.sandbox_id);
 			expect(await download()).toBe("first");
+		});
+
+		it("copies a Skill's files from object storage into the Sandbox, byte for byte", async () => {
+			const md =
+				"---\nname: notes\ndescription: Takes notes\n---\nWrite them down.\n";
+			const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+			await config.skills.upload(
+				zip([
+					{ path: "notes/SKILL.md", content: md },
+					{ path: "notes/assets/logo.png", content: png },
+				]),
+				false,
+			);
+			const [{ currentVersionId }] = await config.skills.list();
+			// the uploaded version, for the skilled template's Subagent
+			(await current()).skills.notes.versionId = currentVersionId ?? 0;
+			try {
+				script({
+					parent: [
+						fauxAssistantMessage(
+							fauxToolCall("subagent", {
+								tasks: [{ brief: "note", template: "skilled" }],
+							}),
+						),
+						fauxAssistantMessage("Waiting"),
+						fauxAssistantMessage("Done"),
+					],
+					sub: [
+						fauxAssistantMessage(fauxToolCall("bash", { command: "ls" })),
+						fauxAssistantMessage("noted"),
+					],
+				});
+				const id = await conversations.send(userId, {
+					agentId: "faux",
+					text: "take notes",
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) =>
+						v?.status === "idle" &&
+						v.messages.at(-1)?.message.role === "assistant" &&
+						v.messages.some((m) => m.subagentId),
+				);
+				const {
+					rows: [row],
+				} = await db.execute<{ sandbox_id: string }>(
+					sql`select sandbox_id from conversation where id = ${id}`,
+				);
+				const files = orrery.files(row.sandbox_id);
+				expect(Buffer.from(files.get(".skills/notes/SKILL.md") ?? [])).toEqual(
+					Buffer.from(md),
+				);
+				expect(
+					Buffer.from(files.get(".skills/notes/assets/logo.png") ?? []),
+				).toEqual(png);
+			} finally {
+				await config.skills.delete("notes");
+			}
 		});
 
 		it("records Usage for each step of a Turn and for its title, priced at the Model's price", async () => {

@@ -1,6 +1,7 @@
 import { createAgents } from "@orqestra/agents/live";
 import { createLimits, snapshots } from "@orqestra/conversations";
 import type { Db } from "@orqestra/db";
+import type { ObjectStore } from "@orqestra/db/store";
 import { createMcpServers } from "@orqestra/mcp";
 import { createModels } from "@orqestra/models";
 import { createSkills, skillFiles } from "@orqestra/skills";
@@ -11,11 +12,11 @@ import { createTools } from "@orqestra/tools/live";
  * snapshot side by side for Conversations and their Runs, rejects while any first load fails (also on a missing
  * ORQESTRA_ENCRYPTION_KEY).
  */
-export function createCapabilities(db: Db) {
+export function createCapabilities(db: Db, store: ObjectStore) {
 	const models = createModels(db);
 	const tools = createTools(db);
 	const mcpServers = createMcpServers(db);
-	const skills = createSkills(db);
+	const skills = createSkills(db, store);
 	const limits = createLimits(db);
 	const agents = createAgents(db, {
 		skills,
@@ -33,7 +34,8 @@ export function createCapabilities(db: Db) {
 	return {
 		...lives,
 		current: snapshots(lives),
-		skillFiles: (versionId: number) => skillFiles(db, versionId),
+		skillFiles: (versionId: number, path?: string) =>
+			skillFiles(db, store, versionId, path),
 		close: async () => {
 			await Promise.all(Object.values(lives).map((l) => l.close()));
 		},

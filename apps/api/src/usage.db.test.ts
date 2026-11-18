@@ -2,12 +2,13 @@ import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { usage, user } from "@orqestra/db/schema";
+import { memoryStore } from "@orqestra/db/store";
 import { catalogProviders } from "@orqestra/models";
 import { sql } from "drizzle-orm";
 import { createApp, type User } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";
 
-const config = createCapabilities(db);
+const config = createCapabilities(db, memoryStore().store);
 
 // Needs a migrated, throwaway Postgres at TEST_DATABASE_URL (see test-env.ts)
 const url = process.env.TEST_DATABASE_URL;

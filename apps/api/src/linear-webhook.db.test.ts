@@ -11,6 +11,7 @@ import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { linearInstallation } from "@orqestra/db/schema";
 import { encryptSecret } from "@orqestra/db/secret";
+import { memoryStore } from "@orqestra/db/store";
 import { type LinearEvent, serveLinearEvents } from "@orqestra/linear/events";
 import { agentSessionEvent, signed } from "@orqestra/linear/testing";
 import { sql } from "drizzle-orm";
@@ -22,7 +23,7 @@ import { createCapabilities } from "./capabilities.ts";
 const url = process.env.TEST_DATABASE_URL;
 
 const api = createApp({
-	config: createCapabilities(db),
+	config: createCapabilities(db, memoryStore().store),
 	session: async () => ({ user: null, cookies: [] }),
 	auth: () => new Response(null, { status: 404 }),
 	conversations: {} as Conversations,
