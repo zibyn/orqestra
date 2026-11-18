@@ -113,7 +113,7 @@ Orqestra's app installed by an Admin into one Linear workspace, where it acts as
 _Avoid_: Linear integration, Linear connection, Linear account
 
 **Agent Session**:
-Linear's record of one piece of work for Orqestra's app. It starts when someone in the Linear Installation's workspace delegates an issue to the app or mentions it, and goes on with what they write in it. Each one opens one Conversation for the User with that person's email, with the Agent the Admin picked for Linear. Its first message names the issue and the repository of the issue's team. Later messages go to the same Conversation, marked as from Linear, and only that User's reach it. Someone with no User is told to sign in first.
+Linear's record of one piece of work for Orqestra's app. It starts when someone in the Linear Installation's workspace delegates an issue to the app or mentions it, and goes on with what they write in it. Each one opens one Conversation for the User with that person's email, with the Agent the Admin picked for Linear. Its first message names the issue and the repository of the issue's team. Later messages go to the same Conversation, marked as from Linear, and only that User's reach it. Someone with no User is told to sign in first. When a Run ends, the session gets its reply, its Question or its failure.
 _Avoid_: Linear thread, Linear task, session
 
 **Search**:

@@ -21,5 +21,5 @@ When someone in the Linear workspace of the Linear Installation delegates an iss
 ## Consequences
 
 - When a User deletes a Conversation, its `linear_session` row goes too, so the session's next prompt opens a new Conversation.
-- Nothing sends the Conversation's replies back to Linear. Linear sees the `thought` and the errors only.
+- When a Run of the Conversation ends, the worker posts how it ended to the session: the last reply as a `response`, a Question as an `elicitation`, and a failure as an `error`. A `stop` is confirmed with a `response`, and the stopped Run posts nothing more. The Tool calls in between are not posted.
 - Linear's refresh token lapses 30 days after it was issued, and only an event refreshes it. A workspace with no Agent Session for 30 days needs the app installed again.

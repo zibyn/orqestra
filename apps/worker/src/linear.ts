@@ -27,7 +27,7 @@ const firstMessage = (event: LinearEvent, repo: string | undefined) =>
 
 /**
  * Acts on an Agent Session event (ADR 0015): the first one from a session opens its Conversation, as the Orqestra User with the sender's
- * email, and the app says so in the session; a later prompt goes to that Conversation, a stop stops it. Anything Linear should hear of
+ * email, and the app says so in the session; a later prompt goes to that Conversation, a stop stops it and says so. Anything Linear should hear of
  * instead is posted to the session as an error. Converges when run again: a session opens one Conversation however often it is delivered.
  */
 export async function handleLinearEvent(
