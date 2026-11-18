@@ -20,7 +20,6 @@
     "@orqestra/conversations": "workspace:*",
     "@orqestra/db": "workspace:*",
     "@orqestra/integrations": "workspace:*",
-    "@orqestra/linear": "workspace:*",
     "@orqestra/mcp": "workspace:*",
     "@orqestra/memory": "workspace:*",
     "@orqestra/models": "workspace:*",

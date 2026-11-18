@@ -24,8 +24,7 @@ import {
 import type { AgentDefinition } from "@orqestra/agents";
 import type { ConversationEvent } from "@orqestra/conversations";
 import { memoryStore } from "@orqestra/db/store";
-import { memoryOrrery } from "@orqestra/integrations/testing";
-import { fakeLinear } from "@orqestra/linear/testing";
+import { fakeLinear, memoryOrrery } from "@orqestra/integrations/testing";
 import {
 	fakeAuthorizationServer,
 	fakeMcpServer,
@@ -57,21 +56,25 @@ const { db } = await import("@orqestra/db");
 const { asc, eq, sql } = await import("drizzle-orm");
 const {
 	limits,
-	linearInstallation,
-	linearSession,
+	integrationInstallation,
+	integrationSession,
 	pushSubscription,
 	usage,
 	user,
 } = await import("@orqestra/db/schema");
 const { encryptSecret } = await import("@orqestra/db/secret");
-const { createConversations, DEFAULT_LIMITS, MAX_SUBAGENTS_PER_USER_MESSAGE } =
-	await import("@orqestra/conversations");
+const {
+	createConversations,
+	DEFAULT_LIMITS,
+	handleSessionEvent,
+	MAX_SUBAGENTS_PER_USER_MESSAGE,
+} = await import("@orqestra/conversations");
+const { linear: linearSource } = await import("@orqestra/integrations/linear");
 const { createCapabilities } = await import("./capabilities.ts");
 // one store, as the api and worker share one
 const { store } = memoryStore();
 const config = createCapabilities(db, store);
 const { startAgentWorker } = await import("./worker.ts");
-const { handleLinearEvent } = await import("./linear.ts");
 const { otelTelemetry } = await import("./tracing.ts");
 const { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } =
 	await import("@opentelemetry/sdk-trace");
@@ -403,7 +406,7 @@ describe.skipIf(!url)(
 			// a Run the last test left winding down would deadlock with the truncate: stopping the worker waits for it
 			await stopWorker?.();
 			await db.execute(
-				sql`truncate conversation, scheduled_task, usage, limits, push_subscription, "user", linear_installation cascade`,
+				sql`truncate conversation, scheduled_task, usage, limits, push_subscription, "user", integration_installation cascade`,
 			);
 			spans.reset();
 			await start();
@@ -1073,7 +1076,8 @@ describe.skipIf(!url)(
 			beforeEach(async () => {
 				linear = fakeLinear();
 				linear.accessTokens.add("access-0");
-				await db.insert(linearInstallation).values({
+				await db.insert(integrationInstallation).values({
+					kind: "linear",
 					clientId: "lin-client",
 					clientSecret: encryptSecret(linear.clientSecret),
 					webhookSecret: encryptSecret("hook-s3cret"),
@@ -1093,7 +1097,10 @@ describe.skipIf(!url)(
 				conversations.send(userId, {
 					...(conversationId
 						? { conversationId }
-						: { agentId: "faux", linearSessionId: "session-1" }),
+						: {
+								agentId: "faux",
+								session: { kind: "linear", id: "session-1" },
+							}),
 					text,
 					origin: "linear",
 				});
@@ -1359,13 +1366,14 @@ describe.skipIf(!url)(
 				try {
 					const sent = fromLinear("Fix the login button");
 					const [session] = await waitFor(
-						() => db.select().from(linearSession),
+						() => db.select().from(integrationSession),
 						(s) => s.length > 0,
 					);
-					await handleLinearEvent(
+					await handleSessionEvent(
+						linearSource,
 						{
 							id: "stop-1",
-							agentSessionId: "session-1",
+							sessionId: "session-1",
 							action: "prompted",
 							from: null,
 							issue: null,
@@ -1497,7 +1505,7 @@ describe.skipIf(!url)(
 					try {
 						await conversations.send(userId, {
 							agentId: "mcp",
-							linearSessionId: "session-1",
+							session: { kind: "linear", id: "session-1" },
 							text: "Fix the login button",
 							origin: "linear",
 						});

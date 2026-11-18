@@ -1,101 +1,102 @@
+// Integration Sessions (ADR 0018): a WorkSource's session (Linear's Agent Session) is one Conversation, and each of its Runs closes the
+// session's turn once, with its reply, its Question, its failure or the stop the session asked for.
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import {
-	ConversationError,
-	type Conversations,
-	type RunHandler,
-	RunTimedOut,
-	SpendingLimitReached,
-} from "@orqestra/conversations";
-import { messageText } from "@orqestra/conversations/shared";
 import { db } from "@orqestra/db";
-import { conversation, linearSession, user } from "@orqestra/db/schema";
-import type { Fetch } from "@orqestra/linear";
-import { type LinearEvent, postAgentActivity } from "@orqestra/linear/events";
+import {
+	conversation,
+	type IntegrationKind,
+	integrationSession,
+	user,
+} from "@orqestra/db/schema";
+import {
+	type Activity,
+	conversationSettings,
+	type Fetch,
+	postActivity,
+	type SessionEvent,
+	type WorkSource,
+} from "@orqestra/integrations";
+import { linear } from "@orqestra/integrations/linear";
 import { and, desc, eq, sql } from "drizzle-orm";
+import { ConversationError } from "./errors.ts";
+import type { Conversations } from "./index.ts";
+import { type RunHandler, RunTimedOut } from "./serve.ts";
+import { messageText } from "./shared.ts";
+import { SpendingLimitReached } from "./spending.ts";
 
-type Activity = Parameters<typeof postAgentActivity>[1];
-/** The most Linear takes in an activity's body. */
-const MAX_BODY = 250_000;
-const TRUNCATED =
-	"\n\n[Cut short: longer than Linear shows. The whole of it is in the Conversation in Orqestra.]";
-
-/** Posts an activity into an Agent Session, its body cut to what Linear takes, saying so. */
-const postActivity = (
-	agentSessionId: string,
-	{ type, body }: Activity,
-	fetch?: Fetch,
-) =>
-	postAgentActivity(
-		agentSessionId,
-		{
-			type,
-			body:
-				body.length <= MAX_BODY
-					? body
-					: // leaving no half of a surrogate pair at the cut
-						body
-							.slice(0, MAX_BODY - TRUNCATED.length)
-							.replace(/[\uD800-\uDBFF]$/, "") + TRUNCATED,
-		},
-		{ fetch },
-	);
+/** Each kind's WorkSource, which a session's activities go to. */
+const SOURCES: Record<IntegrationKind, WorkSource> = { linear };
 
 /**
- * The Agent Session of the Conversation whose Run, job `jobId`'s, is closing its turn, which it then records closed:
- * undefined when the Conversation has no session or that turn was closed already. Its reply, its failure and the stop Linear asked for
- * each close it, so the first of them posts the one closing activity.
+ * The session of the Conversation whose Run, job `jobId`'s, is closing its turn, which it then records closed: undefined when the
+ * Conversation has no session or that turn was closed already. Its reply, its failure and the stop the session asked for each close
+ * it, so the first of them posts the one closing activity.
  */
 const closing = async (conversationId: string, jobId: string) => {
 	const [session] = await db
-		.update(linearSession)
+		.update(integrationSession)
 		.set({ closedJobId: jobId })
 		.where(
 			and(
-				eq(linearSession.conversationId, conversationId),
-				sql`${linearSession.closedJobId} is distinct from ${jobId}`,
+				eq(integrationSession.conversationId, conversationId),
+				sql`${integrationSession.closedJobId} is distinct from ${jobId}`,
 			),
 		)
-		.returning({ id: linearSession.agentSessionId });
-	return session?.id;
+		.returning({
+			kind: integrationSession.kind,
+			id: integrationSession.sessionId,
+		});
+	return session;
 };
 
-/** The first message of a Conversation a Linear Agent Session opens: its issue, the repository its team works in, and what it was started with. */
-const firstMessage = (event: LinearEvent, repo: string | undefined) =>
-	[
-		event.issue &&
-			`Linear issue ${event.issue.identifier}: ${event.issue.title}\n${event.issue.url}`,
-		repo && `Repository: ${repo}`,
-		event.issue?.description,
-		event.text,
-	]
-		.filter(Boolean)
-		.join("\n\n") || "A Linear Agent Session started with no issue or comment.";
+/** Posts a closing activity, logging rather than throwing when the WorkSource cannot take it. */
+const postClosing = (
+	session: { kind: IntegrationKind; id: string },
+	activity: Activity,
+	fetch?: Fetch,
+) =>
+	postActivity(SOURCES[session.kind], session.id, activity, { fetch }).catch(
+		(error) =>
+			console.error(
+				`could not post to ${SOURCES[session.kind].name} session ${session.id}`,
+				error,
+			),
+	);
 
 /**
- * Acts on an Agent Session event (ADR 0015): the first one from a session opens its Conversation, as the Orqestra User with the sender's
- * email, and the app says so in the session; a later prompt goes to that Conversation, a stop stops it and says so. Anything Linear should hear of
- * instead is posted to the session as an error. Converges when run again: a session opens one Conversation however often it is delivered.
+ * Acts on a session's event: the first one from a session opens its Conversation, as the Orqestra User with the sender's email, and the
+ * app says so in the session; a later prompt goes to that Conversation, a stop stops it and says so. Anything the session should hear
+ * of instead is posted to it as an error. Converges when run again: a session opens one Conversation however often it is delivered.
  */
-export async function handleLinearEvent(
-	event: LinearEvent,
+export async function handleSessionEvent(
+	source: WorkSource,
+	event: SessionEvent,
 	conversations: Pick<Conversations, "send" | "stop">,
 	{ fetch }: { fetch?: Fetch } = {},
 ) {
 	const post = (type: "thought" | "response" | "error", body: string) =>
-		postActivity(event.agentSessionId, { type, body }, fetch);
+		postActivity(source, event.sessionId, { type, body }, { fetch });
 	const [session] = await db
 		.select({
-			conversationId: linearSession.conversationId,
+			conversationId: integrationSession.conversationId,
 			userId: conversation.userId,
 		})
-		.from(linearSession)
-		.innerJoin(conversation, eq(conversation.id, linearSession.conversationId))
-		.where(eq(linearSession.agentSessionId, event.agentSessionId));
+		.from(integrationSession)
+		.innerJoin(
+			conversation,
+			eq(conversation.id, integrationSession.conversationId),
+		)
+		.where(
+			and(
+				eq(integrationSession.kind, source.kind),
+				eq(integrationSession.sessionId, event.sessionId),
+			),
+		);
 	if (event.stop) {
 		const stopped =
 			session &&
 			(await conversations.stop(session.userId, session.conversationId));
-		// Linear waits for a final activity confirming the stop, unless the turn it stops closed already, with its reply or failure
+		// the session waits for a final activity confirming the stop, unless the turn it stops closed already, with its reply or failure
 		if (
 			stopped &&
 			!(await closing(session.conversationId, stopped.jobId ?? ""))
@@ -129,32 +130,28 @@ export async function handleLinearEvent(
 				await conversations.send(sender.id, {
 					conversationId: session.conversationId,
 					text: event.text,
-					origin: "linear",
+					origin: source.kind,
 				});
 			return;
 		}
 		if (!session) {
-			const installation = await db.query.linearInstallation.findFirst({
-				columns: { defaultAgentId: true, teamRepos: true },
-			});
+			const settings = await conversationSettings(source);
 			await conversations
 				.send(sender.id, {
-					agentId: installation?.defaultAgentId ?? undefined,
-					text: firstMessage(
+					agentId: settings?.defaultAgentId ?? undefined,
+					text: source.firstMessage(
 						event,
-						event.issue
-							? installation?.teamRepos[event.issue.teamKey]
-							: undefined,
+						event.issue ? settings?.teamRepos[event.issue.teamKey] : undefined,
 					),
-					origin: "linear",
-					linearSessionId: event.agentSessionId,
+					origin: source.kind,
+					session: { kind: source.kind, id: event.sessionId },
 				})
 				.catch((error) => {
 					// opened by this event's earlier delivery, which may not have said so
 					if (
 						!(
 							error instanceof ConversationError &&
-							error.code === "linear_session_open"
+							error.code === "session_open"
 						)
 					)
 						throw error;
@@ -169,11 +166,11 @@ export async function handleLinearEvent(
 }
 
 /**
- * Closes the turn of a Linear Agent Session's Conversation whose Run, job `jobId`'s, was marked failed (`onFailed`), however it failed:
- * in `reply`, before it (its Agent removed), or on a worker that crashed or was killed; unless the stop Linear asked for closed it first.
+ * Closes the turn of a session's Conversation whose Run, job `jobId`'s, was marked failed (`onFailed`), however it failed: in `reply`,
+ * before it (its Agent removed), or on a worker that crashed or was killed; unless the stop the session asked for closed it first.
  * shortcut: a worker dying between a Run's end and its post leaves the turn open; post from an outbox of closings if that bites.
  */
-export async function reportFailureToLinear(
+export async function reportSessionFailure(
 	conversationId: string,
 	error: Error,
 	jobId: string,
@@ -181,7 +178,7 @@ export async function reportFailureToLinear(
 ) {
 	const session = await closing(conversationId, jobId);
 	if (!session) return;
-	await postActivity(
+	await postClosing(
 		session,
 		{
 			type: "error",
@@ -191,35 +188,29 @@ export async function reportFailureToLinear(
 					: "This reply failed. Retry it in Orqestra.",
 		},
 		fetch,
-	).catch((e) =>
-		console.error(`could not post to Linear Agent Session ${session}`, e),
 	);
 }
 
 /**
- * Replies to a Run with `reply`, and, for a Linear Agent Session's Conversation, posts one activity into the session that closes its turn,
- * the moment the Run is over and before the Conversation is titled: what it said last, as an elicitation when it ended asking the User a
- * question, else as the response, which says there was nothing to report when it said nothing; a Run cut off by the unattended time limit,
- * as an error with what it had written; unless the stop Linear asked for closed the turn first. A Run the User stopped posts nothing
- * (the stop request confirms it in Linear); one that failed is posted by `reportFailureToLinear`.
+ * Replies to a Run with `reply`, and, for a session's Conversation, posts one activity into the session that closes its turn, the
+ * moment the Run is over and before the Conversation is titled: what it said last, as an elicitation when it ended asking the User a
+ * question, else as the response, which says there was nothing to report when it said nothing; a Run cut off by the unattended time
+ * limit, as an error with what it had written; unless the stop the session asked for closed the turn first. A Run the User stopped
+ * posts nothing (the stop request confirms it in the session); one that failed is posted by `reportSessionFailure`.
  */
-export const reportingToLinear =
+export const reportingToSessions =
 	(reply: RunHandler, { fetch }: { fetch?: Fetch } = {}): RunHandler =>
 	async (run, config) => {
 		const [session] = await db
-			.select({ id: linearSession.agentSessionId })
-			.from(linearSession)
-			.where(eq(linearSession.conversationId, run.conversationId));
+			.select({ id: integrationSession.sessionId })
+			.from(integrationSession)
+			.where(eq(integrationSession.conversationId, run.conversationId));
 		if (!session) return reply(run, config);
 		// the Run's end, or its being cut off, closes the turn once; a stop leaves that to its confirmation
 		const close = async (content?: Activity) => {
-			if (content && (await closing(run.conversationId, run.jobId)))
-				await postActivity(session.id, content, fetch).catch((error) =>
-					console.error(
-						`could not post to Linear Agent Session ${session.id}`,
-						error,
-					),
-				);
+			if (!content) return;
+			const claimed = await closing(run.conversationId, run.jobId);
+			if (claimed) await postClosing(claimed, content, fetch);
 		};
 		const replies: AssistantMessage[] = [];
 		const said = () =>
@@ -227,7 +218,7 @@ export const reportingToLinear =
 				.map((m) => messageText(m).trim())
 				.filter(Boolean)
 				.at(-1);
-		// Linear's response "indicates work has been completed", which a cut-off one has not
+		// a response "indicates work has been completed", which a cut-off one has not
 		const cutOff = (): Activity => ({
 			type: "error",
 			body: [

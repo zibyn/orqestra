@@ -9,11 +9,12 @@ import {
 import { randomUUID } from "node:crypto";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
-import { linearInstallation } from "@orqestra/db/schema";
+import { integrationInstallation } from "@orqestra/db/schema";
 import { encryptSecret } from "@orqestra/db/secret";
 import { memoryStore } from "@orqestra/db/store";
-import { type LinearEvent, serveLinearEvents } from "@orqestra/linear/events";
-import { agentSessionEvent, signed } from "@orqestra/linear/testing";
+import { type SessionEvent, serveEvents } from "@orqestra/integrations";
+import { linear } from "@orqestra/integrations/linear";
+import { agentSessionEvent, signed } from "@orqestra/integrations/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";
@@ -43,18 +44,19 @@ const deliver = (body: string, signature?: string) =>
 	);
 
 describe.skipIf(!url)("Linear's webhook", () => {
-	const queued: LinearEvent[] = [];
-	let worker: Awaited<ReturnType<typeof serveLinearEvents>>;
+	const queued: SessionEvent[] = [];
+	let worker: Awaited<ReturnType<typeof serveEvents>>;
 	beforeAll(async () => {
-		worker = await serveLinearEvents(async (event) => {
+		worker = await serveEvents(linear, async (event) => {
 			queued.push(event);
 		});
 	});
-	const reset = () => db.execute(sql`truncate linear_installation`);
+	const reset = () => db.execute(sql`truncate integration_installation`);
 	beforeEach(async () => {
 		await reset();
 		queued.length = 0;
-		await db.insert(linearInstallation).values({
+		await db.insert(integrationInstallation).values({
+			kind: "linear",
 			clientId: "lin-client",
 			clientSecret: encryptSecret("client-s3cret"),
 			webhookSecret: encryptSecret(secret),
@@ -112,7 +114,7 @@ describe.skipIf(!url)("Linear's webhook", () => {
 		expect(await taken(1)).toEqual([
 			{
 				id: `created-${sessionId}`,
-				agentSessionId: sessionId,
+				sessionId,
 				action: "created",
 				from: { email: "uma@example.com", name: "Uma" },
 				issue: {

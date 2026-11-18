@@ -6,6 +6,7 @@
     ".": "./src/index.ts",
     "./deepseek": "./src/deepseek/index.ts",
     "./firecrawl": "./src/firecrawl/index.ts",
+    "./linear": "./src/linear/index.ts",
     "./mineru": "./src/mineru/index.ts",
     "./orrery": "./src/orrery/index.ts",
     "./s3": "./src/s3/index.ts",
@@ -17,6 +18,8 @@
   },
   "dependencies": {
     "@orqestra/db": "workspace:*",
+    "bullmq": "^6.5.0",
+    "drizzle-orm": "^0.45.4",
     "zod": "^4.6.7"
   },
   "devDependencies": {

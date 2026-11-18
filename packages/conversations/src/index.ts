@@ -11,8 +11,9 @@ import {
 	compaction,
 	conversation,
 	type InputOrigin,
+	type IntegrationKind,
 	inbox,
-	linearSession,
+	integrationSession,
 	message,
 	subagent,
 	timer,
@@ -120,6 +121,11 @@ export {
 	type TranscriptMessage,
 	type Turn,
 } from "./serve.ts";
+export {
+	handleSessionEvent,
+	reportingToSessions,
+	reportSessionFailure,
+} from "./sessions.ts";
 export { type Snapshots, snapshots } from "./snapshots.ts";
 export {
 	SpendingLimitReached,
@@ -510,10 +516,10 @@ export function createConversations({
 				/** Sent on the User's behalf from elsewhere: its Runs are Unattended Runs until the User's next message here. */
 				origin?: InputOrigin;
 				/**
-				 * The Linear Agent Session the Conversation it starts is for (ADR 0015); refused with `linear_session_open`, starting
-				 * nothing, when that session already has one.
+				 * The Integration Session the Conversation it starts is for (ADR 0018); refused with `session_open`, starting nothing,
+				 * when that session already has one.
 				 */
-				linearSessionId?: string;
+				session?: { kind: IntegrationKind; id: string };
 			},
 		) {
 			const cfg = await config();
@@ -588,12 +594,13 @@ export function createConversations({
 						.returning({ id: conversation.id });
 					// a session's redelivered first event waits here for the one that got in first, then starts nothing
 					if (
-						input.linearSessionId &&
+						input.session &&
 						!(
 							await tx
-								.insert(linearSession)
+								.insert(integrationSession)
 								.values({
-									agentSessionId: input.linearSessionId,
+									kind: input.session.kind,
+									sessionId: input.session.id,
 									conversationId: id,
 								})
 								.onConflictDoNothing()
@@ -601,9 +608,9 @@ export function createConversations({
 						).length
 					)
 						throw new ConversationError(
-							"This Linear Agent Session already has a Conversation",
-							"linearSessionId",
-							"linear_session_open",
+							"This session already has a Conversation",
+							"session",
+							"session_open",
 						);
 				}
 				await tx.insert(inbox).values({

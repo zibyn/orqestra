@@ -115,7 +115,7 @@ export type TraceCarrier = Record<string, string>;
 /** One Run, as its handler sees it: what to reply to, and every way to save or show the reply. */
 export type RunHandle = {
 	conversationId: string;
-	/** The job running it: the Run's own, which a Linear Agent Session's turn is closed for. */
+	/** The job running it: the Run's own, which an Integration Session's turn is closed for. */
 	jobId: string;
 	/** The Polaris `sub` of the Conversation's User. */
 	userId: string;

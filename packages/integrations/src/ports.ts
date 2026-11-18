@@ -1,6 +1,10 @@
 // What each kind of outside system offers Orqestra, which the capability packages type against (ADR 0018); each adapter directory
 // implements one of these for its system. Clients only: no capability's rules.
 
+import type { IntegrationKind } from "@orqestra/db/schema";
+
+export type { IntegrationKind };
+
 export type Fetch = (
 	input: string | URL,
 	init?: RequestInit,
@@ -152,4 +156,67 @@ export interface SandboxClient {
 	): Promise<void>;
 }
 
-// WorkSource: added by the Linear move
+/** An Integration Session started (`created`: the app was delegated an issue or mentioned) or prompted again, as the worker acts on it. */
+export type SessionEvent = {
+	/** One per session start or prompt: a redelivery is the same job. */
+	id: string;
+	sessionId: string;
+	action: "created" | "prompted";
+	/** Who started the session, or wrote the prompt; null for a session no person started. */
+	from: { email: string; name: string } | null;
+	issue: {
+		identifier: string;
+		title: string;
+		description: string | null;
+		url: string;
+		teamKey: string;
+	} | null;
+	/** The comment that mentioned the app, or the prompt. */
+	text: string | null;
+	/** The prompt asks the agent to stop. */
+	stop: boolean;
+};
+
+/**
+ * What the app posts into a session as itself, its body Markdown: a thought, shown as the agent at work; a response, which completes
+ * the turn; an elicitation, which waits for the person's answer; or an error.
+ */
+export type Activity = {
+	type: "thought" | "response" | "elicitation" | "error";
+	body: string;
+};
+
+/**
+ * A system where people hand work to Orqestra's app (Linear): it installs the app by OAuth, pushes sessions in by webhook, and takes
+ * the app's activities back. Each kind's directory implements it; the Integration Installation and Integration Session are generic.
+ */
+export interface WorkSource {
+	kind: IntegrationKind;
+	/** The tool's name, as messages and logs say it. */
+	name: string;
+	/** Its OAuth authorization endpoint, with the scope and any further parameters it asks for. */
+	authorize: { url: string; scope: string; params?: Record<string, string> };
+	/** Its OAuth token endpoint, which takes a form (RFC 6749). */
+	tokenUrl: string;
+	/** The name of the workspace an access token is for. */
+	workspace(accessToken: string, fetch: Fetch): Promise<string>;
+	/**
+	 * A webhook request's event, when the webhook secret signed it and it is fresh at `now`: undefined otherwise, null for a genuine one
+	 * Orqestra does not act on.
+	 */
+	event(
+		rawBody: string,
+		headers: Headers,
+		webhookSecret: string,
+		now: number,
+	): SessionEvent | null | undefined;
+	/** Posts an activity into a session as the app, its body cut to what the tool takes. */
+	post(
+		accessToken: string,
+		sessionId: string,
+		activity: Activity,
+		fetch: Fetch,
+	): Promise<void>;
+	/** The first message of the Conversation a session opens, `repo` the repository its issue's team works in. */
+	firstMessage(event: SessionEvent, repo: string | undefined): string;
+}

@@ -9,8 +9,9 @@ import {
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { memoryStore } from "@orqestra/db/store";
-import { LinearGrantRefused, linearAccessToken } from "@orqestra/linear";
-import { fakeLinear } from "@orqestra/linear/testing";
+import { accessToken, GrantRefused } from "@orqestra/integrations";
+import { linear as source } from "@orqestra/integrations/linear";
+import { fakeLinear } from "@orqestra/integrations/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";
@@ -82,7 +83,7 @@ const workspace = async () =>
 
 describe.skipIf(!url)("installing the Linear app through the api", () => {
 	const reset = async () => {
-		await db.execute(sql`truncate linear_installation`);
+		await db.execute(sql`truncate integration_installation`);
 		linear = fakeLinear();
 	};
 	beforeEach(reset);
@@ -136,7 +137,7 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 				webhook_secret: string;
 				tokens: string;
 			}>(
-				sql`select client_secret, webhook_secret, tokens from linear_installation`,
+				sql`select client_secret, webhook_secret, tokens from integration_installation`,
 			)
 		).rows;
 		const sent = [before.text, startText, after.text].join();
@@ -158,8 +159,8 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 		setSystemTime(new Date(Date.now() + 25 * 3_600_000));
 		try {
 			await expect(
-				linearAccessToken({ fetch: linear.fetch }),
-			).rejects.toBeInstanceOf(LinearGrantRefused);
+				accessToken(source, { fetch: linear.fetch }),
+			).rejects.toBeInstanceOf(GrantRefused);
 		} finally {
 			setSystemTime();
 		}
@@ -174,7 +175,7 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 				webhook_secret: string;
 				tokens: string;
 			}>(
-				sql`select client_secret, webhook_secret, tokens from linear_installation`,
+				sql`select client_secret, webhook_secret, tokens from integration_installation`,
 			)
 		).rows;
 		for (const secret of [
@@ -214,7 +215,7 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 
 		const late = linear.authorize(await start());
 		await db.execute(
-			sql`update linear_installation set pending_at = now() - interval '1 hour'`,
+			sql`update integration_installation set pending_at = now() - interval '1 hour'`,
 		);
 		await failed(late);
 
