@@ -1178,25 +1178,26 @@ describe.skipIf(!url)(
 			}
 		}, 15_000);
 
-		it("keeps a Subagent the parent continued going though the 'failed' handler of a job a worker's startup requeue queued for its start, which read it running, settles it late: the parent gets its result", async () => {
+		it("keeps a Subagent the parent continued going, and its own Subagent, though the 'failed' handler of a job a worker's startup requeue queued for its start, which read it running, settles it late: the parent gets its result", async () => {
 			const queue = runs.runQueue(runs.SUBAGENT_RUNS_QUEUE);
 			const transaction = db.transaction.bind(db);
 			let step = "";
 			let settled = false;
 			let working = false;
+			let deepWorking = false;
 			const { gate: settle, release } = gate();
 			const { gate: going, release: answer } = gate();
+			const { gate: deepGoing, release: deepAnswer } = gate();
 			const tx = vi.spyOn(db, "transaction").mockImplementation((async (
 				...args: Parameters<typeof transaction>
 			) => {
 				// the requeued job's open cannot reach the database, and its job fails
 				if (step === "open") {
-					step = "stop";
+					step = "late";
 					throw new Error("connection lost");
 				}
-				// its 'failed' handler, which read the Subagent running: its stopSubagents goes, its endSubagent waits
-				if (step === "stop") step = "settle";
-				else if (step === "settle") {
+				// its 'failed' handler, which read the Subagent running, acts only once released
+				if (step === "late") {
 					step = "held";
 					await settle;
 					try {
@@ -1222,20 +1223,38 @@ describe.skipIf(!url)(
 						say("summed up"),
 					],
 					sub: [
+						call(start("deeper")),
 						async () => {
 							working = true;
 							await going;
 							return "done";
 						},
+						say("done"),
+					],
+					deep: [
+						async () => {
+							deepWorking = true;
+							await deepGoing;
+							return "deeper done";
+						},
 					],
 				});
 				const id = await send("go");
-				await waitFor(async () => working, Boolean);
+				await waitFor(async () => working && deepWorking, Boolean);
 				release();
 				await waitFor(async () => settled, Boolean);
-				expect((await get(id))?.subagents.map((s) => s.outcome)).toEqual([
-					"running",
-				]);
+				const outcomes = async () =>
+					(
+						await db
+							.select({ outcome: schema.subagent.outcome })
+							.from(schema.subagent)
+					).map((s) => s.outcome);
+				// any stop it sends has had its time
+				await new Promise((r) => setTimeout(r, 300));
+				expect(await outcomes()).toEqual(["running", "running"]);
+				// its Notification waits for the continued Run's end, so that Run sums up once
+				deepAnswer();
+				await waitFor(outcomes, (o) => o.includes("completed"));
 				answer();
 				const view = await waitFor(
 					() => get(id),
@@ -1243,7 +1262,10 @@ describe.skipIf(!url)(
 						v?.status === "idle" &&
 						messageText(v.messages.at(-1)?.message as Message) === "summed up",
 				);
-				expect(view?.subagents.map((s) => s.outcome)).toEqual(["completed"]);
+				expect(view?.subagents.map((s) => s.outcome)).toEqual([
+					"completed",
+					"completed",
+				]);
 				expect(
 					view?.messages
 						.filter((m) => m.subagentId === view.subagents[0].id)
@@ -1257,6 +1279,7 @@ describe.skipIf(!url)(
 				add.mockRestore();
 				release();
 				answer();
+				deepAnswer();
 			}
 		}, 15_000);
 
@@ -3672,7 +3695,7 @@ describe.skipIf(!url)(
 				}
 			});
 
-			it("and the User's Stop of that requeued job, whose open then threw, ends no Run Retry started meanwhile", async () => {
+			it("and the User's Stop of that requeued job, whose open then threw, ends no Run Retry started meanwhile, nor stops its Subagent", async () => {
 				await stopWorker();
 				stopWorker = await serve({
 					concurrency: 2,
@@ -3681,13 +3704,24 @@ describe.skipIf(!url)(
 					},
 				});
 				let replying = false;
+				let working = false;
 				const { gate: going, release: answer } = gate();
+				const { gate: subGoing, release: subAnswer } = gate();
 				script({
 					parent: [
+						call(start("task")),
 						async () => {
 							replying = true;
 							await going;
 							return "answered";
+						},
+						say("summed up"),
+					],
+					sub: [
+						async () => {
+							working = true;
+							await subGoing;
+							return "done";
 						},
 					],
 				});
@@ -3724,23 +3758,32 @@ describe.skipIf(!url)(
 						.from(schema.conversation);
 					await failedOnce(id);
 					await conversations.retry(userId, id);
-					await waitFor(async () => replying, Boolean);
+					await waitFor(async () => replying && working, Boolean);
 					release();
 					await waitFor(
 						async () => !(await queue.getJob(jobId as string)),
 						Boolean,
 					);
-					expect((await get(id))?.status).toBe("running");
-					answer();
-					const view = await waitFor(() => get(id), idle(2));
-					expect(view?.messages.map((m) => m.message.role)).toEqual([
-						"user",
-						"assistant",
+					const meanwhile = await get(id);
+					expect(meanwhile?.status).toBe("running");
+					expect(meanwhile?.subagents.map((s) => s.outcome)).toEqual([
+						"running",
 					]);
+					answer();
+					subAnswer();
+					const view = await waitFor(
+						() => get(id),
+						(v) =>
+							v?.status === "idle" &&
+							messageText(v.messages.at(-1)?.message as Message) ===
+								"summed up",
+					);
+					expect(view?.subagents.map((s) => s.outcome)).toEqual(["completed"]);
 					expect(told).toEqual([id]);
 				} finally {
 					release();
 					answer();
+					subAnswer();
 				}
 			});
 
@@ -3895,6 +3938,78 @@ describe.skipIf(!url)(
 				"user",
 				"assistant",
 			]);
+		}, 15_000);
+
+		it("lets a worker that stalled in a Run and lives on neither take the inputs of the Run Retry started since nor end it", async () => {
+			await stopWorker();
+			const told: string[] = [];
+			stopWorker = await serve({
+				concurrency: 2,
+				stalledInterval: 200,
+				onFailed: async (id: string) => {
+					told.push(id);
+				},
+			});
+			const { gate: stalled, release: liveOn } = gate();
+			const { gate: going, release: answer } = gate();
+			let opened = 0;
+			let staleWorking = false;
+			let replying = false;
+			override = async (run) => {
+				if (++opened === 1) {
+					staleWorking = true;
+					await stalled;
+					// its worker goes on past the stall, as bullmq never aborts it
+					await run.deliver();
+					await run.finish();
+					return;
+				}
+				replying = true;
+				await going;
+				for (let n = 1; ; n++) {
+					await run.save(fauxAssistantMessage(`answer ${n}`));
+					if (!(await run.finish()).length) return;
+				}
+			};
+			try {
+				const id = await send("a");
+				await waitFor(async () => staleWorking, Boolean);
+				const [{ jobId }] = await db
+					.select({ jobId: schema.conversation.jobId })
+					.from(schema.conversation);
+				// the lock its worker holds lapses, so the stall check fails the job (maxStalledCount: 0) while that worker goes on
+				await db.execute(
+					sql`update bullmq.job set lock_token = 'lapsed', locked_until_ms = 1, stalled_marked = true where id = ${jobId}`,
+				);
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "failed",
+				);
+				await conversations.retry(userId, id);
+				await waitFor(async () => replying, Boolean);
+				await send("b", id);
+				liveOn();
+				// what the stalled worker does next has had its time
+				await new Promise((r) => setTimeout(r, 300));
+				expect((await get(id))?.status).toBe("running");
+				answer();
+				const view = await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle",
+				);
+				expect(view?.messages.map((m) => messageText(m.message))).toEqual([
+					"a",
+					"answer 1",
+					"b",
+					"answer 2",
+				]);
+				expect(told).toEqual([id]);
+			} finally {
+				liveOn();
+				answer();
+				await stopWorker();
+				stopWorker = await serve();
+			}
 		}, 15_000);
 	},
 );
