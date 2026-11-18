@@ -58,7 +58,7 @@ import {
 	drain,
 	enqueue,
 	ensureRun,
-	failRun,
+	failUnqueued,
 	lockRoot,
 	newJobId,
 	requestStop,
@@ -640,10 +640,11 @@ export function createConversations({
 					"id",
 					"agent_offline",
 				);
+			const jobId = newJobId();
 			const dropped = await db.transaction(async (tx) => {
 				const claimed = await tx
 					.update(conversation)
-					.set({ status: "running", jobId: newJobId(), awaitingReply: false })
+					.set({ status: "running", jobId, awaitingReply: false })
 					.where(
 						and(
 							eq(conversation.id, id),
@@ -710,10 +711,7 @@ export function createConversations({
 				...dropped.subagents.map((d) => `${conv.rootId}/${d.id}/`),
 			]);
 			// no job of its would fail it
-			await enqueue(id).catch(async (error) => {
-				await failRun(id, error);
-				throw error;
-			});
+			await enqueue(id).catch((error) => failUnqueued(id, jobId, error));
 			return true;
 		},
 
