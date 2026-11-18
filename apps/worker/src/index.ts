@@ -49,5 +49,5 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 console.log(
-	"worker listening on queues agent-runs, subagent-runs, timers and firings",
+	"worker listening on queues agent-runs, subagent-runs, timers, firings and linear-events",
 );

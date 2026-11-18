@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./events": "./src/events.ts",
     "./testing": "./src/testing.ts"
   },
   "scripts": {
@@ -11,6 +12,7 @@
   },
   "dependencies": {
     "@orqestra/db": "workspace:*",
+    "bullmq": "^6.5.0",
     "drizzle-orm": "^0.45.4",
     "zod": "^4.6.7"
   },

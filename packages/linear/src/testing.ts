@@ -1,9 +1,10 @@
 // A scripted Linear, its token endpoint and GraphQL API reachable through `fetch`, for testing what installs and uses the app without it.
+import { createHmac } from "node:crypto";
 
 /**
  * `authorize` plays a workspace admin approving an authorization URL: the redirect's query, with a code that `clientSecret` and the
  * same redirect_uri redeem once. Refresh tokens rotate, each used once. `tokenRequests` holds each token request's form;
- * `accessTokens` and `refreshTokens` the live ones.
+ * `accessTokens` and `refreshTokens` the live ones; `activities` the input of each agentActivityCreate.
  */
 export function fakeLinear({
 	workspace = "Acme",
@@ -30,6 +31,10 @@ export function fakeLinear({
 		workspace,
 		clientSecret,
 		tokenRequests: [] as Record<string, string>[],
+		activities: [] as {
+			agentSessionId: string;
+			content: { type: string; body: string };
+		}[],
 		accessTokens: new Set<string>(),
 		refreshTokens: new Set<string>(),
 		authorize(url: string) {
@@ -71,6 +76,13 @@ export function fakeLinear({
 						{ errors: [{ message: "Authentication required" }] },
 						{ status: 401 },
 					);
+				const { query, variables } = JSON.parse(String(init?.body));
+				if (String(query).includes("agentActivityCreate")) {
+					linear.activities.push(variables.input);
+					return Response.json({
+						data: { agentActivityCreate: { success: true } },
+					});
+				}
 				return Response.json({
 					data: { organization: { name: linear.workspace } },
 				});
@@ -79,4 +91,63 @@ export function fakeLinear({
 		},
 	};
 	return linear;
+}
+
+/** An AgentSessionEvent webhook's body as Linear sends it, trimmed to what Orqestra reads; `prompt` makes it a `prompted` event. */
+export function agentSessionEvent({
+	sessionId = "session-1",
+	email = "uma@example.com",
+	prompt,
+	signal,
+	webhookTimestamp = Date.now(),
+}: {
+	sessionId?: string;
+	email?: string;
+	prompt?: string;
+	signal?: string;
+	webhookTimestamp?: number;
+} = {}) {
+	const user = { id: "lin-user-1", name: "Uma", email, url: "" };
+	return {
+		type: "AgentSessionEvent",
+		action: prompt === undefined ? "created" : "prompted",
+		createdAt: new Date(webhookTimestamp).toISOString(),
+		organizationId: "org-1",
+		oauthClientId: "lin-client",
+		appUserId: "app-user-1",
+		webhookId: "webhook-1",
+		webhookTimestamp,
+		agentSession: {
+			id: sessionId,
+			creator: user,
+			comment: null,
+			issue: {
+				id: "issue-1",
+				identifier: "ENG-7",
+				title: "Fix the login button",
+				description: "It does nothing on Safari.",
+				url: "https://linear.app/acme/issue/ENG-7",
+				team: { id: "team-1", key: "ENG", name: "Engineering" },
+			},
+		},
+		agentActivity:
+			prompt === undefined
+				? null
+				: {
+						id: `activity-${prompt.length}-${webhookTimestamp}`,
+						agentSessionId: sessionId,
+						signal: signal ?? null,
+						content: { type: "prompt", body: prompt },
+						user,
+					},
+	};
+}
+
+/** A webhook request's raw body and its `Linear-Signature`: the hex HMAC-SHA256 of the body with the webhook secret. */
+export function signed(payload: unknown, secret: string) {
+	const body = JSON.stringify(payload);
+	return {
+		body,
+		signature: createHmac("sha256", secret).update(body).digest("hex"),
+	};
 }

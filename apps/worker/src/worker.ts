@@ -2,12 +2,14 @@ import {
 	type ConversationCapabilities,
 	createConversations,
 } from "@orqestra/conversations";
+import { serveLinearEvents } from "@orqestra/linear/events";
+import { handleLinearEvent } from "./linear.ts";
 import { type RuntimeDeps, runAgent, titlesSettled } from "./runtime/index.ts";
 import { openToolbox } from "./runtime/toolbox.ts";
 
 type Deps = Parameters<typeof createConversations>[0];
 
-/** Works on queued Runs in this process, replying to each, until the returned close function is called. */
+/** Works on queued Runs and Linear's Agent Session events in this process, replying to each, until the returned close function is called. */
 export async function startAgentWorker(
 	// `current` read per Run: a Run keeps the config it started with, the next one picks up a reload
 	capabilities: ConversationCapabilities,
@@ -30,13 +32,14 @@ export async function startAgentWorker(
 			captureContent?: boolean;
 		},
 ) {
-	const close = await createConversations({
+	const conversations = createConversations({
 		capabilities,
 		orrery,
 		store,
 		fetch,
 		connections,
-	}).serveRuns(
+	});
+	const stopRuns = await conversations.serveRuns(
 		(run, config) =>
 			runAgent(run, {
 				config,
@@ -46,9 +49,13 @@ export async function startAgentWorker(
 			}),
 		options,
 	);
+	const linear = await serveLinearEvents((event) =>
+		handleLinearEvent(event, conversations),
+	);
 	// a Run's title outlives it: closing waits for those under way, so none is cut off with its Usage unrecorded
 	return async () => {
-		await close();
+		await linear.close();
+		await stopRuns();
 		await titlesSettled();
 	};
 }
