@@ -272,11 +272,14 @@ export type RunDeps = {
 const active = new Map<string, AbortController>();
 
 /**
- * Ends a stopped Run, which stops the Subagents under it too:
+ * Ends a stopped Run, job `jobId`'s, which stops the Subagents under it too:
  * again after the Run ended, to catch any it started while the stop was on its way.
+ * Only while it is still that job's Run: one stopped before its open threw may have been ended meanwhile by a start that could not queue it,
+ * and another started since.
  */
 async function stopped(
 	conv: { id: string; parentId: string | null },
+	jobId: string | undefined,
 	result: string,
 	signal: AbortSignal,
 	config: () => Promise<Snapshots>,
@@ -288,11 +291,12 @@ async function stopped(
 	// one handed off while the stop was on its way: Stop cancels it too
 	if (!timedOut) await cancelStoppedCalls(config, conv.id, mcp);
 	if (conv.parentId)
-		return endSubagent(conv.id, {
-			outcome: timedOut ? "partial" : "stopped",
-			result,
-		});
-	await endRun(conv.id, "idle", undefined, !timedOut);
+		return endSubagent(
+			conv.id,
+			{ outcome: timedOut ? "partial" : "stopped", result },
+			jobId ?? "",
+		);
+	await endRun(conv.id, "idle", undefined, !timedOut, jobId ?? "");
 	if (timedOut) await alertRun(conv.id, "partial");
 }
 
@@ -319,14 +323,19 @@ async function failed(
 			? wakeAfter(conv.parentId)
 			: ensureRun(conversationId)));
 	if (conv.status !== "running") return;
-	// only while it is still this job's Run: since the read, a start that could not queue it may have failed it, and Retry started another
+	// only while it is still this job's Run: since the read, a start that could not queue it may have failed or settled it,
+	// and Retry, a new message or the parent continuing it started another
 	if (!conv.parentId) return failRun(conversationId, error, jobId ?? "");
 	// the Subagents under it would report to nobody
 	await stopSubagents(conversationId, cancelStopped(config, mcp));
-	await endSubagent(conversationId, {
-		outcome: "failed",
-		result: `[The subagent failed, or the worker running it crashed: ${error.message}]`,
-	});
+	await endSubagent(
+		conversationId,
+		{
+			outcome: "failed",
+			result: `[The subagent failed, or the worker running it crashed: ${error.message}]`,
+		},
+		jobId ?? "",
+	);
 }
 
 /**
@@ -417,11 +426,11 @@ async function execute(
 		await handler(run, cfg);
 		if (!over && !stop.signal.aborted)
 			throw new Error("The Run ended without finishing");
-		if (!over) await stopped(conv, "", stop.signal, config, mcp);
+		if (!over) await stopped(conv, jobId, "", stop.signal, config, mcp);
 	} catch (error) {
 		// stopped before the reply was saved (while compacting, say): nothing to save
 		if (stop.signal.aborted && !over)
-			return stopped(conv, "", stop.signal, config, mcp);
+			return stopped(conv, jobId, "", stop.signal, config, mcp);
 		// the failed reply's live copy goes
 		await emit({ type: "end", subagent: sub });
 		throw error;
@@ -588,6 +597,7 @@ async function open(
 				end();
 				await stopped(
 					conv,
+					jobId,
 					outcome?.result ?? "",
 					signal,
 					async () => cfg,
