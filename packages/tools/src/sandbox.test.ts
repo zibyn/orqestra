@@ -165,6 +165,34 @@ describe("runCommand", () => {
 		});
 	});
 
+	it("hands env and Secret names to the Exec, and neither when not given", async () => {
+		const o = memoryOrrery();
+		const sent: unknown[] = [];
+		const client: typeof o.client = {
+			...o.client,
+			createExec: (id, request, opts) => {
+				sent.push(request);
+				return o.client.createExec(id, request, opts);
+			},
+		};
+		const { id } = await readySandbox(client, provider, stored().claim);
+		await runCommand(client, id, "ls", { pollMs: 1 });
+		await runCommand(client, id, "printenv TOK", {
+			pollMs: 1,
+			env: { MODE: "x" },
+			secrets: { TOK: "q1-tok" },
+		});
+		// JSON drops undefined fields, so the first is the body orrery got before env and secrets existed
+		expect(sent.map((r) => JSON.stringify(r))).toEqual([
+			JSON.stringify({ argv: ["bash", "-lc", "ls"] }),
+			JSON.stringify({
+				argv: ["bash", "-lc", "printenv TOK"],
+				env: { MODE: "x" },
+				secrets: { TOK: "q1-tok" },
+			}),
+		]);
+	});
+
 	it("says why a command that did not exit ended", async () => {
 		const o = memoryOrrery({ exec: () => ({ cause: "oom_killed" }) });
 		const { id } = await readySandbox(o.client, provider, stored().claim);
