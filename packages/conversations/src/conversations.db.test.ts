@@ -1178,6 +1178,171 @@ describe.skipIf(!url)(
 			}
 		}, 15_000);
 
+		it("keeps a Subagent the parent continued going though the 'failed' handler of a job a worker's startup requeue queued for its start, which read it running, settles it late: the parent gets its result", async () => {
+			const queue = runs.runQueue(runs.SUBAGENT_RUNS_QUEUE);
+			const transaction = db.transaction.bind(db);
+			let step = "";
+			let settled = false;
+			let working = false;
+			const { gate: settle, release } = gate();
+			const { gate: going, release: answer } = gate();
+			const tx = vi.spyOn(db, "transaction").mockImplementation((async (
+				...args: Parameters<typeof transaction>
+			) => {
+				// the requeued job's open cannot reach the database, and its job fails
+				if (step === "open") {
+					step = "stop";
+					throw new Error("connection lost");
+				}
+				// its 'failed' handler, which read the Subagent running: its stopSubagents goes, its endSubagent waits
+				if (step === "stop") step = "settle";
+				else if (step === "settle") {
+					step = "held";
+					await settle;
+					try {
+						return await transaction(...args);
+					} finally {
+						settled = true;
+					}
+				}
+				return transaction(...args);
+			}) as typeof transaction);
+			const add = vi.spyOn(queue, "add").mockImplementationOnce(async () => {
+				step = "open";
+				await conversations.requeue();
+				await waitFor(async () => step === "held", Boolean);
+				throw new Error("queue down");
+			});
+			try {
+				script({
+					parent: [
+						call(start("task")),
+						call(message(1, "again")),
+						say("continued"),
+						say("summed up"),
+					],
+					sub: [
+						async () => {
+							working = true;
+							await going;
+							return "done";
+						},
+					],
+				});
+				const id = await send("go");
+				await waitFor(async () => working, Boolean);
+				release();
+				await waitFor(async () => settled, Boolean);
+				expect((await get(id))?.subagents.map((s) => s.outcome)).toEqual([
+					"running",
+				]);
+				answer();
+				const view = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.status === "idle" &&
+						messageText(v.messages.at(-1)?.message as Message) === "summed up",
+				);
+				expect(view?.subagents.map((s) => s.outcome)).toEqual(["completed"]);
+				expect(
+					view?.messages
+						.filter((m) => m.subagentId === view.subagents[0].id)
+						.map((m) => m.message.content),
+				).toEqual([
+					'<task-notification subagent="1" status="failed">\n[The subagent could not be started: queue down]\n</task-notification>',
+					'<task-notification subagent="1" status="completed">\ndone\n</task-notification>',
+				]);
+			} finally {
+				tx.mockRestore();
+				add.mockRestore();
+				release();
+				answer();
+			}
+		}, 15_000);
+
+		it("keeps a Subagent the parent continued going though the User's Stop reached a job a worker's startup requeue queued for its start, whose open then threw: the parent gets its result", async () => {
+			const queue = runs.runQueue(runs.SUBAGENT_RUNS_QUEUE);
+			const transaction = db.transaction.bind(db);
+			let step = "";
+			let working = false;
+			let started = "";
+			const { gate: opening, release } = gate();
+			const { gate: going, release: answer } = gate();
+			// the requeued job's open, past execute's check, waits, then cannot reach the database
+			const tx = vi.spyOn(db, "transaction").mockImplementation((async (
+				...args: Parameters<typeof transaction>
+			) => {
+				if (step === "open") {
+					step = "held";
+					await opening;
+					throw new Error("connection lost");
+				}
+				return transaction(...args);
+			}) as typeof transaction);
+			const add = vi
+				.spyOn(queue, "add")
+				.mockImplementationOnce(async (_name, data) => {
+					[{ started }] = (await db
+						.select({ started: schema.conversation.jobId })
+						.from(schema.conversation)
+						.where(
+							sql`${schema.conversation.id} = ${data.conversationId}`,
+						)) as { started: string }[];
+					step = "open";
+					await conversations.requeue();
+					await waitFor(async () => step === "held", Boolean);
+					// a worker took its job, so the stop request reaches that
+					await conversations.stopSubagent(userId, data.conversationId);
+					await new Promise((r) => setTimeout(r, 300));
+					throw new Error("queue down");
+				});
+			try {
+				script({
+					parent: [
+						call(start("task")),
+						call(message(1, "again")),
+						say("continued"),
+						say("summed up"),
+					],
+					sub: [
+						async () => {
+							working = true;
+							await going;
+							return "done";
+						},
+					],
+				});
+				const id = await send("go");
+				await waitFor(async () => working, Boolean);
+				release();
+				await waitFor(async () => !(await queue.getJob(started)), Boolean);
+				expect((await get(id))?.subagents.map((s) => s.outcome)).toEqual([
+					"running",
+				]);
+				answer();
+				const view = await waitFor(
+					() => get(id),
+					(v) =>
+						v?.status === "idle" &&
+						messageText(v.messages.at(-1)?.message as Message) === "summed up",
+				);
+				expect(view?.subagents.map((s) => s.outcome)).toEqual(["completed"]);
+				expect(
+					view?.messages
+						.filter((m) => m.subagentId === view.subagents[0].id)
+						.map((m) => m.message.content),
+				).toEqual([
+					'<task-notification subagent="1" status="stopped">\n[The subagent could not be started: queue down]\n</task-notification>',
+					'<task-notification subagent="1" status="completed">\ndone\n</task-notification>',
+				]);
+			} finally {
+				tx.mockRestore();
+				add.mockRestore();
+				release();
+				answer();
+			}
+		}, 15_000);
+
 		it("wakes the parent in one Run for two Subagents that finish together, and delivers both Notifications", async () => {
 			const { gate: done, release } = gate();
 			const { gate: blocked, release: unblock } = gate();
@@ -3503,6 +3668,78 @@ describe.skipIf(!url)(
 					expect(told).toEqual([id]);
 				} finally {
 					handler.release();
+					answer();
+				}
+			});
+
+			it("and the User's Stop of that requeued job, whose open then threw, ends no Run Retry started meanwhile", async () => {
+				await stopWorker();
+				stopWorker = await serve({
+					concurrency: 2,
+					onFailed: async (id: string) => {
+						told.push(id);
+					},
+				});
+				let replying = false;
+				const { gate: going, release: answer } = gate();
+				script({
+					parent: [
+						async () => {
+							replying = true;
+							await going;
+							return "answered";
+						},
+					],
+				});
+				const transaction = db.transaction.bind(db);
+				let step = "";
+				const { gate: opening, release } = gate();
+				// the requeued job's open, past execute's check, waits, then cannot reach the database
+				vi.spyOn(db, "transaction").mockImplementation((async (
+					...args: Parameters<typeof transaction>
+				) => {
+					if (step === "open") {
+						step = "held";
+						await opening;
+						throw new Error("connection lost");
+					}
+					return transaction(...args);
+				}) as typeof transaction);
+				vi.spyOn(queue, "add").mockImplementationOnce(async (_name, data) => {
+					step = "open";
+					await conversations.requeue();
+					await waitFor(async () => step === "held", Boolean);
+					// a worker took its job, so the stop request reaches that
+					await conversations.stop(userId, data.conversationId);
+					await new Promise((r) => setTimeout(r, 300));
+					throw new Error("queue down");
+				});
+				try {
+					await expect(send("a")).rejects.toThrow("queue down");
+					const [{ id, jobId }] = await db
+						.select({
+							id: schema.conversation.id,
+							jobId: schema.conversation.jobId,
+						})
+						.from(schema.conversation);
+					await failedOnce(id);
+					await conversations.retry(userId, id);
+					await waitFor(async () => replying, Boolean);
+					release();
+					await waitFor(
+						async () => !(await queue.getJob(jobId as string)),
+						Boolean,
+					);
+					expect((await get(id))?.status).toBe("running");
+					answer();
+					const view = await waitFor(() => get(id), idle(2));
+					expect(view?.messages.map((m) => m.message.role)).toEqual([
+						"user",
+						"assistant",
+					]);
+					expect(told).toEqual([id]);
+				} finally {
+					release();
 					answer();
 				}
 			});
