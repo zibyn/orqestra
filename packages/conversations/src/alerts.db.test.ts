@@ -19,6 +19,7 @@ const push = vi.hoisted(() => ({
 		payload: { title: string; status: string; url: string };
 	}[],
 	refuse: new Map<string, number>(),
+	refused: 0,
 }));
 vi.mock("web-push", () => ({
 	default: {
@@ -29,8 +30,10 @@ vi.mock("web-push", () => ({
 		) => {
 			if (options.vapidDetails.publicKey !== "public") throw new Error("keys");
 			const status = push.refuse.get(sub.endpoint);
-			if (status)
+			if (status) {
+				push.refused++;
 				throw Object.assign(new Error("refused"), { statusCode: status });
+			}
 			push.sent.push({ endpoint: sub.endpoint, payload: JSON.parse(payload) });
 		},
 	},
@@ -121,7 +124,7 @@ async function waitFor<T>(read: () => Promise<T>, ok: (v: T) => boolean) {
 	throw new Error("timed out");
 }
 const alerts = async () => push.sent.map((s) => s.payload);
-/** Gives a Run's end time to send what it would, then the Alerts sent. */
+/** Gives a Run's end time to send what more it would, then the Alerts sent. */
 const settled = async () => {
 	await new Promise((r) => setTimeout(r, 400));
 	return alerts();
@@ -151,6 +154,7 @@ describe.skipIf(!url)("Alerts (Postgres)", { timeout: 20_000 }, () => {
 		end = "complete";
 		push.sent.length = 0;
 		push.refuse.clear();
+		push.refused = 0;
 		await db.execute(
 			sql`truncate conversation, scheduled_task, push_subscription cascade`,
 		);
@@ -216,6 +220,10 @@ describe.skipIf(!url)("Alerts (Postgres)", { timeout: 20_000 }, () => {
 		const failing = await tasks.create(ada, input());
 		const fired = await firingOf(failing);
 		expect(fired.outcome).toBe("failed");
+		await waitFor(
+			alerts,
+			(a) => a.filter((x) => x.status === "failed").length === 2,
+		);
 		const ofRun = (await settled()).filter((a) => a.status === "failed");
 		expect(ofRun).toEqual([
 			{ title: "News", status: "failed", url: `/c/${fired.conversationId}` },
@@ -233,6 +241,7 @@ describe.skipIf(!url)("Alerts (Postgres)", { timeout: 20_000 }, () => {
 			(t) => t?.state === "auto_paused",
 		);
 		// two failed, then the third auto-paused it: one Alert each, to each browser
+		await waitFor(alerts, (a) => a.length === 6);
 		expect((await settled()).map((a) => a.status)).toEqual([
 			"failed",
 			"failed",
@@ -254,12 +263,14 @@ describe.skipIf(!url)("Alerts (Postgres)", { timeout: 20_000 }, () => {
 		await firingOf(await tasks.create(ada, quiet()));
 		end = "partial";
 		await firingOf(await tasks.create(ada, quiet()));
+		await waitFor(alerts, (a) => a.length === 6);
 		expect((await settled()).map((a) => a.status)).toEqual(
 			Array(6).fill("finished"),
 		);
 		push.sent.length = 0;
 		end = "question";
 		const asked = await firingOf(await tasks.create(ada, quiet()));
+		await waitFor(alerts, (a) => a.some((x) => x.status === "question"));
 		expect(await settled()).toContainEqual({
 			title: "Greetings",
 			status: "question",
@@ -273,7 +284,18 @@ describe.skipIf(!url)("Alerts (Postgres)", { timeout: 20_000 }, () => {
 		await subscribe(ada, "https://push.example/ada-tablet");
 		push.refuse.set("https://push.example/ada-tablet", 500);
 		await conversations.send(ada, { text: "hi" });
-		await settled();
+		// all three refused, and the two gone ones dropped
+		await waitFor(
+			async () => ({
+				refused: push.refused,
+				kept: (
+					await db.execute(
+						sql`select 1 from push_subscription where user_id = ${ada}`,
+					)
+				).rows.length,
+			}),
+			(p) => p.refused === 3 && p.kept === 1,
+		);
 		push.refuse.clear();
 		await conversations.send(ada, { text: "again" });
 		await waitFor(alerts, (a) => a.length === 1);
