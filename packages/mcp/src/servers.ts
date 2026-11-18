@@ -8,7 +8,7 @@ import {
 	sealSecret,
 	secretReadable,
 } from "@orqestra/db/secret";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import {
 	clearConnections,
@@ -73,6 +73,7 @@ export const mcpServerEnabledInput = z.object({
 type SaveErrors = Record<
 	string,
 	| { code: "id_invalid" | "id_taken" | "not_found" }
+	| { code: "token_env_taken"; server: string }
 	| {
 			code:
 				| "header_invalid"
@@ -257,8 +258,8 @@ export const mcpServerAdmin = ({
 
 	/**
 	 * Tests it first, which finds how it is signed in to (see probeMcpServer); once saved, also the test's result. `fetch` makes the
-	 * test's requests and revocations. A new auth mode, URL or pre-registered Client ends every Connection to it, revoked in the
-	 * background once committed.
+	 * test's requests and revocations. A new auth mode, URL, pre-registered Client or Git Host ends every Connection to it, revoked in
+	 * the background once committed.
 	 */
 	async save(
 		input: z.infer<typeof mcpServerInput>,
@@ -299,6 +300,23 @@ export const mcpServerAdmin = ({
 			});
 			plain[header] = value;
 		}
+		if (input.git) {
+			// shortcut: two Admins saving at once can both pass; a unique index on token_env would close that
+			const [taken] = await db
+				.select({ name: mcpServer.name })
+				.from(mcpServer)
+				.where(
+					and(
+						eq(mcpServer.tokenEnv, input.git.tokenEnv),
+						ne(mcpServer.id, input.id),
+					),
+				);
+			// an Exec's variable holds one token: the other Git Host's helper would send this one's
+			if (taken)
+				return {
+					errors: { git: { code: "token_env_taken", server: taken.name } },
+				};
+		}
 		const oauthClientId = input.oauthClientId || null;
 		const { auth: found, test } = await probeMcpServer(
 			{ url: input.url, headers: plain, preRegistered: !!oauthClientId },
@@ -334,13 +352,19 @@ export const mcpServerAdmin = ({
 				stored.oauthClientId !== oauthClientId ||
 				(!!oauthClientId &&
 					!!input.oauthClientSecret &&
-					input.oauthClientSecret !== oldClient?.client_secret));
+					input.oauthClientSecret !== oldClient?.client_secret) ||
+				// where Users' tokens go
+				stored.gitHost !== values.gitHost ||
+				stored.gitUsername !== values.gitUsername ||
+				stored.tokenEnv !== values.tokenEnv);
 		const cleared = await write(async (tx) => {
 			await tx
 				.insert(mcpServer)
 				.values({ id: input.id, ...values })
 				.onConflictDoUpdate({ target: mcpServer.id, set: values });
-			return reset ? clearConnections(tx, input.id, oldClient) : [];
+			return reset
+				? clearConnections(tx, input.id, oldClient, storedClient(values))
+				: [];
 		});
 		// shortcut: in the background so the save does not wait on authorization servers; lost if the process exits first
 		if (cleared.length) void revokeConnections(cleared, { fetch });

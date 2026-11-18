@@ -93,6 +93,31 @@ describe.skipIf(!url)("Capabilities writes (Postgres)", () => {
 			).toEqual({ headers: { code: "header_twice", header: "a" } });
 		});
 
+		it("refuses a Git Host whose token variable another one uses, since an Exec would hold only one of their tokens there", async () => {
+			const git = {
+				host: "github.com",
+				username: "x-access-token",
+				tokenEnv: "GH_TOKEN",
+			};
+			await config.mcpServers.save({ ...mcp("github"), git });
+			expect(
+				(await config.mcpServers.save({ ...mcp("github"), create: false, git }))
+					.errors,
+			).toEqual({});
+			const gitea = { ...git, host: "gitea.internal" };
+			expect(
+				(await config.mcpServers.save({ ...mcp("gitea"), git: gitea })).errors,
+			).toEqual({ git: { code: "token_env_taken", server: "github" } });
+			expect(
+				(
+					await config.mcpServers.save({
+						...mcp("gitea"),
+						git: { ...gitea, tokenEnv: "GITEA_TOKEN" },
+					})
+				).errors,
+			).toEqual({});
+		});
+
 		it("is shared when stored before it had an auth mode, as after the migration", async () => {
 			await db.execute(
 				sql`insert into mcp_server (id, name, url) values ('docs', 'Docs', 'http://127.0.0.1:9/mcp')`,
