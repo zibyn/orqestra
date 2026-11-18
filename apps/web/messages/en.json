@@ -158,7 +158,7 @@
   "mcp_advanced": "Advanced settings",
   "mcp_auth_detected_hint": "Orqestra tests the service when you save: if it signs in with OAuth, each User connects with their own account on their Connections page; otherwise every User shares the headers in Advanced settings.",
   "mcp_headers_shared_hint": "Fixed credentials such as an API key; every User shares them and sees the same data. Use OAuth for a service whose data differs per person.",
-  "mcp_auth_change_warning": "Changing the authentication, the URL, the pre-registered Client or the Git Host deletes every User's connection; they must connect again.",
+  "mcp_auth_change_warning": "Changing the authentication, the URL or the pre-registered Client, or adding or changing the Git Host, deletes every User's connection; they must connect again.",
   "mcp_oauth_client": "Pre-registered Client (optional)",
   "mcp_oauth_client_hint": "Usually left blank: Orqestra uses its own Client ID Metadata Document first, and registers itself dynamically when the server does not support it. Fill this in only when the server requires an app registered in advance; each User then connects on their own, and the headers cannot include Authorization.",
   "mcp_oauth_callback": "Callback address (enter this when registering the app)",

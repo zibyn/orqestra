@@ -522,6 +522,76 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 				save({ create: false, ...app, url: "https://mcp.example.com/mcp/v2" }),
 			));
 
+		/**
+		 * Ends u1's Connection by `end` while a Run's refresh hangs at GitHub. The end goes on without it within seconds, deletes and
+		 * revokes the Connection as stored, and logs that it did not wait.
+		 */
+		const endDuringHungRefresh = async (end: () => Promise<unknown>) => {
+			await save(app);
+			await connect("u1");
+			let hanging = () => {};
+			let release = () => {};
+			const hangs = new Promise<void>((r) => {
+				hanging = r;
+			});
+			const released = new Promise<void>((r) => {
+				release = r;
+			});
+			const { fetch } = as;
+			const hung: typeof fetch = async (input, init) => {
+				if (String(init?.body).includes("grant_type=refresh_token")) {
+					hanging();
+					await released;
+				}
+				return fetch(input, init);
+			};
+			const run = connectionToken(connectionStore, "u1", "github", {
+				server: {
+					url: as.resource,
+					headers: {},
+					oauthClient: { client_id: "orq-app", client_secret: "s3cret" },
+				},
+				fetch: hung,
+				marginMs: 2 * 3600_000,
+			});
+			await hangs;
+			const logged = spyOn(console, "error");
+			try {
+				const ended = await Promise.race([
+					end().then(() => true),
+					Bun.sleep(10_000).then(() => false),
+				]);
+				expect(ended).toBe(true);
+				expect((await listed("u1"))[0].status).toBe("none");
+				expect(await revocations(1)).toHaveLength(1);
+				expect(Bun.inspect(logged.mock.calls)).toMatch(/without waiting/);
+				expect(Bun.inspect(logged.mock.calls)).not.toMatch(/gh[ur]_/);
+			} finally {
+				logged.mockRestore();
+				release();
+				await run.catch(() => {});
+			}
+		};
+
+		it(
+			"disconnects within seconds while a Run's refresh hangs at GitHub",
+			() => endDuringHungRefresh(() => disconnect("u1")),
+			20_000,
+		);
+
+		it(
+			"saves the Admin's change within seconds while a Run's refresh hangs at GitHub",
+			() =>
+				endDuringHungRefresh(() =>
+					save({
+						create: false,
+						...app,
+						url: "https://mcp.example.com/mcp/v2",
+					}),
+				),
+			20_000,
+		);
+
 		it("revokes with the Client's new secret when the Admin changed it and GitHub refuses the old one", async () => {
 			await save(app);
 			await connect("u1");
@@ -532,6 +602,27 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 			expect(await revocations(1)).toHaveLength(1);
 			expect(as.accessTokens.size).toBe(0);
 			expect(as.refreshTokens.size).toBe(0);
+		});
+
+		it("logs both refusals when GitHub refuses the old secret and the new one", async () => {
+			await save(app);
+			await connect("u1");
+			as.clientSecret = "n3w";
+			const logged = spyOn(console, "error");
+			try {
+				await save({ create: false, ...app, oauthClientSecret: "other" });
+				for (let i = 0; i < 100 && !logged.mock.calls.length; i++)
+					await Bun.sleep(10);
+				const [[, error]] = logged.mock.calls as [string, AggregateError][];
+				expect(error.errors.map((e: Error) => e.message)).toEqual([
+					"GitHub answered 401",
+					"GitHub answered 401",
+				]);
+				expect(Bun.inspect(logged.mock.calls)).not.toMatch(/gh[ur]_/);
+			} finally {
+				logged.mockRestore();
+			}
+			expect((await listed("u1"))[0].status).toBe("none");
 		});
 
 		it("disconnects all the same when GitHub refuses, and logs no token", async () => {
@@ -595,7 +686,7 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 		}
 	});
 
-	it("keeps Connections when the Admin renames, disables or saves the same Client and Git Host again", async () => {
+	it("keeps Connections when the Admin renames, disables, removes the Git Host or saves the same Client and Git Host again", async () => {
 		const client = {
 			oauthClientId: "orq-app",
 			oauthClientSecret: "s3cret",
@@ -609,6 +700,8 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 		await connect("u1");
 		await save({ create: false, ...client, name: "GitHub!" });
 		await save({ create: false, ...client, oauthClientSecret: "" });
+		// Users' tokens go to fewer places
+		await save({ create: false, ...client, git: undefined });
 		await call("a1", "PUT", "/mcp-servers/enabled", {
 			body: { id: "github", enabled: false },
 		});

@@ -690,5 +690,14 @@ export async function revokeConnection(
 		if (!response.ok)
 			throw new Error(`${endpoint} answered ${response.status}`);
 	};
-	return rotated ? revoke(client).catch(() => revoke(rotated)) : revoke(client);
+	return rotated
+		? revoke(client).catch((first) =>
+				revoke(rotated).catch((second) => {
+					throw new AggregateError(
+						[first, second],
+						"Revoking failed with the Client's old secret and its new one",
+					);
+				}),
+			)
+		: revoke(client);
 }
