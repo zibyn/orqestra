@@ -1,4 +1,9 @@
-import { paraglideVitePlugin } from "@inlang/paraglide-js";
+import { existsSync } from "node:fs";
+import {
+	type CompilerOptions,
+	compile,
+	paraglideVitePlugin,
+} from "@inlang/paraglide-js";
 import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
@@ -25,17 +30,22 @@ const apiProxy = (): Plugin => ({
 	},
 });
 
+const paraglide: CompilerOptions = {
+	project: "./project.inlang",
+	outdir: "./src/paraglide",
+	strategy: ["cookie", "baseLocale"],
+};
+// nitro imports src/server.ts while the dev server starts, before the plugin's buildStart compiles, and keeps the failed import;
+// once the output exists, the plugin's own recompile keeps it current
+if (!existsSync("./src/paraglide/server.js")) await compile(paraglide);
+
 const config = defineConfig({
 	envDir: "../..",
 	resolve: { tsconfigPaths: true },
 	plugins: [
 		apiProxy(),
 		devtools(),
-		paraglideVitePlugin({
-			project: "./project.inlang",
-			outdir: "./src/paraglide",
-			strategy: ["cookie", "baseLocale"],
-		}),
+		paraglideVitePlugin(paraglide),
 		nitro({ rollupConfig: { external: [/^@sentry\//] } }),
 		tailwindcss(),
 		tanstackStart(),
