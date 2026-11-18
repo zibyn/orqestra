@@ -514,7 +514,7 @@ describe.skipIf(!url)(
 			await waitFor(
 				() =>
 					db.execute(
-						sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and query like '%"background_call"%'`,
+						sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and query like '%background_call%'`,
 					),
 				(r) => r.rows.length > 0,
 			);
