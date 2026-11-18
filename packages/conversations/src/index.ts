@@ -719,7 +719,7 @@ export function createConversations({
 		/**
 		 * Drops this Conversation's Run while it is still queued, or else asks whichever worker runs it to abort it.
 		 * Then its Subagents stop too, without waking it: after the Run, so it starts none past this. Its Timer and its Background Calls are cancelled.
-		 * False when the Conversation is not the user's.
+		 * False when the Conversation is not the user's; else the job of the Run it stopped, or of its last Run when none was going.
 		 */
 		async stop(userId: string, id: string) {
 			const conv = await owned(userId, id);
@@ -756,7 +756,7 @@ export function createConversations({
 			// before its Subagents' ends, so none decides it as though the User had stopped only them
 			await stopFiring(id);
 			await stopSubagents(id, cancelStopped(config, mcp));
-			return true;
+			return { jobId: conv.jobId };
 		},
 
 		/**

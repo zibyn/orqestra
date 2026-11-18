@@ -260,6 +260,13 @@
       "when": 1795017340256,
       "tag": "0036_skill_files_in_object_storage",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1795020558120,
+      "tag": "0037_turn_closed",
+      "breakpoints": true
     }
   ]
 }

@@ -42,6 +42,7 @@ import { type Recall, recallOf } from "./recall.ts";
 import {
 	AGENT_RUNS_QUEUE,
 	type ConversationEvent,
+	claimRun,
 	drain,
 	type Ended,
 	endRun,
@@ -113,6 +114,8 @@ export type TraceCarrier = Record<string, string>;
 /** One Run, as its handler sees it: what to reply to, and every way to save or show the reply. */
 export type RunHandle = {
 	conversationId: string;
+	/** The job running it: the Run's own, which a Linear Agent Session's turn is closed for. */
+	jobId: string;
 	/** The Polaris `sub` of the Conversation's User. */
 	userId: string;
 	/** The top-level Conversation: the Run's own for a top-level Run. */
@@ -140,7 +143,7 @@ export type RunHandle = {
 	titled: boolean;
 	/** Aborts when the Run is stopped, with RunTimedOut when an Unattended Run ran out of time. */
 	signal: AbortSignal;
-	/** Inputs that arrived since, in order, now part of the transcript; empty when none did. */
+	/** Inputs that arrived since, in order, now part of the transcript; empty when none did, or once the Run is no longer its job's (a stalled worker's). */
 	deliver(): Promise<Message[]>;
 	/** Saves a finished or stopped reply (which ends its stream) or a Tool result; a failed reply is not saved but thrown. */
 	save(message: Message): Promise<void>;
@@ -164,6 +167,7 @@ export type RunHandle = {
 	 * A Subagent reports its `outcome`, and so does an Unattended Run; a stopped Run is over whatever it reports, a timed-out Subagent ending partial.
 	 * A reply that asked the User a `question` waits for them: only a message of theirs goes on, Notifications wait with it.
 	 * A `quiet` one, an Unattended Run with nothing to report, ends completed without making the Conversation Unread, so without an Alert.
+	 * Throws once the Run is no longer its job's: a stalled worker's, whose job failed, and another Run may have started since.
 	 */
 	finish(
 		outcome?: Ended,
@@ -250,10 +254,14 @@ export type ServeOptions = {
 	/** How soon a crashed worker's Run is noticed; tests shorten it. */
 	stalledInterval?: number;
 	/**
-	 * Told of a top-level Run once it is marked failed: one that failed before its handler, on a crashed worker,
+	 * Told of a top-level Run, job `jobId`'s, once it is marked failed: one that failed before its handler, on a crashed worker,
 	 * or that could not be queued (by any caller of `ensureRun` in this process) included.
 	 */
-	onFailed?: (conversationId: string, error: Error) => Promise<void>;
+	onFailed?: (
+		conversationId: string,
+		error: Error,
+		jobId: string,
+	) => Promise<void>;
 };
 
 /** What Runs are served with, given once to `createConversations`. */
@@ -274,8 +282,8 @@ const active = new Map<string, AbortController>();
 /**
  * Ends a stopped Run, job `jobId`'s, which stops the Subagents under it too:
  * again after the Run ended, to catch any it started while the stop was on its way.
- * Only while it is still that job's Run: one stopped before its open threw may have been ended meanwhile by a start that could not queue it,
- * and another started since.
+ * Only while it is still that job's Run, decided once before it stops anything (`claimRun`): one stopped before its open threw may have been
+ * ended meanwhile by a start that could not queue it, and a stalled worker's by its job's failure, and another started since.
  */
 async function stopped(
 	conv: { id: string; parentId: string | null },
@@ -285,6 +293,7 @@ async function stopped(
 	config: () => Promise<Snapshots>,
 	mcp?: McpAccess,
 ) {
+	if (!(await claimRun(conv.id, jobId ?? ""))) return;
 	await stopSubagents(conv.id, cancelStopped(config, mcp));
 	// out of time is no stop of the User's: the parent gets what it has, the User an Alert
 	const timedOut = signal.reason instanceof RunTimedOut;
@@ -324,8 +333,9 @@ async function failed(
 			: ensureRun(conversationId)));
 	if (conv.status !== "running") return;
 	// only while it is still this job's Run: since the read, a start that could not queue it may have failed or settled it,
-	// and Retry, a new message or the parent continuing it started another
+	// and Retry, a new message or the parent continuing it started another; for a Subagent, decided once before it stops anything
 	if (!conv.parentId) return failRun(conversationId, error, jobId ?? "");
+	if (!(await claimRun(conversationId, jobId ?? ""))) return;
 	// the Subagents under it would report to nobody
 	await stopSubagents(conversationId, cancelStopped(config, mcp));
 	await endSubagent(
@@ -511,6 +521,7 @@ async function open(
 
 	return {
 		conversationId,
+		jobId: jobId ?? "",
 		userId: conv.userId,
 		rootConversationId: conv.rootId,
 		scheduledTaskId: root.scheduledTaskId ?? undefined,
@@ -541,7 +552,8 @@ async function open(
 		titled: conv.title !== null || conv.titleEdited,
 		signal,
 		async deliver() {
-			const messages = (await drain(conversationId)) as Message[];
+			const messages = ((await drain(conversationId, false, jobId ?? "")) ??
+				[]) as Message[];
 			if (messages.length) await saved();
 			return messages;
 		},
@@ -620,7 +632,9 @@ async function open(
 							? "quiet"
 							: true
 						: status,
-			)) as Message[];
+				jobId ?? "",
+			)) as Message[] | undefined;
+			if (!next) throw new Error("The Run is no longer this job's");
 			await saved();
 			if (!next.length) {
 				end();

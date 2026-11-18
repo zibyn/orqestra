@@ -11,7 +11,7 @@ import { db } from "@orqestra/db";
 import { conversation, linearSession, user } from "@orqestra/db/schema";
 import type { Fetch } from "@orqestra/linear";
 import { type LinearEvent, postAgentActivity } from "@orqestra/linear/events";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 type Activity = Parameters<typeof postAgentActivity>[1];
 /** The most Linear takes in an activity's body. */
@@ -39,6 +39,25 @@ const postActivity = (
 		},
 		{ fetch },
 	);
+
+/**
+ * The Agent Session of the Conversation whose Run, job `jobId`'s, is closing its turn, which it then records closed:
+ * undefined when the Conversation has no session or that turn was closed already. Its reply, its failure and the stop Linear asked for
+ * each close it, so the first of them posts the one closing activity.
+ */
+const closing = async (conversationId: string, jobId: string) => {
+	const [session] = await db
+		.update(linearSession)
+		.set({ closedJobId: jobId })
+		.where(
+			and(
+				eq(linearSession.conversationId, conversationId),
+				sql`${linearSession.closedJobId} is distinct from ${jobId}`,
+			),
+		)
+		.returning({ id: linearSession.agentSessionId });
+	return session?.id;
+};
 
 /** The first message of a Conversation a Linear Agent Session opens: its issue, the repository its team works in, and what it was started with. */
 const firstMessage = (event: LinearEvent, repo: string | undefined) =>
@@ -73,9 +92,15 @@ export async function handleLinearEvent(
 		.innerJoin(conversation, eq(conversation.id, linearSession.conversationId))
 		.where(eq(linearSession.agentSessionId, event.agentSessionId));
 	if (event.stop) {
-		if (session)
-			await conversations.stop(session.userId, session.conversationId);
-		// Linear waits for a final activity confirming the stop
+		const stopped =
+			session &&
+			(await conversations.stop(session.userId, session.conversationId));
+		// Linear waits for a final activity confirming the stop, unless the turn it stops closed already, with its reply or failure
+		if (
+			stopped &&
+			!(await closing(session.conversationId, stopped.jobId ?? ""))
+		)
+			return;
 		return post("response", "Stopped.");
 	}
 	const email = event.from?.email;
@@ -144,23 +169,20 @@ export async function handleLinearEvent(
 }
 
 /**
- * Closes the turn of a Linear Agent Session's Conversation whose Run was marked failed (`onFailed`), however it failed: in `reply`, before
- * it (its Agent removed), or on a worker that crashed or was killed. A Run is marked failed only while it has not ended, so this posts
- * no second activity after `reportingToLinear`'s.
- * shortcut: a worker dying between a Run's end and its post leaves the turn open; record each post on the session if that bites.
+ * Closes the turn of a Linear Agent Session's Conversation whose Run, job `jobId`'s, was marked failed (`onFailed`), however it failed:
+ * in `reply`, before it (its Agent removed), or on a worker that crashed or was killed; unless the stop Linear asked for closed it first.
+ * shortcut: a worker dying between a Run's end and its post leaves the turn open; post from an outbox of closings if that bites.
  */
 export async function reportFailureToLinear(
 	conversationId: string,
 	error: Error,
+	jobId: string,
 	{ fetch }: { fetch?: Fetch } = {},
 ) {
-	const [session] = await db
-		.select({ id: linearSession.agentSessionId })
-		.from(linearSession)
-		.where(eq(linearSession.conversationId, conversationId));
+	const session = await closing(conversationId, jobId);
 	if (!session) return;
 	await postActivity(
-		session.id,
+		session,
 		{
 			type: "error",
 			body:
@@ -170,7 +192,7 @@ export async function reportFailureToLinear(
 		},
 		fetch,
 	).catch((e) =>
-		console.error(`could not post to Linear Agent Session ${session.id}`, e),
+		console.error(`could not post to Linear Agent Session ${session}`, e),
 	);
 }
 
@@ -178,8 +200,8 @@ export async function reportFailureToLinear(
  * Replies to a Run with `reply`, and, for a Linear Agent Session's Conversation, posts one activity into the session that closes its turn,
  * the moment the Run is over and before the Conversation is titled: what it said last, as an elicitation when it ended asking the User a
  * question, else as the response, which says there was nothing to report when it said nothing; a Run cut off by the unattended time limit,
- * as an error with what it had written. A Run the User stopped posts nothing (the stop request confirms it in Linear); one that failed
- * is posted by `reportFailureToLinear`.
+ * as an error with what it had written; unless the stop Linear asked for closed the turn first. A Run the User stopped posts nothing
+ * (the stop request confirms it in Linear); one that failed is posted by `reportFailureToLinear`.
  */
 export const reportingToLinear =
 	(reply: RunHandler, { fetch }: { fetch?: Fetch } = {}): RunHandler =>
@@ -189,12 +211,9 @@ export const reportingToLinear =
 			.from(linearSession)
 			.where(eq(linearSession.conversationId, run.conversationId));
 		if (!session) return reply(run, config);
-		// the Run's end, or its being cut off, closes the turn once
-		let closed = false;
+		// the Run's end, or its being cut off, closes the turn once; a stop leaves that to its confirmation
 		const close = async (content?: Activity) => {
-			if (closed) return;
-			closed = true;
-			if (content)
+			if (content && (await closing(run.conversationId, run.jobId)))
 				await postActivity(session.id, content, fetch).catch((error) =>
 					console.error(
 						`could not post to Linear Agent Session ${session.id}`,
