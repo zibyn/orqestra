@@ -1,7 +1,8 @@
 import { db } from "@orqestra/db";
 import { attachment } from "@orqestra/db/schema";
 import type { ObjectStore } from "@orqestra/db/store";
-import type { orrery as orreryClient, SandboxProvider } from "@orqestra/tools";
+import type { orrery as orreryClient } from "@orqestra/integrations/orrery";
+import type { SandboxProvider } from "@orqestra/tools";
 import { and, eq, inArray, lt } from "drizzle-orm";
 import { ConversationError } from "./errors.ts";
 import { ensureSandbox } from "./sandbox.ts";

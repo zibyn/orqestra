@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-	frameEnd,
-	OrreryError,
-	orrery,
-	testSandboxProvider,
-} from "./orrery.ts";
+import { frameEnd, OrreryError, orrery, testSandboxProvider } from "./index.ts";
 
 type Sent = {
 	method: string;

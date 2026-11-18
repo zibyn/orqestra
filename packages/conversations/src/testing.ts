@@ -1,12 +1,13 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { ObjectStore } from "@orqestra/db/store";
 import { memoryStore } from "@orqestra/db/store";
+import type { SandboxClient } from "@orqestra/integrations";
 import type { ConnectionStore } from "@orqestra/mcp";
 import type { Memory } from "@orqestra/memory";
 import { inMemoryMemories } from "@orqestra/memory/testing";
 import type { StreamSimple } from "@orqestra/models";
 import type { SkillFile } from "@orqestra/skills/shared";
-import { type Orrery, readySandbox } from "@orqestra/tools";
+import { readySandbox } from "@orqestra/tools";
 import { type Counted, metered } from "./metered.ts";
 import type { Recall } from "./recall.ts";
 import type { Ended } from "./runs.ts";
@@ -99,7 +100,7 @@ export function memoryRun({
 	/** Dollars the Run's Model requests may cost before its Spending Limit is used up; no limit by default. */
 	spendingLimit?: number;
 	/** The Sandbox Provider's client the Conversation's Sandbox is in; no Sandbox without it. */
-	orrery?: Orrery;
+	orrery?: SandboxClient;
 	/** Object storage, where the Attachments are kept; an empty one by default. */
 	store?: ObjectStore;
 	/** A Skill version's files; none by default. */

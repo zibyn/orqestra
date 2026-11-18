@@ -13,6 +13,7 @@ import {
 	usage,
 } from "@orqestra/db/schema";
 import type { ObjectStore } from "@orqestra/db/store";
+import type { SandboxClient } from "@orqestra/integrations";
 import type {
 	BackgroundCallStart,
 	ConnectionStore,
@@ -25,7 +26,7 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/models";
 import type { SkillFile } from "@orqestra/skills/shared";
-import type { Orrery, SandboxProvider } from "@orqestra/tools";
+import type { SandboxProvider } from "@orqestra/tools";
 import { createPostgresBackend, Worker } from "bullmq";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { alertRun } from "./alerts.ts";
@@ -185,7 +186,7 @@ export type RunHandle = {
 	 * The Conversation's Sandbox, ready to use, with the Sandbox Provider's client that reaches it: created the first time,
 	 * started if stopped (`woke`); see `ensureSandbox`. Throws when no Sandbox Provider is configured.
 	 */
-	sandbox(): Promise<{ id: string; woke: boolean; client: Orrery }>;
+	sandbox(): Promise<{ id: string; woke: boolean; client: SandboxClient }>;
 	/** A Skill version's files, to write into the Sandbox. */
 	skillFiles(versionId: number): Promise<SkillFile[]>;
 	/** Object storage, where the Attachments are kept; Parse reads them there. */
@@ -270,7 +271,7 @@ export type RunDeps = {
 	config: () => Promise<Snapshots>;
 	store: ObjectStore;
 	/** The Sandbox Provider's client. */
-	orrery: (provider: SandboxProvider) => Orrery;
+	orrery: (provider: SandboxProvider) => SandboxClient;
 	skillFiles: (versionId: number) => Promise<SkillFile[]>;
 	/** What Background Calls are polled and cancelled with. */
 	mcp: McpAccess;

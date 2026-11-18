@@ -5,9 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./live": "./src/live.ts",
-    "./shared": "./src/shared.ts",
-    "./s3": "./src/s3.ts",
-    "./testing": "./src/testing.ts"
+    "./shared": "./src/shared.ts"
   },
   "scripts": {
     "test": "vitest run"
@@ -16,6 +14,7 @@
     "@earendil-works/pi-agent-core": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
     "@orqestra/db": "workspace:*",
+    "@orqestra/integrations": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "zod": "^4.6.7"
   },

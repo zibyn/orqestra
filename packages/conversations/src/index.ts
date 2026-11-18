@@ -18,6 +18,7 @@ import {
 	timer,
 } from "@orqestra/db/schema";
 import type { ObjectStore } from "@orqestra/db/store";
+import { orrery as orreryClient } from "@orqestra/integrations/orrery";
 import {
 	type ConnectionStore,
 	deleteMcpServer,
@@ -38,7 +39,6 @@ import {
 	type SkillFile,
 	skillBlock,
 } from "@orqestra/skills/shared";
-import { orrery as orreryClient } from "@orqestra/tools";
 import { mcpToolRef } from "@orqestra/tools/shared";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";

@@ -24,6 +24,7 @@ import {
 import type { AgentDefinition } from "@orqestra/agents";
 import type { ConversationEvent } from "@orqestra/conversations";
 import { memoryStore } from "@orqestra/db/store";
+import { memoryOrrery } from "@orqestra/integrations/testing";
 import { fakeLinear } from "@orqestra/linear/testing";
 import {
 	fakeAuthorizationServer,
@@ -31,7 +32,6 @@ import {
 	memoryConnections,
 } from "@orqestra/mcp/testing";
 import { zip } from "@orqestra/skills/test-zip";
-import { memoryOrrery } from "@orqestra/tools/testing";
 import { createPostgresBackend, Worker } from "bullmq";
 import { openToolbox } from "./runtime/toolbox.ts";
 

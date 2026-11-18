@@ -6,7 +6,7 @@ import { noMcpServerDeletes } from "@orqestra/conversations/testing";
 import { db } from "@orqestra/db";
 import * as schema from "@orqestra/db/schema";
 import { memoryStore } from "@orqestra/db/store";
-import { memoryOrrery } from "@orqestra/tools/testing";
+import { memoryOrrery } from "@orqestra/integrations/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";

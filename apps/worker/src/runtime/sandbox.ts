@@ -8,17 +8,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { turnSkills } from "@orqestra/agents";
 import type { RunHandle } from "@orqestra/conversations";
+import type { ExecRequest, Fetch, SandboxClient } from "@orqestra/integrations";
+import { OrreryError } from "@orqestra/integrations/orrery";
 import { connectionToken, type McpServer } from "@orqestra/mcp";
 import { SKILLS_DIR } from "@orqestra/skills/shared";
-import {
-	type ExecRequest,
-	type Fetch,
-	type Orrery,
-	OrreryError,
-	runCommand,
-	tar,
-	workspacePath,
-} from "@orqestra/tools";
+import { runCommand, tar, workspacePath } from "@orqestra/tools";
 
 /** Characters of a command's stdout or stderr the model gets; the start of longer output is cut. */
 const MAX_STREAM_CHARS = 20_000;
@@ -96,7 +90,7 @@ type GitHostServer = [string, McpServer & Required<Pick<McpServer, "git">>];
 async function gitCredentials(
 	run: Pick<RunHandle, "userId" | "connections" | "signal">,
 	gitHosts: GitHostServer[],
-	client: Orrery,
+	client: SandboxClient,
 	fetch?: Fetch,
 ): Promise<Pick<ExecRequest, "env" | "secrets">> {
 	const { connections, userId, signal } = run;
@@ -182,7 +176,7 @@ export function sandboxTools(
 
 	// the Sandbox is shared with the other Agents of the Conversation's tree, whose Skills may differ: write only the
 	// Skills not there at their version, leaving the others; VERSIONS records each one's version
-	async function writeSkills(id: string, client: Orrery) {
+	async function writeSkills(id: string, client: SandboxClient) {
 		const versions: Record<string, number> = await client
 			.readFile(id, `.skills/${VERSIONS}`, { signal })
 			.then((bytes) => JSON.parse(new TextDecoder().decode(bytes)))

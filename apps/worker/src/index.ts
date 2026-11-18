@@ -1,7 +1,7 @@
 import { db } from "@orqestra/db";
+import { s3Store } from "@orqestra/integrations/s3";
 import { connectionStore } from "@orqestra/mcp";
 import { backfillSkillFiles } from "@orqestra/skills";
-import { s3Store } from "@orqestra/tools/s3";
 import { createCapabilities } from "./capabilities.ts";
 import { tracing } from "./tracing.ts";
 import { startAgentWorker } from "./worker.ts";

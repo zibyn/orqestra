@@ -1,10 +1,14 @@
-// The built-in Tools: which are available, those of one Run, and the orrery client. An MCP Server's Tools are @orqestra/mcp's.
+// The built-in Tools: which are available, and those of one Run. An MCP Server's Tools are @orqestra/mcp's.
 // A leaf: knows nothing of how the services are stored or configured.
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
 import { cut } from "@orqestra/db/cut";
+import type { Fetch } from "@orqestra/integrations";
+import { deepseek } from "@orqestra/integrations/deepseek";
+import { firecrawl } from "@orqestra/integrations/firecrawl";
+import { mineru } from "@orqestra/integrations/mineru";
+import { tavily } from "@orqestra/integrations/tavily";
 import { type DocumentParser, type ParseFiles, parseTool } from "./parse.ts";
-import { searchProvider } from "./search.ts";
 import {
 	mcpToolRef,
 	type SearchProviderId,
@@ -13,18 +17,7 @@ import {
 	toolNames,
 } from "./shared.ts";
 
-/** `fetch` as Orqestra calls it, so a test can stand in for it. */
-export type Fetch = (
-	input: string | URL,
-	init?: RequestInit,
-) => Promise<Response>;
-
-export {
-	type DocumentParser,
-	type DocumentParserTestResult,
-	type ParseFiles,
-	testDocumentParser,
-} from "./parse.ts";
+export type { DocumentParser, ParseFiles } from "./parse.ts";
 
 /** A Tool's Search Provider and its decrypted key. */
 export interface ToolService {
@@ -42,6 +35,13 @@ export interface ToolServices {
 	/** The MCP Servers whose Tools can be offered, by id. */
 	mcpServers: Record<string, unknown>;
 }
+
+/** The client of each Search Provider. */
+const searchClients: Record<SearchProviderId, typeof tavily> = {
+	tavily,
+	firecrawl,
+	deepseek,
+};
 
 /** The Tool entries that can be offered in a Run now. */
 export const availableTools = (services: ToolServices): ToolRef[] => [
@@ -74,7 +74,7 @@ export function builtinTools(
 	const tools: AgentTool[] = [];
 	const search = offered.includes("search") && services.tools.search;
 	if (search) {
-		const provider = searchProvider(search, fetch);
+		const provider = searchClients[search.provider](search, fetch);
 		tools.push(
 			tool({
 				name: "search",
@@ -107,7 +107,7 @@ export function builtinTools(
 	}
 	const scrape = offered.includes("scrape") && services.tools.scrape;
 	if (scrape) {
-		const provider = searchProvider(scrape, fetch);
+		const provider = searchClients[scrape.provider](scrape, fetch);
 		tools.push(
 			tool({
 				name: "scrape",
@@ -124,10 +124,10 @@ export function builtinTools(
 		);
 	}
 	const parse = offered.includes("parse") && services.tools.parse;
-	if (parse && files) tools.push(parseTool(parse, files, fetch, { pollMs }));
+	if (parse && files)
+		tools.push(parseTool(mineru(parse, fetch, { pollMs }), files));
 	return tools;
 }
 
-export * from "./orrery.ts";
 export * from "./sandbox.ts";
 export { tar } from "./tar.ts";

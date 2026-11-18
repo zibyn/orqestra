@@ -1,7 +1,7 @@
 // Object storage, required like Postgres: Attachments' originals (ADR 0007), keyed under their top-level Conversation's id,
 // and Skill files (ADR 0017), keyed under their Skill's name.
 
-/** S3-compatible object storage; `s3Store` (in @orqestra/tools/s3) speaks to the real one, `memoryStore` keeps objects in memory. */
+/** S3-compatible object storage; `s3Store` (in @orqestra/integrations/s3) speaks to the real one, `memoryStore` keeps objects in memory. */
 export interface ObjectStore {
 	/**
 	 * Writes `body` at `key`; one that fails midway leaves nothing, deleting what it may have left unless `keepOnFailure`,

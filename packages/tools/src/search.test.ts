@@ -48,7 +48,7 @@ async function call(
 const listed = "## Pi\nhttps://pi.dev\n\nAn agent";
 
 describe("search", () => {
-	it("asks Tavily for `count` results", async () => {
+	it("lists each result's title, URL and snippet, asking for `count` of them", async () => {
 		const { fetch, request } = respond({
 			results: [{ title: "Pi", url: "https://pi.dev", content: "An agent" }],
 		});
@@ -58,47 +58,7 @@ describe("search", () => {
 				count: 3,
 			}),
 		).toBe(listed);
-		expect(request()).toEqual({
-			url: "https://api.tavily.com/search",
-			auth: "Bearer k",
-			body: { query: "pi", max_results: 3 },
-		});
-	});
-
-	it("asks Firecrawl for `count` web results", async () => {
-		const { fetch, request } = respond({
-			success: true,
-			data: {
-				web: [{ title: "Pi", url: "https://pi.dev", description: "An agent" }],
-			},
-		});
-		expect(
-			await call("search", official("firecrawl"), fetch, {
-				query: "pi",
-				count: 3,
-			}),
-		).toBe(listed);
-		expect(request()).toMatchObject({
-			url: "https://api.firecrawl.dev/v2/search",
-			body: { query: "pi", limit: 3 },
-		});
-	});
-
-	it("asks DeepSeek for `count` results", async () => {
-		const { fetch, request } = respond({
-			results: [{ title: "Pi", url: "https://pi.dev", snippet: "An agent" }],
-		});
-		expect(
-			await call("search", official("deepseek"), fetch, {
-				query: "pi",
-				count: 3,
-			}),
-		).toBe(listed);
-		expect(request()).toEqual({
-			url: "https://api.deepseek.com/v1/tools/search",
-			auth: "Bearer k",
-			body: { query: "pi", count: 3 },
-		});
+		expect(request().body).toEqual({ query: "pi", max_results: 3 });
 	});
 
 	it("asks for 5 results by default and says when there are none", async () => {
@@ -108,86 +68,43 @@ describe("search", () => {
 		).toBe("No results.");
 		expect(request().body).toEqual({ query: "pi", max_results: 5 });
 	});
-
-	it("fails with the service's status and message", async () => {
-		const { fetch } = respond({ error: "bad key" }, 401);
-		await expect(
-			call("search", official("tavily"), fetch, { query: "pi" }),
-		).rejects.toThrow(/Tavily.*401.*bad key/);
-	});
 });
 
-describe("a custom baseUrl (self-hosted, or behind a reverse proxy)", () => {
-	it("replaces the official one for Search and Scrape", async () => {
-		const tool: ToolService = {
-			provider: "firecrawl",
-			apiKey: "k",
-			baseUrl: "http://firecrawl.local:3002/",
-		};
-		let r = respond({ success: true, data: { web: [] } });
-		await call("search", tool, r.fetch, { query: "pi", count: 3 });
-		expect(r.request().url).toBe("http://firecrawl.local:3002/v2/search");
-		r = respond({ success: true, data: { markdown: "# Pi" } });
-		await call("scrape", tool, r.fetch, { url: "https://pi.dev" });
-		expect(r.request().url).toBe("http://firecrawl.local:3002/v2/scrape");
+// one answer each Search Provider's client reads as no results, or as the page "# Pi"
+const anyProvider = {
+	results: [{ raw_content: "# Pi" }],
+	data: { web: [], markdown: "# Pi" },
+	content: "# Pi",
+};
+
+describe.each([
+	["tavily", "https://api.tavily.com/search", "https://api.tavily.com/extract"],
+	[
+		"firecrawl",
+		"https://api.firecrawl.dev/v2/search",
+		"https://api.firecrawl.dev/v2/scrape",
+	],
+	[
+		"deepseek",
+		"https://api.deepseek.com/v1/tools/search",
+		"https://api.deepseek.com/v1/tools/fetch",
+	],
+] as const)("served by %s", (provider, searchUrl, scrapeUrl) => {
+	it("asks that Search Provider, with its key", async () => {
+		let r = respond({ ...anyProvider, results: [] });
+		await call("search", official(provider), r.fetch, { query: "pi" });
+		expect(r.request()).toMatchObject({ url: searchUrl, auth: "Bearer k" });
+		r = respond(anyProvider);
+		expect(
+			await call("scrape", official(provider), r.fetch, {
+				url: "https://pi.dev",
+			}),
+		).toBe("# Pi");
+		expect(r.request()).toMatchObject({ url: scrapeUrl, auth: "Bearer k" });
 	});
 });
 
 describe("scrape", () => {
-	it("reads a page as Markdown through Tavily", async () => {
-		const { fetch, request } = respond({
-			results: [{ url: "https://pi.dev", raw_content: "# Pi" }],
-		});
-		expect(
-			await call("scrape", official("tavily"), fetch, {
-				url: "https://pi.dev",
-			}),
-		).toBe("# Pi");
-		expect(request()).toMatchObject({
-			url: "https://api.tavily.com/extract",
-			body: { urls: ["https://pi.dev"], format: "markdown" },
-		});
-	});
-
-	it("reads a page as Markdown through Firecrawl", async () => {
-		const { fetch, request } = respond({
-			success: true,
-			data: { markdown: "# Pi" },
-		});
-		expect(
-			await call("scrape", official("firecrawl"), fetch, {
-				url: "https://pi.dev",
-			}),
-		).toBe("# Pi");
-		expect(request()).toMatchObject({
-			url: "https://api.firecrawl.dev/v2/scrape",
-			body: { url: "https://pi.dev", formats: ["markdown"] },
-		});
-	});
-
-	it("reads a page as Markdown through DeepSeek", async () => {
-		const { fetch, request } = respond({ title: "Pi", content: "# Pi" });
-		expect(
-			await call("scrape", official("deepseek"), fetch, {
-				url: "https://pi.dev",
-			}),
-		).toBe("# Pi");
-		expect(request()).toMatchObject({
-			url: "https://api.deepseek.com/v1/tools/fetch",
-			body: { url: "https://pi.dev" },
-		});
-	});
-
-	it("fails when the page has no content", async () => {
-		const { fetch } = respond({
-			results: [],
-			failed_results: [{ url: "https://pi.dev" }],
-		});
-		await expect(
-			call("scrape", official("tavily"), fetch, { url: "https://pi.dev" }),
-		).rejects.toThrow(/no content/);
-	});
-
 	it("cuts a long page with the same notice as any Tool result", async () => {
 		const { fetch } = respond({ content: "a".repeat(60_000) });
 		expect(
