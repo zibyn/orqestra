@@ -764,3 +764,38 @@ export const usage = pgTable(
 	},
 	(table) => [index().on(table.userId, table.createdAt)],
 );
+
+// Orqestra's Linear app, installed by an Admin in /console/linear into one Linear workspace, acting as itself (actor=app); at most one row, id 1
+export const linearInstallation = pgTable(
+	"linear_installation",
+	{
+		id: integer("id").primaryKey().default(1),
+		// the Linear OAuth app's
+		clientId: text("client_id").notNull(),
+		// these two encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
+		clientSecret: text("client_secret").notNull(),
+		webhookSecret: text("webhook_secret").notNull(),
+		// access token, refresh token and expiry as one JSON, encrypted with ORQESTRA_ENCRYPTION_KEY; null until the app is installed
+		tokens: text("tokens"),
+		// the Linear workspace's name; null until the app is installed
+		workspace: text("workspace"),
+		// the Agent of a Conversation Linear opens; null: none picked
+		defaultAgentId: text("default_agent_id").references(() => agent.id, {
+			onDelete: "set null",
+		}),
+		// a Linear team's key to the repository its issues are worked in, "owner/repo"
+		teamRepos: jsonb("team_repos")
+			.$type<Record<string, string>>()
+			.default({})
+			.notNull(),
+		// the authorization an Admin started, sent as its `state`, and when; its callback takes it, so it is used once
+		pendingState: text("pending_state"),
+		pendingAt: timestamp("pending_at", { withTimezone: true }),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+		updatedAt: timestamp("updated_at")
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [check("linear_installation_single_row", sql`${table.id} = 1`)],
+);

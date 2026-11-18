@@ -7,6 +7,7 @@ export type SaveError =
 			code:
 				| "api_key_required"
 				| "token_required"
+				| "secret_required"
 				| "not_in_catalog"
 				| "model_not_enabled"
 				| "not_found"

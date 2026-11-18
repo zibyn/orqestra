@@ -11,7 +11,7 @@ A person in Polaris' User pool who may use Orqestra, identified by their Polaris
 _Avoid_: Account, customer
 
 **Admin**:
-A User holding the `orqestra:admin` Entitlement at Orqestra's API in Polaris, allowed to configure Providers, Search Providers, MCP Servers, the Sandbox Provider, Skills and Agent Definitions in the console.
+A User holding the `orqestra:admin` Entitlement at Orqestra's API in Polaris, allowed to configure Providers, Search Providers, MCP Servers, the Sandbox Provider, Skills, Agent Definitions and the Linear Installation in the console.
 _Avoid_: Superuser, owner
 
 **Member**:
@@ -107,6 +107,10 @@ _Avoid_: Container, VM, workspace, code interpreter
 **Sandbox Provider**:
 The external service that serves Sandboxes, configured by an Admin with its address, credentials and environment template; Orrery is the only one supported, and at most one is configured. All Users' Sandboxes run under its one credential.
 _Avoid_: Runtime, execution backend
+
+**Linear Installation**:
+Orqestra's app installed by an Admin into one Linear workspace, where it acts as itself rather than as the Admin who installed it, so people there can assign issues to it and mention it. The Admin registers the app in Linear and enters its credentials in the console; installing needs a Linear workspace admin's approval. At most one exists, and installing again, for a new app or the same one, replaces it.
+_Avoid_: Linear integration, Linear connection, Linear account
 
 **Search**:
 The Tool that queries the web and returns matching pages.

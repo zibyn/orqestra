@@ -438,5 +438,17 @@
   "mcp_connected_user": "User",
   "mcp_connected_at": "Connected",
   "mcp_connection_status": "Status",
-  "mcp_connected_users_hint": "You cannot see their tokens, nor disconnect a User."
+  "mcp_connected_users_hint": "You cannot see their tokens, nor disconnect a User.",
+  "integrations": "Integrations",
+  "linear": "Linear",
+  "secret_required": "Enter this secret first.",
+  "linear_hint": "Install Orqestra in a Linear workspace as an agent, so issues can be assigned to it in Linear. A Linear workspace admin must authorize it.",
+  "linear_connected": "Connected to {workspace}",
+  "linear_webhook_secret": "Webhook Secret",
+  "linear_webhook_secret_hint": "The webhook signing secret from the Linear app's settings, which proves a webhook came from Linear.",
+  "linear_install": "Install in Linear",
+  "linear_reinstall": "Reinstall",
+  "linear_state_invalid": "This installation expired. Install again.",
+  "linear_denied": "Authorization was cancelled or refused; nothing was installed.",
+  "linear_failed": "The installation did not finish. Check the Client ID and Client Secret, then try again."
 }

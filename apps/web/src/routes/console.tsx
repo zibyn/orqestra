@@ -18,6 +18,7 @@ import {
 	PlugIcon,
 	SearchIcon,
 	SettingsIcon,
+	SquareKanbanIcon,
 	UsersIcon,
 } from "lucide-react";
 import { NavUser } from "#/components/NavUser";
@@ -66,6 +67,7 @@ type NavItem = {
 		| "/console/skills"
 		| "/console/sandbox"
 		| "/console/parse"
+		| "/console/linear"
 		| "/console/limits"
 		| "/console/users"
 		| "/console/usage";
@@ -95,6 +97,10 @@ const nav: { label: () => string; items: NavItem[] }[] = [
 			},
 			{ to: "/console/parse", label: m.document_parser, icon: FileTextIcon },
 		],
+	},
+	{
+		label: m.integrations,
+		items: [{ to: "/console/linear", label: m.linear, icon: SquareKanbanIcon }],
 	},
 	{
 		label: m.limits,

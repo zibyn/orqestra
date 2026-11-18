@@ -7,6 +7,7 @@ const texts: {
 } = {
 	api_key_required: () => m.api_key_required(),
 	token_required: () => m.sandbox_token_required(),
+	secret_required: () => m.secret_required(),
 	not_in_catalog: () => m.save_not_in_catalog(),
 	model_not_enabled: () => m.save_model_not_enabled(),
 	not_found: () => m.save_not_found(),

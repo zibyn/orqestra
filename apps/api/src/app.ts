@@ -11,6 +11,7 @@ import { documentParser } from "./document-parser.ts";
 import { download, upload } from "./files.ts";
 import type { User } from "./identity.ts";
 import { limits } from "./limits.ts";
+import { linearRoutes } from "./linear.ts";
 import { mcpServers } from "./mcp-servers.ts";
 import { memoryRoutes } from "./memories.ts";
 import { providers } from "./providers.ts";
@@ -107,6 +108,7 @@ export function createApp({
 						fetch,
 					}),
 				)
+				.use(linearRoutes(user, { orqestraUrl, fetch }))
 				.use(sandboxProvider(user, config.tools))
 				.use(documentParser(user, config.tools))
 				.use(limits(user, config.limits))

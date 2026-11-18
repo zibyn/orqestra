@@ -19,6 +19,7 @@ import { Route as AppUsageRouteImport } from './routes/_app/usage'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
 import { Route as ConsoleLimitsRouteImport } from './routes/console/limits'
+import { Route as ConsoleLinearRouteImport } from './routes/console/linear'
 import { Route as ConsoleMcpRouteImport } from './routes/console/mcp'
 import { Route as ConsoleParseRouteImport } from './routes/console/parse'
 import { Route as ConsoleProvidersRouteImport } from './routes/console/providers'
@@ -78,6 +79,11 @@ const ConsoleLimitsRoute = ConsoleLimitsRouteImport.update({
   path: '/limits',
   getParentRoute: () => ConsoleRoute,
 } as any)
+const ConsoleLinearRoute = ConsoleLinearRouteImport.update({
+  id: '/linear',
+  path: '/linear',
+  getParentRoute: () => ConsoleRoute,
+} as any)
 const ConsoleMcpRoute = ConsoleMcpRouteImport.update({
   id: '/mcp',
   path: '/mcp',
@@ -133,6 +139,7 @@ export interface FileRoutesByFullPath {
   '/usage': typeof AppUsageRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
+  '/console/linear': typeof ConsoleLinearRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/parse': typeof ConsoleParseRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -151,6 +158,7 @@ export interface FileRoutesByTo {
   '/usage': typeof AppUsageRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
+  '/console/linear': typeof ConsoleLinearRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/parse': typeof ConsoleParseRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -173,6 +181,7 @@ export interface FileRoutesById {
   '/_app/usage': typeof AppUsageRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
+  '/console/linear': typeof ConsoleLinearRoute
   '/console/mcp': typeof ConsoleMcpRoute
   '/console/parse': typeof ConsoleParseRoute
   '/console/providers': typeof ConsoleProvidersRoute
@@ -196,6 +205,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/console/agents'
     | '/console/limits'
+    | '/console/linear'
     | '/console/mcp'
     | '/console/parse'
     | '/console/providers'
@@ -214,6 +224,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/console/agents'
     | '/console/limits'
+    | '/console/linear'
     | '/console/mcp'
     | '/console/parse'
     | '/console/providers'
@@ -235,6 +246,7 @@ export interface FileRouteTypes {
     | '/_app/usage'
     | '/console/agents'
     | '/console/limits'
+    | '/console/linear'
     | '/console/mcp'
     | '/console/parse'
     | '/console/providers'
@@ -323,6 +335,13 @@ declare module '@tanstack/react-router' {
       path: '/limits'
       fullPath: '/console/limits'
       preLoaderRoute: typeof ConsoleLimitsRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/console/linear': {
+      id: '/console/linear'
+      path: '/linear'
+      fullPath: '/console/linear'
+      preLoaderRoute: typeof ConsoleLinearRouteImport
       parentRoute: typeof ConsoleRoute
     }
     '/console/mcp': {
@@ -414,6 +433,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 interface ConsoleRouteChildren {
   ConsoleAgentsRoute: typeof ConsoleAgentsRoute
   ConsoleLimitsRoute: typeof ConsoleLimitsRoute
+  ConsoleLinearRoute: typeof ConsoleLinearRoute
   ConsoleMcpRoute: typeof ConsoleMcpRoute
   ConsoleParseRoute: typeof ConsoleParseRoute
   ConsoleProvidersRoute: typeof ConsoleProvidersRoute
@@ -428,6 +448,7 @@ interface ConsoleRouteChildren {
 const ConsoleRouteChildren: ConsoleRouteChildren = {
   ConsoleAgentsRoute: ConsoleAgentsRoute,
   ConsoleLimitsRoute: ConsoleLimitsRoute,
+  ConsoleLinearRoute: ConsoleLinearRoute,
   ConsoleMcpRoute: ConsoleMcpRoute,
   ConsoleParseRoute: ConsoleParseRoute,
   ConsoleProvidersRoute: ConsoleProvidersRoute,
@@ -449,12 +470,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
