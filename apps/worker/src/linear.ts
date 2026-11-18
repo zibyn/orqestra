@@ -1,4 +1,12 @@
-import { ConversationError, type Conversations } from "@orqestra/conversations";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import {
+	ConversationError,
+	type Conversations,
+	type RunHandler,
+	RunTimedOut,
+	SpendingLimitReached,
+} from "@orqestra/conversations";
+import { messageText } from "@orqestra/conversations/shared";
 import { db } from "@orqestra/db";
 import { conversation, linearSession, user } from "@orqestra/db/schema";
 import type { Fetch } from "@orqestra/linear";
@@ -27,7 +35,7 @@ export async function handleLinearEvent(
 	conversations: Pick<Conversations, "send" | "stop">,
 	{ fetch }: { fetch?: Fetch } = {},
 ) {
-	const post = (type: "thought" | "error", body: string) =>
+	const post = (type: "thought" | "response" | "error", body: string) =>
 		postAgentActivity(event.agentSessionId, { type, body }, { fetch });
 	const [session] = await db
 		.select({
@@ -40,7 +48,8 @@ export async function handleLinearEvent(
 	if (event.stop) {
 		if (session)
 			await conversations.stop(session.userId, session.conversationId);
-		return;
+		// Linear waits for a final activity confirming the stop
+		return post("response", "Stopped.");
 	}
 	const email = event.from?.email;
 	const [sender] = email
@@ -106,3 +115,76 @@ export async function handleLinearEvent(
 		await post("error", error.message);
 	}
 }
+
+/**
+ * Replies to a Run with `reply`, then, for a Linear Agent Session's Conversation, posts how the Run ended into the session: a failure as an
+ * error; else what it said last, as an elicitation when it ended asking the User a question, else as the response. A Run the User stopped
+ * posts nothing (the stop request confirms it in Linear), nor one that said nothing.
+ * shortcut: a Run that fails before `reply` (its Agent removed) or on a crashed worker posts no error; report from serve.ts's `failed` if that bites.
+ */
+export const reportingToLinear =
+	(reply: RunHandler, { fetch }: { fetch?: Fetch } = {}): RunHandler =>
+	async (run, config) => {
+		const [session] = await db
+			.select({ id: linearSession.agentSessionId })
+			.from(linearSession)
+			.where(eq(linearSession.conversationId, run.conversationId));
+		if (!session) return reply(run, config);
+		const post = (content: Parameters<typeof postAgentActivity>[1]) =>
+			postAgentActivity(session.id, content, { fetch }).catch((error) =>
+				console.error(
+					`could not post to Linear Agent Session ${session.id}`,
+					error,
+				),
+			);
+		const replies: AssistantMessage[] = [];
+		try {
+			await reply(
+				{
+					...run,
+					async save(message) {
+						await run.save(message);
+						if (message.role === "assistant") replies.push(message);
+					},
+				},
+				config,
+			);
+		} catch (error) {
+			if (!run.signal.aborted)
+				await post({
+					type: "error",
+					body:
+						error instanceof SpendingLimitReached
+							? "This month's Spending Limit is used up, so the request was not sent."
+							: "This reply failed. Retry it in Orqestra.",
+				});
+			throw error;
+		}
+		if (run.signal.aborted && !(run.signal.reason instanceof RunTimedOut))
+			return;
+		const last = replies.at(-1);
+		const asked = last?.content.find(
+			(c) => c.type === "toolCall" && c.name === "ask_user",
+		);
+		if (last && asked?.type === "toolCall") {
+			const { question, suggestions = [] } = asked.arguments as {
+				question: string;
+				suggestions?: string[];
+			};
+			return post({
+				type: "elicitation",
+				body: [
+					messageText(last).trim(),
+					question,
+					suggestions.map((s) => `- ${s}`).join("\n"),
+				]
+					.filter(Boolean)
+					.join("\n\n"),
+			});
+		}
+		const said = replies
+			.map((m) => messageText(m).trim())
+			.filter(Boolean)
+			.at(-1);
+		if (said) await post({ type: "response", body: said });
+	};
