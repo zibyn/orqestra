@@ -30,7 +30,7 @@ export function s3Store(
 		region: env.S3_REGION,
 	});
 	return {
-		async put(key, body, { signal } = {}) {
+		async put(key, body, { signal, keepOnFailure } = {}) {
 			// a stream body goes up as a multipart upload, 5 MiB parts sent as they fill; the signal errors it
 			const written = s3.write(
 				key,
@@ -39,6 +39,7 @@ export function s3Store(
 			try {
 				await Promise.race([written, untilAborted(signal)]);
 			} catch (error) {
+				if (keepOnFailure) throw error;
 				// a multipart upload that failed may have left an object. None is deleted while storage has not answered
 				// the write: the delete could land after a later put of the key
 				const answered = await Promise.race([
@@ -46,9 +47,14 @@ export function s3Store(
 						() => true,
 						() => true,
 					),
-					Bun.sleep(1000).then(() => false),
+					Bun.sleep(CLEANUP_MS).then(() => false),
 				]);
-				if (answered) await s3.delete(key).catch(() => {});
+				// given up on after a while too, though it may still land: the key is not put again
+				if (answered)
+					await Promise.race([
+						s3.delete(key),
+						untilAborted(AbortSignal.timeout(CLEANUP_MS)),
+					]).catch(() => {});
 				throw error;
 			}
 		},
@@ -72,6 +78,9 @@ export function s3Store(
 		},
 	};
 }
+
+/** How long a failed put waits for storage to answer its write, then its delete. */
+const CLEANUP_MS = 1000;
 
 /** Rejects once `signal` aborts: Bun's client takes no signal, so storage that stops answering would keep it waiting however long. */
 function untilAborted(signal?: AbortSignal) {

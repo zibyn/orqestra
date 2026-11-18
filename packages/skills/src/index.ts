@@ -73,8 +73,8 @@ const lockSkill = (tx: Tx, name: string) =>
 const STORAGE_TIMEOUT_MS = 60_000;
 
 /**
- * Puts the files the Skill's objects lack, with the Skill locked. One a file of the Skill already names is never put again,
- * since a put that fails deletes its key.
+ * Puts the files the Skill's objects lack, with the Skill locked; one a file of the Skill already names is stored. A put
+ * that fails deletes nothing: the next save may put the same file once the lock is gone, before a late delete lands.
  */
 async function putFiles(
 	tx: Tx,
@@ -92,18 +92,25 @@ async function putFiles(
 		files.filter((f) => !known.has(f.sha256)).map((f) => [f.sha256, f]),
 	);
 	const signal = AbortSignal.timeout(STORAGE_TIMEOUT_MS);
-	// every put ends before the lock is released: a failed one's delete could land after the next save's put of its key
 	const settled = await Promise.allSettled(
 		[...missing.values()].map((f) =>
 			store.put(
 				objectKey(name, f.sha256),
 				new Response(f.content).body as ReadableStream<Uint8Array>,
-				{ signal },
+				{ signal, keepOnFailure: true },
 			),
 		),
 	);
-	const failed = settled.find((r) => r.status === "rejected");
-	if (failed) throw failed.reason;
+	const failed = settled.flatMap((r) =>
+		r.status === "rejected" ? [r.reason] : [],
+	);
+	if (!failed.length) return;
+	// what storage answered, not the timeout every put still waiting shares
+	const error = failed.find((e) => e !== signal.reason) ?? failed[0];
+	for (const other of failed)
+		if (other !== error)
+			console.error(`Skill ${name}'s save also failed to store a file`, other);
+	throw error;
 }
 
 /** A version's files, paths relative to the Skill's folder, or only the one at `path`; for Runs, by the `versionId` of `current()`. */
