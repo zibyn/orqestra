@@ -11,6 +11,7 @@ Orqestra 是一个自托管平台：登录的 User 与 AI Agent 对话，身份�
 - **Subagent**：Agent 可以把任务交给后台运行的 Subagent，完成后结果自动交回。
 - **Provider 与 Model**：内置 pi 的 Provider 目录，填 API Key 即可启用；密钥在数据库中加密保存。
 - **Tool**：Search / Scrape（Tavily、Firecrawl、DeepSeek）、MCP Server。
+- **Integration**：Admin 把 Orqestra 作为应用安装到 Linear workspace，在 Linear 里指派 issue 或提及它就会开一个 Conversation，Run 的回复、提问或失败回到 Linear。
 - **Skill**：遵循 Agent Skills 标准，脚本在 [orrery](https://github.com/zibyn/orrery) 的 Sandbox 里执行。
 - **配置热加载**：控制台保存后 api 与 worker 自动重新加载，无需重启。
 
@@ -22,13 +23,14 @@ Orqestra 是一个自托管平台：登录的 User 与 AI Agent 对话，身份�
 | `apps/api` | Elysia 服务（Bun），登录（`/auth/*`）与 `/api/*`，见 [ADR 0006](docs/adr/0006-api-owns-server-logic.md) |
 | `apps/worker` | BullMQ worker（Bun），执行 Agent 的 Run；队列存在 Postgres 的 `bullmq` schema |
 | `packages/db` | Drizzle schema、client、迁移、secret 与 live 加载机制 |
+| `packages/integrations` | 各外部系统的客户端，一个系统一个目录（Linear、orrery、MinerU、Tavily、Firecrawl、DeepSeek、S3），以及 Integration Installation，见 [ADR 0018](docs/adr/0018-integrations-hold-every-outside-systems-client.md) |
 | `packages/models` | Provider、Model、Catalog、价格与 Model 运行时 |
-| `packages/tools` | 内置 Tool 及 Search / Sandbox Provider、Document Parser 的配置 |
+| `packages/tools` | 内置 Tool 及 Search / Sandbox Provider、Document Parser 的配置与规则 |
 | `packages/mcp` | MCP Server 配置、Connection、OAuth 与协议 |
 | `packages/skills` | Skill 的增删改、zip 与 Skill 文件 |
 | `packages/memory` | Memory 及其改动记录 |
 | `packages/agents` | Agent Definition 与 Turn 解析 |
-| `packages/conversations` | Conversation 生命周期（Run、Inbox、Subagent、Notification）与 Limits，唯一写这些表的代码 |
+| `packages/conversations` | Conversation 生命周期（Run、Inbox、Subagent、Notification、Integration Session）与 Limits，唯一写这些表的代码 |
 
 api 和 worker 共用一个 PostgreSQL；web 只渲染界面，经 api 读写数据，不连数据库、不持有密钥。领域术语见 [`GLOSSARY.md`](GLOSSARY.md)，架构决策见 [`docs/adr/`](docs/adr/)。
 

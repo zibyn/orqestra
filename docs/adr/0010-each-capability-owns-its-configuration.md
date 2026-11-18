@@ -10,20 +10,21 @@ Packages are layered, and a package may depend only on packages of a lower layer
 
 ```
 L0  db              schema · client · migrations · secret · live(load) · ObjectStore
-L1  models          Provider · Model · Catalog · prices · Model runtime · connection test
-    tools           Search / Sandbox / Parse adapters and their Providers · S3 adapter
+L1  integrations    each outside system's client · Integration Installation (ADR 0018)
+L2  models          Provider · Model · Catalog · prices · Model runtime · connection test
+    tools           built-in Tools · Search / Sandbox Providers and Document Parser
     mcp             MCP Server · Connection · OAuth · protocol · poll/cancel primitives
     skills          Skill · zip · Skill files · skillBlock
     memory          Memory · its change records
-L2  agents          Agent Definition · Turn resolution · reference clean-up · Agent choice
-L3  conversations   lifecycle (ADR 0002) · Recall · Spending Limit · Usage · Limits
-L4  api · worker    assembly
+L3  agents          Agent Definition · Turn resolution · reference clean-up · Agent choice
+L4  conversations   lifecycle (ADR 0002) · Recall · Spending Limit · Usage · Limits
+L5  api · worker    assembly
     web             only each package's /shared entry and @orqestra/api
 ```
 
 The api and the worker each create every capability's live configuration at startup (their `capabilities.ts`) and give conversations what it uses as constructor dependencies; the api's console routes take the capability they edit. Conversations only puts the snapshots side by side for a Run (`snapshots`), and keeps the Limits' own.
 
-`pnpm check` runs `scripts/layers.mjs`, which reads each workspace package's dependencies and web's imports and fails on an upward, same-layer or cyclic dependency, on a package missing from its table, and on web importing anything but `@orqestra/api` or a `/shared` entry. The table lives in the script, not in another document, and is tightened as each package is created.
+`pnpm check` runs `scripts/layers.mjs`, which reads each workspace package's dependencies and web's imports and fails on an upward, same-layer or cyclic dependency, on a package missing from its table, and on web importing anything but `@orqestra/api` or a `/shared` entry. The table lives in the script, not in another document, and is tightened as each package is created. Where the vendor adapters live is superseded by ADR 0018.
 
 ## Research
 

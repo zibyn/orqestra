@@ -11,7 +11,7 @@ A person in Polaris' User pool who may use Orqestra, identified by their Polaris
 _Avoid_: Account, customer
 
 **Admin**:
-A User holding the `orqestra:admin` Entitlement at Orqestra's API in Polaris, allowed to configure Providers, Search Providers, MCP Servers, the Sandbox Provider, Skills, Agent Definitions and the Linear Installation in the console.
+A User holding the `orqestra:admin` Entitlement at Orqestra's API in Polaris, allowed to configure Providers, Search Providers, MCP Servers, the Sandbox Provider, Skills, Agent Definitions and Integration Installations in the console.
 _Avoid_: Superuser, owner
 
 **Member**:
@@ -112,12 +112,16 @@ _Avoid_: Container, VM, workspace, code interpreter
 The external service that serves Sandboxes, configured by an Admin with its address, credentials and environment template; Orrery is the only one supported, and at most one is configured. All Users' Sandboxes run under its one credential.
 _Avoid_: Runtime, execution backend
 
-**Linear Installation**:
-Orqestra's app installed by an Admin into one Linear workspace, where it acts as itself rather than as the Admin who installed it, so people there can assign issues to it and mention it. The Admin registers the app in Linear and enters its credentials in the console; installing needs a Linear workspace admin's approval. At most one exists, and installing again, for a new app or the same one, replaces it.
-_Avoid_: Linear integration, Linear connection, Linear account
+**Integration**:
+An outside system Orqestra talks to, such as Linear, orrery, MinerU, Tavily or an S3 store, reached through an adapter for its kind. The capability that uses it keeps its own configuration and rules; the Integration is only how Orqestra reaches the system.
+_Avoid_: Connector, plugin, Connection
 
-**Agent Session**:
-Linear's record of one piece of work for Orqestra's app. It starts when someone in the Linear Installation's workspace delegates an issue to the app or mentions it, and goes on with what they write in it. Each one opens one Conversation for the User with that person's email, with the Agent the Admin picked for Linear. Its first message names the issue and the repository of the issue's team. Later messages go to the same Conversation, marked as from Linear, and only that User's reach it. Someone with no User is told to sign in first. When a Run ends, the session gets its reply, its Question or its failure.
+**Integration Installation**:
+Orqestra's app installed by an Admin into one workspace of an Integration where people hand it work, such as a Linear workspace. There it acts as itself rather than as the Admin who installed it, so people can assign issues to it and mention it. The Admin registers the app with the Integration and enters its credentials in the console, and installing needs that workspace's admin to approve. At most one exists per Integration, and installing again, for a new app or the same one, replaces it.
+_Avoid_: Linear connection, Linear account, Linear Installation
+
+**Integration Session**:
+One piece of work handed to Orqestra's app in an Integration Installation's workspace; Linear calls it an Agent Session. It starts when someone there delegates an issue to the app or mentions it, and goes on with what they write in it. Each one opens one Conversation for the User with that person's email, with the Agent the Admin picked for the Integration. Its first message names the issue and the repository of the issue's team. Later messages go to the same Conversation, marked as from the Integration, and only that User's reach it. Someone with no User is told to sign in first. When a Run ends, the session gets its reply, its Question or its failure.
 _Avoid_: Linear thread, Linear task, session
 
 **Search**:
@@ -161,7 +165,7 @@ The most a User may spend on Model requests in a calendar month, reset at the st
 _Avoid_: Quota, budget, balance, credit
 
 **Conversation**:
-An ordered series of messages between one User and the Agent, owned by and visible only to that User. A Subagent's Conversation is nested under the one that started it and is seen only through it; one started by a Firing records which Scheduled Task started it, one opened from Linear which Agent Session it is, and otherwise is like any other.
+An ordered series of messages between one User and the Agent, owned by and visible only to that User. A Subagent's Conversation is nested under the one that started it and is seen only through it; one started by a Firing records which Scheduled Task started it, one opened from an Integration Installation which Integration Session it is, and otherwise is like any other.
 _Avoid_: Session, thread, chat
 
 **Attachment**:
@@ -181,7 +185,7 @@ The work of producing one Turn's reply: a queued job a worker picks up, which st
 _Avoid_: Job, task, generation
 
 **Unattended Run**:
-A Run started by a Firing's prompt, a Timer's note or a message from an Agent Session, in a Conversation where no User message has arrived in Orqestra since, together with the Runs of the Subagents it starts. It stops after a limited number of steps or a limited time, set by the Admin, ending with what it has so far, and is never retried on its own. It may end with nothing to report instead of a reply: it has completed, but its Conversation is not made Unread and no Alert goes out. The User's next message in that Conversation makes its later Runs ordinary ones again.
+A Run started by a Firing's prompt, a Timer's note or a message from an Integration Session, in a Conversation where no User message has arrived in Orqestra since, together with the Runs of the Subagents it starts. It stops after a limited number of steps or a limited time, set by the Admin, ending with what it has so far, and is never retried on its own. It may end with nothing to report instead of a reply: it has completed, but its Conversation is not made Unread and no Alert goes out. The User's next message in that Conversation makes its later Runs ordinary ones again.
 _Avoid_: Background run, headless run, autonomous run
 
 ### Memory
