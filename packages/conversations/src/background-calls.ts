@@ -142,6 +142,10 @@ export async function pollBackgroundCall(
 			timeoutMs: POLL_TIMEOUT_MS,
 		});
 	} catch (error) {
+		// the User's token refused and its refresh too: the Connection now needs reconnecting, which no later poll changes
+		const signedOut = authProvider && (await signInOrEnding(row, server, mcp));
+		if (signedOut && "status" in signedOut)
+			return end(row, signedOut, server.name);
 		// network errors, timeouts, 5xx: asked again at the interval, until it has been too long since an answer
 		console.error(`could not poll Background Call ${id}`, error);
 		if (Date.now() - row.polledAt.getTime() >= UNREACHABLE_MS)
