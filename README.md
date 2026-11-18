@@ -121,13 +121,13 @@ orrery --api-url https://orrery.example.com login --username orqestra
 orrery token create --name orqestra --scope user
 ```
 
-**构建 Orqestra 的 Snapshot**：Orqestra 自己维护 Sandbox 的工具链，即 [`sandbox/Dockerfile`](sandbox/Dockerfile)：orrery 的平台 Snapshot `ubuntu-24.04`（自带 git、curl、Python 3、Node 等）加上 GitHub CLI `gh` 和 Skill 常用的 Python 包（pypdf、openpyxl、python-docx、pandas）。Skill 需要的其他工具也加在这里。用同一个 orrery User 的 Token 构建，脚本最后打印 Snapshot 名（默认 `orqestra`），把它填进 Snapshot：
+**构建 Orqestra 的 Snapshot**：Orqestra 自己维护 Sandbox 的工具链，即 [`sandbox/Dockerfile`](sandbox/Dockerfile)：在 orrery 的一个 Ubuntu 24.04 平台 Snapshot 上装 git、GitHub CLI `gh` 和 Skill 常用的 Python 包（pypdf、openpyxl、python-docx、pandas）。平台 Snapshot 可以是 orrery 自带的 `ubuntu-24.04`（另有 Node 等），也可以是裸的 `ubuntu:24.04`。Skill 需要的其他工具也加在这里。用同一个 orrery User 的 Token 构建，脚本最后打印 Snapshot 名（默认 `orqestra`），把它填进 Snapshot：
 
 ```bash
 ORRERY_URL=https://orrery.example.com ORRERY_TOKEN=orr_... scripts/sandbox-snapshot.sh
 ```
 
-脚本需要 `curl` 和 `jq`。`SNAPSHOT` 改 Snapshot 名，`BASE` 改所基于的平台 Snapshot。再次运行即生成新版本，orrery 构建成功后自动把 current 指向它；新建的 Sandbox 使用 current 版本。
+脚本需要 `curl` 和 `jq`。`SNAPSHOT` 改 Snapshot 名。`BASE` 是所基于的平台 Snapshot，默认 `ubuntu-24.04`（orrery `install.sh` 配的名字）；部署里的平台 Snapshot 叫别的名字时改它，`GET /api/v1/snapshots` 里 `owner_id` 为 null 的就是平台 Snapshot。再次运行即生成新版本，orrery 构建成功后自动把 current 指向它；新建的 Sandbox 使用 current 版本。
 
 ### 配置 Document Parser（MinerU）
 
