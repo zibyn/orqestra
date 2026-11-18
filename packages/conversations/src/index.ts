@@ -8,10 +8,12 @@ import { db } from "@orqestra/db";
 import {
 	attachment,
 	backgroundCall,
+	compaction,
 	conversation,
 	inbox,
 	message,
 	subagent,
+	timer,
 } from "@orqestra/db/schema";
 import {
 	type ConnectionStore,
@@ -36,6 +38,7 @@ import {
 import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
 import { mcpToolRef } from "@orqestra/tools/shared";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import pg from "pg";
 import { alerts } from "./alerts.ts";
 import {
@@ -149,6 +152,9 @@ type Shown = Pick<
 	| "backgroundCallId"
 	| "origin"
 > & { queued: boolean };
+
+/** A Conversation of the tree `get` reads, beside the one it shows. */
+const tree = alias(conversation, "tree");
 
 /** The row `get` reads, its lists as JSON arrays. */
 type Read = Pick<
@@ -351,28 +357,36 @@ export function createConversations({
 
 		async get(userId: string, id: string) {
 			// one statement, so one snapshot: a write across tables shows whole or not at all, such as a Background Call's end and its Notification
+			// each list is one json value built in memory, which Postgres caps at 1 GB
 			const {
 				rows: [read],
 			} = await db.execute<Read>(sql`
-				select c.id, c.agent_id "agentId", c.title, c.status, c.failure, c.incognito, c.unread, c.awaiting_reply "awaitingReply",
-					(select coalesce(json_agg(json_build_object('id', m.id, 'message', m.message, 'model', m.model, 'thinkingLevel', m.thinking_level,
-						'subagentId', m.subagent_id, 'backgroundCallId', m.background_call_id, 'origin', m.origin, 'queued', false) order by m.id), '[]')
-						from message m where m.conversation_id = c.id) messages,
+				select ${conversation.id}, ${conversation.agentId} "agentId", ${conversation.title}, ${conversation.status}, ${conversation.failure},
+					${conversation.incognito}, ${conversation.unread}, ${conversation.awaitingReply} "awaitingReply",
+					(select coalesce(json_agg(json_build_object('id', ${message.id}, 'message', ${message.message}, 'model', ${message.model},
+						'thinkingLevel', ${message.thinkingLevel}, 'subagentId', ${message.subagentId}, 'backgroundCallId', ${message.backgroundCallId},
+						'origin', ${message.origin}, 'queued', false) order by ${message.id}), '[]')
+						from ${message} where ${message.conversationId} = ${conversation.id}) messages,
 					-- inputs the Run has yet to deliver show after what it has, with the inbox's ids, not a message's
-					(select coalesce(json_agg(json_build_object('id', i.id, 'message', i.message, 'model', i.model, 'thinkingLevel', i.thinking_level,
-						'subagentId', i.subagent_id, 'backgroundCallId', i.background_call_id, 'origin', i.origin, 'queued', true) order by i.id), '[]')
-						from inbox i where i.conversation_id = c.id) pending,
-					(select coalesce(json_agg(k.first_kept_message_id), '[]') from compaction k where k.conversation_id = c.id) "compactedBefore",
+					(select coalesce(json_agg(json_build_object('id', ${inbox.id}, 'message', ${inbox.message}, 'model', ${inbox.model},
+						'thinkingLevel', ${inbox.thinkingLevel}, 'subagentId', ${inbox.subagentId}, 'backgroundCallId', ${inbox.backgroundCallId},
+						'origin', ${inbox.origin}, 'queued', true) order by ${inbox.id}), '[]')
+						from ${inbox} where ${inbox.conversationId} = ${conversation.id}) pending,
+					(select coalesce(json_agg(${compaction.firstKeptMessageId}), '[]')
+						from ${compaction} where ${compaction.conversationId} = ${conversation.id}) "compactedBefore",
 					-- the whole tree's, so its panels drill down to Subagents of Subagents
-					(select coalesce(json_agg(json_build_object('id', s.conversation_id, 'parentId', t.parent_id, 'depth', t.depth, 'toolCallId', s.tool_call_id,
-						'number', s.number, 'template', t.agent_id, 'brief', s.brief, 'outcome', s.outcome) order by t.depth, s.number), '[]')
-						from subagent s join conversation t on t.id = s.conversation_id where t.root_id = c.id) subagents,
-					(select json_build_object('note', note, 'ringsAt', rings_at) from timer where conversation_id = c.id) timer,
+					(select coalesce(json_agg(json_build_object('id', ${subagent.conversationId}, 'parentId', ${tree.parentId}, 'depth', ${tree.depth},
+						'toolCallId', ${subagent.toolCallId}, 'number', ${subagent.number}, 'template', ${tree.agentId}, 'brief', ${subagent.brief},
+						'outcome', ${subagent.outcome}) order by ${tree.depth}, ${subagent.number}), '[]')
+						from ${subagent} join ${conversation} ${tree} on ${tree.id} = ${subagent.conversationId} where ${tree.rootId} = ${conversation.id}) subagents,
+					(select json_build_object('note', ${timer.note}, 'ringsAt', ${timer.ringsAt})
+						from ${timer} where ${timer.conversationId} = ${conversation.id}) timer,
 					-- the whole tree's, each shown at the Tool call that made it
-					(select coalesce(json_agg(json_build_object('id', b.id, 'conversationId', b.conversation_id, 'toolCallId', b.tool_call_id,
-						'mcpServerId', b.mcp_server_id, 'toolName', b.tool_name, 'status', b.status) order by b.started_at), '[]')
-						from background_call b join conversation t on t.id = b.conversation_id where t.root_id = c.id) calls
-				from conversation c where c.id = ${id} and c.user_id = ${userId}`);
+					(select coalesce(json_agg(json_build_object('id', ${backgroundCall.id}, 'conversationId', ${backgroundCall.conversationId},
+						'toolCallId', ${backgroundCall.toolCallId}, 'mcpServerId', ${backgroundCall.mcpServerId}, 'toolName', ${backgroundCall.toolName},
+						'status', ${backgroundCall.status}) order by ${backgroundCall.startedAt}), '[]')
+						from ${backgroundCall} join ${conversation} ${tree} on ${tree.id} = ${backgroundCall.conversationId} where ${tree.rootId} = ${conversation.id}) calls
+				from ${conversation} where ${conversation.id} = ${id} and ${conversation.userId} = ${userId}`);
 			if (!read) return undefined;
 			const {
 				messages,
