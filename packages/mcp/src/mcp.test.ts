@@ -429,6 +429,19 @@ describe("a Connection's tokens as a Run uses them", () => {
 		await next.close();
 	});
 
+	it("leaves the Connection needing reconnecting when GitHub refuses the refresh token with HTTP 200", async () => {
+		const { as, open, status } = await connected();
+		const { tools, close } = await open();
+		as.github = true;
+		as.accessTokens.clear();
+		as.refreshTokens.clear();
+		await expect(
+			tools[0].execute("1", { text: "hi" }, never),
+		).rejects.toThrow();
+		expect(await status()).toBe("needs_reconnect");
+		await close();
+	});
+
 	it("drops the Client it registered when the authorization server no longer knows it", async () => {
 		const { as, connections, open, status } = await connected();
 		expect(await connections.registeredClient("github")).toBeDefined();

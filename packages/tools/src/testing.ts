@@ -2,6 +2,7 @@
 
 import {
 	type Exec,
+	type ExecRequest,
 	type Frame,
 	type Orrery,
 	OrreryError,
@@ -20,13 +21,18 @@ type Ran = {
 
 /**
  * Sandboxes become ready on the first wait, keep their files across a stop and start (`stop` plays Idle Stop),
- * and unpack uploaded tars into their files. Commands answer what `exec` says. Polling a command with an aborted signal throws, as fetch does. `down` makes every call fail
- * as an unreachable orrery does. `calls` lists the calls made, as `method id…`.
+ * and unpack uploaded tars into their files. Commands answer what `exec` says, given their `env` with their `secrets` read from
+ * `secrets` (an Exec naming one it lacks is refused, as orrery does); `execs` lists the requests. Polling a command with an aborted
+ * signal throws, as fetch does. `down` makes every call fail as an unreachable orrery does. `calls` lists the calls made, as `method id…`.
  */
 export function memoryOrrery({
 	exec = () => ({}),
 }: {
-	exec?: (command: string, files: Map<string, Uint8Array<ArrayBuffer>>) => Ran;
+	exec?: (
+		command: string,
+		files: Map<string, Uint8Array<ArrayBuffer>>,
+		env: Record<string, string>,
+	) => Ran;
 } = {}) {
 	const sandboxes = new Map<
 		string,
@@ -37,6 +43,8 @@ export function memoryOrrery({
 		}
 	>();
 	const execs = new Map<string, { exec: Exec; frames: Frame[] }>();
+	const requests: ExecRequest[] = [];
+	const secrets = new Map<string, string>();
 	const calls: string[] = [];
 	let down = false;
 	let n = 0;
@@ -67,8 +75,9 @@ export function memoryOrrery({
 			call("me");
 			return { id: "u1", name: "orqestra" };
 		},
-		putSecret: async (name) => {
+		putSecret: async (name, value) => {
 			call("putSecret", name);
+			secrets.set(name, value);
 		},
 		createSandbox: async (request) => {
 			call("createSandbox", JSON.stringify(request));
@@ -97,7 +106,19 @@ export function memoryOrrery({
 		createExec: async (id, request) => {
 			call("createExec", id, request.argv.at(-1));
 			const s = ready(id);
-			const ran = exec(request.argv.at(-1) ?? "", s.files);
+			requests.push(structuredClone(request));
+			const env = { ...request.env };
+			for (const [name, secret] of Object.entries(request.secrets ?? {})) {
+				const value = secrets.get(secret);
+				if (value === undefined)
+					throw new OrreryError(
+						400,
+						"invalid_request",
+						`no such Secret: ${secret}`,
+					);
+				env[name] = value;
+			}
+			const ran = exec(request.argv.at(-1) ?? "", s.files, env);
 			const frames: Frame[] = [];
 			let seq = 0;
 			for (const stream of ["stdout", "stderr"] as const) {
@@ -192,6 +213,10 @@ export function memoryOrrery({
 	return {
 		client,
 		calls,
+		/** Every Exec request, as sent. */
+		execs: requests,
+		/** The Secrets' values, by name: delete one to play it being deleted. */
+		secrets,
 		/** Files by path relative to /workspace. */
 		files: (id: string) => find(id).files,
 		state: (id: string) => find(id).state,

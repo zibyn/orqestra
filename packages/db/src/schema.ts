@@ -568,30 +568,44 @@ export const toolService = pgTable("tool_service", {
 });
 
 // MCP Servers an Admin configured; Agents reach them over Streamable HTTP
-export const mcpServer = pgTable("mcp_server", {
-	// slug of the name, or typed by the Admin; never changes (Agent Definitions refer to it)
-	id: text("id").primaryKey(),
-	name: text("name").notNull(),
-	// http or https; internal addresses allowed
-	url: text("url").notNull(),
-	// each value encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
-	headers: jsonb("headers")
-		.$type<{ name: string; value: string }[]>()
-		.default([])
-		.notNull(),
-	// shared: every User sends the headers above; oauth: each User connects with their own account
-	auth: text("auth").$type<"shared" | "oauth">().default("shared").notNull(),
-	// a Client pre-registered with the authorization server, for oauth; null: none (Orqestra registers itself)
-	oauthClientId: text("oauth_client_id"),
-	// encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
-	oauthClientSecret: text("oauth_client_secret"),
-	enabled: boolean("enabled").default(true).notNull(),
-	createdAt: timestamp("created_at").defaultNow().notNull(),
-	updatedAt: timestamp("updated_at")
-		.defaultNow()
-		.$onUpdate(() => new Date())
-		.notNull(),
-});
+export const mcpServer = pgTable(
+	"mcp_server",
+	{
+		// slug of the name, or typed by the Admin; never changes (Agent Definitions refer to it)
+		id: text("id").primaryKey(),
+		name: text("name").notNull(),
+		// http or https; internal addresses allowed
+		url: text("url").notNull(),
+		// each value encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
+		headers: jsonb("headers")
+			.$type<{ name: string; value: string }[]>()
+			.default([])
+			.notNull(),
+		// shared: every User sends the headers above; oauth: each User connects with their own account
+		auth: text("auth").$type<"shared" | "oauth">().default("shared").notNull(),
+		// a Client pre-registered with the authorization server, for oauth; null: none (Orqestra registers itself)
+		oauthClientId: text("oauth_client_id"),
+		// encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
+		oauthClientSecret: text("oauth_client_secret"),
+		// a Git Host: each User's Connection token signs git in to this host (e.g. github.com) as this username (e.g. x-access-token),
+		// and is put in this environment variable of their Sandbox commands (e.g. GH_TOKEN); all three or none
+		gitHost: text("git_host"),
+		gitUsername: text("git_username"),
+		tokenEnv: text("token_env"),
+		enabled: boolean("enabled").default(true).notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+		updatedAt: timestamp("updated_at")
+			.defaultNow()
+			.$onUpdate(() => new Date())
+			.notNull(),
+	},
+	(table) => [
+		check(
+			"mcp_server_git_host_whole",
+			sql`(${table.gitHost} is null) = (${table.gitUsername} is null) and (${table.gitHost} is null) = (${table.tokenEnv} is null)`,
+		),
+	],
+);
 
 // A User's Connection to a per-User OAuth MCP Server: at most one per User and server
 export const mcpConnection = pgTable(

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
@@ -7,8 +8,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { turnSkills } from "@orqestra/agents";
 import type { RunHandle } from "@orqestra/conversations";
+import { connectionToken, type McpServer } from "@orqestra/mcp";
 import { SKILLS_DIR } from "@orqestra/skills/shared";
 import {
+	type ExecRequest,
+	type Fetch,
 	type Orrery,
 	OrreryError,
 	runCommand,
@@ -68,6 +72,80 @@ const VERSIONS = ".versions.json";
 /** `s` as one single-quoted bash word. */
 const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 
+/** How long a bash command may run on the Git Host token it is given: one expiring sooner is refreshed first. */
+const GIT_TOKEN_MARGIN_MS = 60 * 60_000;
+
+/** By the name of the orrery Secret a User's Git Host token is kept in: the SHA-256 of the token this process last wrote to it. */
+const writtenTokens = new Map<string, string>();
+const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+
+/** orrery refused an Exec naming a Secret it does not have: another Sandbox Provider, or it was deleted. */
+const missingSecret = (error: unknown) =>
+	error instanceof OrreryError &&
+	error.code === "invalid_request" &&
+	error.detail.startsWith("no such Secret");
+
+type GitHostServer = [string, McpServer & Required<Pick<McpServer, "git">>];
+
+/**
+ * What a bash command needs to sign git (and gh, which reads `tokenEnv`) in to each Git Host as the Run's User: their Connection's
+ * token, refreshed first when it would expire during the command, kept in an orrery Secret of its own per User and Git Host (written
+ * only when it changed) that the Exec reads into `tokenEnv`; and per host a credential helper reading it there. The Exec's request
+ * never holds a token. Nothing for a host the User has no usable Connection to.
+ */
+async function gitCredentials(
+	run: Pick<RunHandle, "userId" | "connections" | "signal">,
+	gitHosts: GitHostServer[],
+	client: Orrery,
+	fetch?: Fetch,
+): Promise<Pick<ExecRequest, "env" | "secrets">> {
+	const { connections, userId, signal } = run;
+	if (!connections) return {};
+	const signedIn = await Promise.all(
+		gitHosts.map(async ([serverId, server]) => {
+			const token = await connectionToken(connections, userId, serverId, {
+				server,
+				fetch,
+				marginMs: GIT_TOKEN_MARGIN_MS,
+			}).catch((error) => {
+				// the command still runs, only not signed in to this host
+				console.error(
+					`Getting the token of ${userId} for Git Host "${serverId}" failed`,
+					error,
+				);
+				return undefined;
+			});
+			if (!token) return [];
+			const secret = `orq-git-${sha256(`${userId}:${serverId}`).slice(0, 16)}`;
+			const hash = sha256(token);
+			// shortcut: another process writing an older token after this one wrote a newer one leaves orrery the older; only the next refresh fixes it
+			if (writtenTokens.get(secret) !== hash) {
+				await client.putSecret(secret, token, { signal });
+				writtenTokens.set(secret, hash);
+			}
+			return [{ ...server.git, secret }];
+		}),
+	);
+	const hosts = signedIn.flat();
+	if (!hosts.length) return {};
+	return {
+		secrets: Object.fromEntries(hosts.map((h) => [h.tokenEnv, h.secret])),
+		// git's config from the environment, as `git -c` would set it: no secret in it
+		env: {
+			GIT_CONFIG_COUNT: String(hosts.length),
+			...Object.fromEntries(
+				hosts.flatMap((h, i) => [
+					[`GIT_CONFIG_KEY_${i}`, `credential.https://${h.host}.helper`],
+					[
+						`GIT_CONFIG_VALUE_${i}`,
+						`!f(){ echo username=${h.username}; echo password=$${h.tokenEnv}; }; f`,
+					],
+				]),
+			),
+		},
+	};
+}
+
 const tail = (s: string) =>
 	s.length > MAX_STREAM_CHARS
 		? `[The first ${s.length - MAX_STREAM_CHARS} characters were cut off.]\n${s.slice(-MAX_STREAM_CHARS)}`
@@ -75,9 +153,17 @@ const tail = (s: string) =>
 
 /**
  * The Tools that read files and run commands in the Sandbox of the Conversation's tree. The Sandbox is got ready on the
- * first call, and the Skills written into it then, and again whenever it had to be created or started.
+ * first call, and the Skills written into it then, and again whenever it had to be created or started. bash signs git in to the
+ * Git Hosts among `mcpServers` as the Run's User (see gitCredentials); `fetch` reaches their authorization servers.
  */
-export function sandboxTools(run: RunHandle, skills: Skills): AgentTool[] {
+export function sandboxTools(
+	run: RunHandle,
+	skills: Skills,
+	{
+		mcpServers = {},
+		fetch,
+	}: { mcpServers?: Record<string, McpServer>; fetch?: Fetch } = {},
+): AgentTool[] {
 	const signal = run.signal;
 	const dir = workdir(run);
 	const resolve = (path: string) =>
@@ -87,6 +173,12 @@ export function sandboxTools(run: RunHandle, skills: Skills): AgentTool[] {
 		: "";
 	let written = false;
 	let queue: Promise<unknown> = Promise.resolve();
+	const gitHosts = Object.entries(mcpServers).filter(
+		(e): e is GitHostServer => e[1].auth === "oauth" && !!e[1].git,
+	);
+	const gitHint = gitHosts.length
+		? ` git and gh sign in to ${gitHosts.map(([, s]) => s.git.host).join(", ")} as the user once they connect ${gitHosts.map(([, s]) => s.name).join(", ")} on their Connections page (/connections): when cloning, pushing or gh fails to authenticate there, ask them to connect or reconnect it.`
+		: "";
 
 	// the Sandbox is shared with the other Agents of the Conversation's tree, whose Skills may differ: write only the
 	// Skills not there at their version, leaving the others; VERSIONS records each one's version
@@ -180,22 +272,37 @@ export function sandboxTools(run: RunHandle, skills: Skills): AgentTool[] {
 		tool({
 			name: "bash",
 			label: "Bash",
-			description: `Run a bash command in your sandbox, with ${dir} as the working directory and internet access. It runs until it ends. Returns its exit code, stdout and stderr.${own}`,
+			description: `Run a bash command in your sandbox, with ${dir} as the working directory and internet access. It runs until it ends. Returns its exit code, stdout and stderr.${gitHint}${own}`,
 			parameters: Type.Object({
 				command: Type.String({ description: "The command" }),
 			}),
 			execute: async (_id, { command }) => {
 				const { id, client } = await ready();
-				const r = await runCommand(
-					client,
-					id,
-					run.isSubagent
-						? `mkdir -p ${quote(dir)} && cd ${quote(dir)} || exit 1; ${command}`
-						: command,
-					{ signal },
-				).catch((error) => {
-					throw explain(error);
-				});
+				const attempt = async () => {
+					const git = await gitCredentials(run, gitHosts, client, fetch);
+					return runCommand(
+						client,
+						id,
+						run.isSubagent
+							? `mkdir -p ${quote(dir)} && cd ${quote(dir)} || exit 1; ${command}`
+							: command,
+						{ signal, ...git },
+					).catch((error) => {
+						if (missingSecret(error))
+							for (const name of Object.values(git.secrets ?? {}))
+								writtenTokens.delete(name);
+						throw error;
+					});
+				};
+				// once more after a missing Secret, which is then written again
+				const r = await attempt()
+					.catch((error) => {
+						if (missingSecret(error)) return attempt();
+						throw error;
+					})
+					.catch((error) => {
+						throw explain(error);
+					});
 				const lines = [
 					r.exit !== null
 						? `Exit code: ${r.exit}`

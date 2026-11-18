@@ -313,7 +313,9 @@ async function reply(
 	});
 	// no Sandbox or Sandbox Tools without a Sandbox Provider; no Skill list without an available Skill
 	const skills = turnSkills(config, turn.agent);
-	const sandbox = config.sandboxProvider ? sandboxTools(run, skills) : [];
+	const sandbox = config.sandboxProvider
+		? sandboxTools(run, skills, { mcpServers: config.mcpServers })
+		: [];
 	// a Subagent only reads; none when the User turned memory off; the Index is a snapshot, so writes during the Run leave the prompt (and its cache) alone
 	const memory = run.memories;
 	try {

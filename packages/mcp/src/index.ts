@@ -24,6 +24,15 @@ export interface McpServer {
 	/** A Client pre-registered with its authorization server, for oauth; omitted: Orqestra uses its own or registers. */
 	oauthClient?: { client_id: string; client_secret?: string };
 	headers: Record<string, string>;
+	/** For oauth: a Git Host, which each User's Connection token signs git in to in their Sandbox commands. */
+	git?: GitHost;
+}
+
+/** A Git Host: git signs in to `host` as `username` with the token in `tokenEnv`, which `gh` and other tools read too. */
+export interface GitHost {
+	host: string;
+	username: string;
+	tokenEnv: string;
 }
 
 /** The MCP Servers a Run can use, by id. */
@@ -146,6 +155,7 @@ export {
 	clientMetadataDocument,
 	connectionAuth,
 	connectionStatus,
+	connectionToken,
 	type FinishConnectionError,
 	finishConnection,
 	type OAuthDiscoveryStep,

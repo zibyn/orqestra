@@ -7,9 +7,8 @@ const { db } = await import("@orqestra/db");
 const { mcpServer } = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
 const { connectionStore } = await import("./connections.ts");
-const { finishConnection, openMcpTools, startConnection } = await import(
-	"./index.ts"
-);
+const { connectionToken, finishConnection, openMcpTools, startConnection } =
+	await import("./index.ts");
 const { fakeAuthorizationServer, fakeMcpServer } = await import("./testing.ts");
 
 const never = new AbortController().signal;
@@ -79,5 +78,48 @@ describe.skipIf(!url)("Connections in Postgres", () => {
 		expect(saved?.status).toBe("connected");
 		expect(as.accessTokens.has(saved?.tokens?.access_token ?? "")).toBe(true);
 		await Promise.all(runs.map((r) => r.close()));
+	});
+
+	it("refreshes once when two Runs ask for an expiring token together, as GitHub's single-use refresh token needs", async () => {
+		const as = fakeAuthorizationServer();
+		as.github = true;
+		const github = {
+			name: "GitHub",
+			url: as.resource,
+			headers: {},
+			auth: "oauth" as const,
+		};
+		await db.insert(mcpServer).values({ ...github, id: "github", headers: [] });
+		const context = {
+			userId: "ada",
+			serverId: "github",
+			server: github,
+			store: connectionStore,
+			orqestraUrl: "http://localhost:3000",
+			fetch: as.fetch,
+		};
+		const started = await startConnection(context);
+		if (!("url" in started)) throw new Error(started.detail);
+		await finishConnection(
+			{ ...context, server: async () => github },
+			as.authorize(started.url),
+		);
+
+		// an hour's margin over tokens that last one
+		const token = () =>
+			connectionToken(connectionStore, "ada", "github", {
+				server: github,
+				fetch: as.fetch,
+				marginMs: 2 * 3600_000,
+			});
+		const [a, b] = await Promise.all([token(), token()]);
+		expect(as.refreshed).toBe(1);
+		const saved = await connectionStore.connection("ada", "github");
+		expect(saved?.status).toBe("connected");
+		expect([a, b]).toEqual([
+			saved?.tokens?.access_token,
+			saved?.tokens?.access_token,
+		]);
+		expect(as.accessTokens.has(a ?? "")).toBe(true);
 	});
 });

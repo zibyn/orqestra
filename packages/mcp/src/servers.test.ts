@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveMcpServers } from "./servers.ts";
+import { mcpServerInput, resolveMcpServers } from "./servers.ts";
 
 describe("resolveMcpServers", () => {
 	describe("Tools", () => {
@@ -69,5 +69,45 @@ describe("resolveMcpServers", () => {
 				},
 			});
 		});
+	});
+});
+
+describe("a Git Host as an Admin enters it", () => {
+	const input = (git: Partial<Record<string, string>>) =>
+		mcpServerInput.safeParse({
+			id: "github",
+			create: true,
+			name: "GitHub",
+			url: "https://api.githubcopilot.com/mcp/",
+			enabled: true,
+			headers: [],
+			git: {
+				host: "github.com",
+				username: "x-access-token",
+				tokenEnv: "GH_TOKEN",
+				...git,
+			},
+		}).success;
+
+	it("takes a host, with a port, a username and an environment variable", () => {
+		expect(input({})).toBe(true);
+		expect(input({ host: "gitea.internal:3000", username: "oauth2" })).toBe(
+			true,
+		);
+	});
+
+	it("refuses what would break out of the credential helper or clash with orrery's and git's own variables", () => {
+		for (const git of [
+			{ host: "github.com; rm x" },
+			{ host: "https://github.com" },
+			{ username: "x;echo" },
+			{ username: "" },
+			{ tokenEnv: "PATH" },
+			{ tokenEnv: "LD_PRELOAD" },
+			{ tokenEnv: "ORRERY_TOKEN" },
+			{ tokenEnv: "GIT_CONFIG_COUNT" },
+			{ tokenEnv: "gh token" },
+		])
+			expect(input(git)).toBe(false);
 	});
 });

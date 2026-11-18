@@ -246,6 +246,13 @@
       "when": 1795017001024,
       "tag": "0034_run_opened",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1795017315519,
+      "tag": "0035_git_host",
+      "breakpoints": true
     }
   ]
 }

@@ -176,6 +176,7 @@ describe("runCommand", () => {
 			},
 		};
 		const { id } = await readySandbox(client, provider, stored().claim);
+		await client.putSecret("q1-tok", "v1");
 		await runCommand(client, id, "ls", { pollMs: 1 });
 		await runCommand(client, id, "printenv TOK", {
 			pollMs: 1,

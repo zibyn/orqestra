@@ -224,8 +224,13 @@ function McpServerForm({
 	);
 	const [clientId, setClientId] = useState(existing?.oauthClientId ?? "");
 	const [clientSecret, setClientSecret] = useState("");
+	const [git, setGit] = useState(
+		existing?.git ?? { host: "", username: "", tokenEnv: "" },
+	);
+	// all three or none
+	const gitSet = !!(git.host || git.username || git.tokenEnv);
 	const [advancedOpen, setAdvancedOpen] = useState(
-		!!existing?.oauthClientId || !!existing?.headers.length,
+		!!existing?.oauthClientId || !!existing?.headers.length || !!existing?.git,
 	);
 	const [busy, setBusy] = useState(false);
 	const [errors, setErrors] = useState<Record<string, string>>({});
@@ -245,6 +250,7 @@ function McpServerForm({
 				oauthClientId: clientId,
 				oauthClientSecret: clientSecret,
 				headers,
+				git: gitSet ? git : null,
 			});
 			setErrors(saveErrorTexts(result.errors));
 			if (result.errors.id || result.errors.headers) setAdvancedOpen(true);
@@ -387,6 +393,50 @@ function McpServerForm({
 									onChange={(e) => setClientSecret(e.target.value)}
 								/>
 							</Field>
+						</FieldSet>
+						<FieldSet className="gap-3">
+							<FieldLegend variant="label">{m.mcp_git_host()}</FieldLegend>
+							<FieldDescription>{m.mcp_git_host_hint()}</FieldDescription>
+							{(
+								[
+									[
+										"host",
+										m.mcp_git_host_name(),
+										"github.com",
+										"[a-z0-9]([a-z0-9.\\-]*[a-z0-9])?(:[0-9]{1,5})?",
+									],
+									[
+										"username",
+										m.mcp_git_username(),
+										"x-access-token",
+										"[A-Za-z0-9._\\-]+",
+									],
+									[
+										"tokenEnv",
+										m.mcp_git_token_env(),
+										"GH_TOKEN",
+										// as the api checks it: none orrery or git's config uses
+										"(?!(LD_|ORRERY_|GIT_CONFIG_)|(PATH|HOME)$)[A-Z_][A-Z0-9_]*",
+									],
+								] as const
+							).map(([field, label, placeholder, pattern]) => (
+								<Field key={field}>
+									<FieldLabel htmlFor={fieldId(`git-${field}`)}>
+										{label}
+									</FieldLabel>
+									<Input
+										id={fieldId(`git-${field}`)}
+										className="font-mono"
+										required={gitSet}
+										pattern={pattern}
+										placeholder={placeholder}
+										value={git[field]}
+										onChange={(e) =>
+											setGit({ ...git, [field]: e.target.value })
+										}
+									/>
+								</Field>
+							))}
 						</FieldSet>
 						<FieldSet className="gap-3">
 							<FieldLegend variant="label">{m.mcp_headers()}</FieldLegend>
