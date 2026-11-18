@@ -94,7 +94,7 @@ export const conversation = pgTable(
 	],
 );
 
-export type InputOrigin = "task" | "timer";
+export type InputOrigin = "task" | "timer" | "linear";
 
 /** When a Scheduled Task fires: once at an ISO time, every so many seconds, or by a cron expression in the task's time zone. */
 export type Schedule =
@@ -243,7 +243,7 @@ export const inbox = pgTable(
 		subagentId: uuid("subagent_id"),
 		// set: a Notification of how this Background Call ended
 		backgroundCallId: uuid("background_call_id"),
-		// set: sent on the User's behalf by a Scheduled Task, or delivered by a Timer
+		// set: sent on the User's behalf by a Scheduled Task or from their Linear Agent Session, or delivered by a Timer
 		origin: text("origin").$type<InputOrigin>(),
 		// false: delivered by the next Run, but does not start one
 		wake: boolean("wake").notNull(),
@@ -799,3 +799,12 @@ export const linearInstallation = pgTable(
 	},
 	(table) => [check("linear_installation_single_row", sql`${table.id} = 1`)],
 );
+
+// The Conversation a Linear Agent Session opened (ADR 0015): the session's later prompts go to it; gone with it
+export const linearSession = pgTable("linear_session", {
+	agentSessionId: text("agent_session_id").primaryKey(),
+	conversationId: uuid("conversation_id")
+		.notNull()
+		.unique()
+		.references(() => conversation.id, { onDelete: "cascade" }),
+});

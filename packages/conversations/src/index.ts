@@ -10,7 +10,9 @@ import {
 	backgroundCall,
 	compaction,
 	conversation,
+	type InputOrigin,
 	inbox,
+	linearSession,
 	message,
 	subagent,
 	timer,
@@ -495,6 +497,13 @@ export function createConversations({
 				attachments?: string[];
 				/** Starts an Incognito Conversation; an existing one keeps what it started as. */
 				incognito?: boolean;
+				/** Sent on the User's behalf from elsewhere: its Runs are Unattended Runs until the User's next message here. */
+				origin?: InputOrigin;
+				/**
+				 * The Linear Agent Session the Conversation it starts is for (ADR 0015); refused with `linear_session_open`, starting
+				 * nothing, when that session already has one.
+				 */
+				linearSessionId?: string;
 			},
 		) {
 			const cfg = await config();
@@ -547,21 +556,45 @@ export function createConversations({
 				// while a Run goes, it delivers this at its next step boundary; the lock keeps it from going idle past it
 				if (id) {
 					await lockRoot(tx, id);
-					// a User message renews the Agent's Subagent budget and Timer rings (leaving its Timer set), answers its Question, and the User is back: Runs are attended again
+					// a User message renews the Agent's Subagent budget and Timer rings (leaving its Timer set), answers its Question, and the User is back unless it came from elsewhere
 					await tx
 						.update(conversation)
 						.set({
 							subagentsSinceUser: 0,
 							timerRingsSinceUser: 0,
 							awaitingReply: false,
-							unattended: false,
+							unattended: !!input.origin,
 						})
 						.where(eq(conversation.id, id));
 				} else {
 					[{ id }] = await tx
 						.insert(conversation)
-						.values({ userId, agentId, incognito: input.incognito })
+						.values({
+							userId,
+							agentId,
+							incognito: input.incognito,
+							unattended: !!input.origin,
+						})
 						.returning({ id: conversation.id });
+					// a session's redelivered first event waits here for the one that got in first, then starts nothing
+					if (
+						input.linearSessionId &&
+						!(
+							await tx
+								.insert(linearSession)
+								.values({
+									agentSessionId: input.linearSessionId,
+									conversationId: id,
+								})
+								.onConflictDoNothing()
+								.returning()
+						).length
+					)
+						throw new ConversationError(
+							"This Linear Agent Session already has a Conversation",
+							"linearSessionId",
+							"linear_session_open",
+						);
 				}
 				await tx.insert(inbox).values({
 					conversationId: id,
@@ -579,6 +612,7 @@ export function createConversations({
 						: { role: "user", content, timestamp: Date.now() },
 					model: modelRef(turn.model),
 					thinkingLevel: turn.thinking,
+					origin: input.origin,
 					wake: true,
 				});
 				return id;
