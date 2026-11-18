@@ -4011,5 +4011,30 @@ describe.skipIf(!url)(
 				stopWorker = await serve();
 			}
 		}, 15_000);
+
+		it("keeps a running Conversation's place in the list while its Run takes the next step", async () => {
+			const updatedAt = async () =>
+				(
+					await db
+						.select({ at: schema.conversation.updatedAt })
+						.from(schema.conversation)
+				)[0]?.at.getTime();
+			let before: number | undefined;
+			let after: number | undefined;
+			override = async (run) => {
+				before = await updatedAt();
+				await new Promise((r) => setTimeout(r, 20));
+				await run.deliver();
+				after = await updatedAt();
+				await run.save(fauxAssistantMessage("done"));
+				await run.finish();
+			};
+			const id = await send("a");
+			await waitFor(
+				() => get(id),
+				(v) => v?.status === "idle",
+			);
+			expect(after).toBe(before);
+		});
 	},
 );

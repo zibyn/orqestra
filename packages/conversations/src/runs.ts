@@ -216,7 +216,8 @@ const claim = async (tx: Tx, conversationId: string, job: string) =>
 	(
 		await tx
 			.update(conversation)
-			.set({ openedJobId: job })
+			// each step claims: updatedAt kept, so a running Conversation keeps its place in the list
+			.set({ openedJobId: job, updatedAt: sql`${conversation.updatedAt}` })
 			.where(and(eq(conversation.id, conversationId), runOf(job)))
 			.returning({ id: conversation.id })
 	).length > 0;
