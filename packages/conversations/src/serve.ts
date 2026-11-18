@@ -304,13 +304,11 @@ async function failed(
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
-	// its Run over, or a job requeued after its Run ended: the Run it would end is another's
-	if (
-		!conv ||
-		conv.status !== "running" ||
-		(conv.jobId && conv.jobId !== jobId)
-	)
-		return;
+	// a job requeued after its Run ended: the Run it would end is another's
+	if (!conv || (conv.jobId && conv.jobId !== jobId)) return;
+	// its Run had ended: a stopped one's job may have failed before starting the Run a message sent meanwhile waits for
+	if (conv.status === "idle") return void (await ensureRun(conversationId));
+	if (conv.status !== "running") return;
 	if (!conv.parentId) {
 		// one Alert: a failure that auto-paused the Firing's task says so
 		const paused = await endRun(
@@ -871,7 +869,7 @@ export async function serveRuns(
 					mcp,
 					onFailed,
 				).catch((error) =>
-					console.error(`could not mark job ${job.id}'s Run failed`, error),
+					console.error(`could not handle job ${job.id}'s failure`, error),
 				);
 		});
 		worker.on("error", (err) => console.error("worker error", err));
