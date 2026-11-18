@@ -1,4 +1,4 @@
-import { memoryStore } from "@orqestra/tools/testing";
+import { memoryStore } from "@orqestra/db/store";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { Snapshots } from "./index.ts";
 

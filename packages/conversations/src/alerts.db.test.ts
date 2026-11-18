@@ -1,6 +1,6 @@
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/agents";
-import { memoryStore } from "@orqestra/tools/testing";
+import { memoryStore } from "@orqestra/db/store";
 import {
 	afterAll,
 	beforeAll,

@@ -2,14 +2,14 @@ import { afterAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { user as userRecord } from "@orqestra/db/schema";
+import { memoryStore } from "@orqestra/db/store";
 import { connectionStore } from "@orqestra/mcp";
 import { fakeAuthorizationServer } from "@orqestra/mcp/testing";
-import { memoryStore } from "@orqestra/tools/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";
 
-const config = createCapabilities(db);
+const config = createCapabilities(db, memoryStore().store);
 
 // A User's Connections through the api, against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test.
 // The MCP Server and its authorization server are fakes behind the injected fetch.

@@ -1,5 +1,5 @@
+import { memoryStore } from "@orqestra/db/store";
 import { fakeMcpServer } from "@orqestra/mcp/testing";
-import { memoryStore } from "@orqestra/tools/testing";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 // Needs a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
@@ -17,7 +17,7 @@ const { createModels } = await import("@orqestra/models");
 const { createSkills } = await import("@orqestra/skills");
 const { createTools } = await import("@orqestra/tools/live");
 const models = createModels(db);
-const skills = createSkills(db);
+const skills = createSkills(db, memoryStore().store);
 const mcpServers = createMcpServers(db);
 const lives = {
 	models,

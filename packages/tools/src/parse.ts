@@ -2,9 +2,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { inflateRawSync } from "node:zlib";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
+import type { ObjectStore } from "@orqestra/db/store";
 import type { Fetch } from "./index.ts";
 import { isMineruNet } from "./shared.ts";
-import type { ObjectStore } from "./store.ts";
 
 // Parse: an Attachment turned into Markdown by the Document Parser (MinerU), cached in object storage per page range.
 

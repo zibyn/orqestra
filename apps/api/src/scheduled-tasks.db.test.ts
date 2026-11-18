@@ -8,7 +8,7 @@ import {
 } from "@orqestra/conversations";
 import { noMcpServerDeletes } from "@orqestra/conversations/testing";
 import { db } from "@orqestra/db";
-import { memoryStore } from "@orqestra/tools/testing";
+import { memoryStore } from "@orqestra/db/store";
 import { createApp, type User } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";
 
@@ -48,7 +48,7 @@ const admin: User = { id: "root", name: "Root", admin: true };
 
 function app(user: User | null) {
 	const api = createApp({
-		config: createCapabilities(db),
+		config: createCapabilities(db, memoryStore().store),
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(),
 		conversations,

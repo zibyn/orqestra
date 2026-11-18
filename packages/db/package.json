@@ -7,6 +7,7 @@
     "./schema": "./src/schema.ts",
     "./live": "./src/live.ts",
     "./secret": "./src/secret.ts",
+    "./store": "./src/store.ts",
     "./cut": "./src/cut.ts"
   },
   "scripts": {

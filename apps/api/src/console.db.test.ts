@@ -5,14 +5,14 @@ import {
 } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { backgroundCall, conversation, message } from "@orqestra/db/schema";
+import { memoryStore } from "@orqestra/db/store";
 import { fakeMcpServer } from "@orqestra/mcp/testing";
 import { catalogProviders } from "@orqestra/models";
-import { memoryStore } from "@orqestra/tools/testing";
 import { eq, sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";
 
-const config = createCapabilities(db);
+const config = createCapabilities(db, memoryStore().store);
 
 // Through the api against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
 const url = process.env.TEST_DATABASE_URL;

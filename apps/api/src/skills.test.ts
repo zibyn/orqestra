@@ -1,12 +1,13 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
+import { memoryStore } from "@orqestra/db/store";
 import { SKILL_ZIP_MAX_BYTES } from "@orqestra/skills/shared";
 import { zip } from "@orqestra/skills/test-zip";
 import { createApp, type User } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";
 
-const config = createCapabilities(db);
+const config = createCapabilities(db, memoryStore().store);
 
 const ada: User = { id: "s1", name: "Ada", admin: true };
 const bob: User = { id: "s2", name: "Bob", admin: false };

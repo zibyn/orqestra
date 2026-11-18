@@ -1,3 +1,4 @@
+import { memoryStore } from "@orqestra/db/store";
 import { describe, expect, it } from "vitest";
 // the zip writer the Skill upload tests use, independent of the reader under test
 import { zip } from "../../skills/src/test-zip.ts";
@@ -7,7 +8,6 @@ import {
 	type ParseFiles,
 	testDocumentParser,
 } from "./index.ts";
-import { memoryStore } from "./testing.ts";
 
 const mineru: DocumentParser = {
 	baseUrl: "https://mineru.net",

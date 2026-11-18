@@ -8,6 +8,7 @@ import {
 } from "bun:test";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
+import { memoryStore } from "@orqestra/db/store";
 import { LinearGrantRefused, linearAccessToken } from "@orqestra/linear";
 import { fakeLinear } from "@orqestra/linear/testing";
 import { sql } from "drizzle-orm";
@@ -26,7 +27,7 @@ const users: Record<string, { id: string; name: string; admin: boolean }> = {
 let linear = fakeLinear();
 const orqestraUrl = "https://orqestra.example.com";
 const api = createApp({
-	config: createCapabilities(db),
+	config: createCapabilities(db, memoryStore().store),
 	session: async (request) => ({
 		user: users[request.headers.get("x-user") ?? ""] ?? null,
 		cookies: [],

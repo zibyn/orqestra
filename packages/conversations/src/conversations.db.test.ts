@@ -39,7 +39,8 @@ const { userMemories } = await import("@orqestra/memory");
 const runs = await import("./runs.ts");
 const timers = await import("./timers.ts");
 const { memoryRun, noMcpServerDeletes } = await import("./testing.ts");
-const { memoryOrrery, memoryStore } = await import("@orqestra/tools/testing");
+const { memoryStore } = await import("@orqestra/db/store");
+const { memoryOrrery } = await import("@orqestra/tools/testing");
 const { rememberUser, setSpendingLimit } = await import("./users.ts");
 const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 };
 
@@ -95,13 +96,17 @@ const conversations = createConversations({
 	capabilities: {
 		...noMcpServerDeletes,
 		current: async () => config,
-		skillFiles: async (versionId) => [
-			{ path: "scripts/run.py", content: new TextEncoder().encode("print()") },
-			{
-				path: "SKILL.md",
-				content: new TextEncoder().encode(skillMds.get(versionId) ?? ""),
-			},
-		],
+		skillFiles: async (versionId, path) =>
+			[
+				{
+					path: "scripts/run.py",
+					content: new TextEncoder().encode("print()"),
+				},
+				{
+					path: "SKILL.md",
+					content: new TextEncoder().encode(skillMds.get(versionId) ?? ""),
+				},
+			].filter((f) => path === undefined || f.path === path),
 	},
 	store: memoryStore().store,
 	orrery: () => runOrrery.client,

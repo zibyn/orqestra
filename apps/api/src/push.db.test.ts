@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { createConversations, type Snapshots } from "@orqestra/conversations";
 import { noMcpServerDeletes } from "@orqestra/conversations/testing";
 import { db } from "@orqestra/db";
-import { memoryStore } from "@orqestra/tools/testing";
+import { memoryStore } from "@orqestra/db/store";
 import { createApp, type User } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";
 
@@ -21,7 +21,7 @@ const ada: User = { id: "ada", name: "Ada", admin: false };
 
 const app = (user: User | null) => (method: string, body?: unknown) =>
 	createApp({
-		config: createCapabilities(db),
+		config: createCapabilities(db, memoryStore().store),
 		session: async () => ({ user, cookies: [] }),
 		auth: () => new Response(),
 		conversations,

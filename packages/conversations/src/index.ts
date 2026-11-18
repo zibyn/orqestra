@@ -17,6 +17,7 @@ import {
 	subagent,
 	timer,
 } from "@orqestra/db/schema";
+import type { ObjectStore } from "@orqestra/db/store";
 import {
 	type ConnectionStore,
 	deleteMcpServer,
@@ -37,7 +38,7 @@ import {
 	type SkillFile,
 	skillBlock,
 } from "@orqestra/skills/shared";
-import { type ObjectStore, orrery as orreryClient } from "@orqestra/tools";
+import { orrery as orreryClient } from "@orqestra/tools";
 import { mcpToolRef } from "@orqestra/tools/shared";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -217,8 +218,8 @@ const ownedSubagent = async (userId: string, id: string) => {
 export interface ConversationCapabilities {
 	/** Every capability's snapshot, side by side: `snapshots(...)` of their lives. */
 	current: () => Promise<Snapshots>;
-	/** A Skill version's files. */
-	skillFiles: (versionId: number) => Promise<SkillFile[]>;
+	/** A Skill version's files, or only the one at `path`. */
+	skillFiles: (versionId: number, path?: string) => Promise<SkillFile[]>;
 	mcpServers: Pick<McpServersLive, "write">;
 	agents: { forget: (ref: { tool: `mcp:${string}` }) => Promise<unknown> };
 }
@@ -260,7 +261,7 @@ export function createConversations({
 		const { name, args } = invoked;
 		const skill = turnSkills(cfg, agent).find((s) => s.name === name);
 		const md = skill
-			? (await skillFiles(skill.versionId)).find((f) => f.path === "SKILL.md")
+			? (await skillFiles(skill.versionId, "SKILL.md"))[0]
 			: undefined;
 		if (!md)
 			throw new ConversationError(

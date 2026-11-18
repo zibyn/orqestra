@@ -5,7 +5,8 @@ import { createConversations, type Snapshots } from "@orqestra/conversations";
 import { noMcpServerDeletes } from "@orqestra/conversations/testing";
 import { db } from "@orqestra/db";
 import * as schema from "@orqestra/db/schema";
-import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
+import { memoryStore } from "@orqestra/db/store";
+import { memoryOrrery } from "@orqestra/tools/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";
@@ -46,7 +47,7 @@ const conversations = createConversations({
 /** The api as the given User, or signed out. */
 function app(userId: string | null) {
 	const api = createApp({
-		config: createCapabilities(db),
+		config: createCapabilities(db, memoryStore().store),
 		session: async () => ({
 			user: userId ? { id: userId, name: userId, admin: false } : null,
 			cookies: [],

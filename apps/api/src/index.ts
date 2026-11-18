@@ -1,6 +1,7 @@
 import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { connectionStore } from "@orqestra/mcp";
+import { backfillSkillFiles } from "@orqestra/skills";
 import { s3Store } from "@orqestra/tools/s3";
 import { z } from "zod";
 import { createApp } from "./app.ts";
@@ -56,7 +57,14 @@ try {
 	process.exit(1);
 }
 
-const config = createCapabilities(db);
+// files from before ADR 0017, moved before anything reads them; the worker does the same, whichever starts first
+const moved = await backfillSkillFiles(db, store).catch((error) => {
+	console.error("could not move Skill files to object storage:", error);
+	process.exit(1);
+});
+if (moved) console.log(`moved ${moved} Skill file(s) to object storage`);
+
+const config = createCapabilities(db, store);
 // a misconfigured instance does not come up
 await config.current().catch((error) => {
 	console.error(error.message);

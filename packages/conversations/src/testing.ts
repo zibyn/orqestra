@@ -1,11 +1,12 @@
 import type { Message } from "@earendil-works/pi-ai";
+import type { ObjectStore } from "@orqestra/db/store";
+import { memoryStore } from "@orqestra/db/store";
 import type { ConnectionStore } from "@orqestra/mcp";
 import type { Memory } from "@orqestra/memory";
 import { inMemoryMemories } from "@orqestra/memory/testing";
 import type { StreamSimple } from "@orqestra/models";
 import type { SkillFile } from "@orqestra/skills/shared";
-import { type ObjectStore, type Orrery, readySandbox } from "@orqestra/tools";
-import { memoryStore } from "@orqestra/tools/testing";
+import { type Orrery, readySandbox } from "@orqestra/tools";
 import { type Counted, metered } from "./metered.ts";
 import type { Recall } from "./recall.ts";
 import type { Ended } from "./runs.ts";

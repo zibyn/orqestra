@@ -1,6 +1,7 @@
 // Bun's S3 client: only the api and worker, which run on Bun, import this.
+
+import type { ObjectStore } from "@orqestra/db/store";
 import { S3Client } from "bun";
-import type { ObjectStore } from "./store.ts";
 
 const REQUIRED = [
 	"S3_ENDPOINT",

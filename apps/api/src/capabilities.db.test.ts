@@ -3,6 +3,7 @@ import { turnSkills } from "@orqestra/agents";
 import { limitsInput } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { decryptSecret } from "@orqestra/db/secret";
+import { memoryStore } from "@orqestra/db/store";
 import { zip } from "@orqestra/skills/test-zip";
 import { availableTools } from "@orqestra/tools";
 import { sql } from "drizzle-orm";
@@ -10,7 +11,7 @@ import { createCapabilities } from "./capabilities.ts";
 
 // Writes through the interface against a migrated, throwaway Postgres: TEST_DATABASE_URL (see test-env.ts) is wiped before every test
 const url = process.env.TEST_DATABASE_URL;
-const config = createCapabilities(db);
+const config = createCapabilities(db, memoryStore().store);
 
 const general = {
 	name: "General",
@@ -102,7 +103,7 @@ describe.skipIf(!url)("Capabilities writes (Postgres)", () => {
 				oauthClientSecret: null,
 			});
 			// written past the MCP Servers, so read by a fresh one
-			const fresh = createCapabilities(db);
+			const fresh = createCapabilities(db, memoryStore().store);
 			try {
 				expect((await fresh.current()).mcpServers.docs.auth).toBe("shared");
 			} finally {
@@ -265,7 +266,7 @@ describe.skipIf(!url)("Capabilities writes (Postgres)", () => {
 		// deleted past the Agent Definitions, as another snapshot may still hold them
 		await db.execute(sql`delete from mcp_server where id = 'docs'`);
 		await db.execute(sql`delete from skill where name = 'pdf'`);
-		const fresh = createCapabilities(db);
+		const fresh = createCapabilities(db, memoryStore().store);
 		try {
 			const loaded = await fresh.current();
 			expect(loaded.defaultAgent).toMatchObject({
