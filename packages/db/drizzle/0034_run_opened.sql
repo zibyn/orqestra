@@ -1,0 +1,1 @@
+ALTER TABLE "conversation" ADD COLUMN "opened_job_id" text;

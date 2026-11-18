@@ -394,6 +394,7 @@ async function execute(
 			deps,
 			cfg,
 			conv,
+			jobId,
 			{
 				incognito: !!root?.incognito,
 				unattended,
@@ -406,6 +407,11 @@ async function execute(
 				over = true;
 			},
 		);
+		// failed meanwhile by a start that could not queue it: not this job's Run
+		if (!run) {
+			if (prev) active.set(conversationId, prev);
+			return;
+		}
 		await handler(run, cfg);
 		if (!over && !stop.signal.aborted)
 			throw new Error("The Run ended without finishing");
@@ -434,6 +440,7 @@ async function open(
 	}: RunDeps & { limit: (streamSimple: StreamSimple) => StreamSimple },
 	cfg: Snapshots,
 	conv: typeof conversation.$inferSelect,
+	jobId: string | undefined,
 	root: {
 		incognito: boolean;
 		unattended: boolean;
@@ -443,7 +450,7 @@ async function open(
 	signal: AbortSignal,
 	emit: (event: ConversationEvent) => Promise<unknown>,
 	end: () => void,
-): Promise<RunHandle> {
+): Promise<RunHandle | undefined> {
 	const conversationId = conv.id;
 	const sub = conv.parentId ? conversationId : undefined;
 	// the trace context of the inputs about to wake it; one arriving in between just goes unlinked
@@ -454,7 +461,7 @@ async function open(
 			.where(eq(inbox.conversationId, conversationId))
 	).flatMap((r) => (r.trace ? [r.trace] : []));
 	// nothing to reload: the inputs showed already, from the inbox
-	await drain(conversationId);
+	if (!(await drain(conversationId, false, jobId ?? ""))) return undefined;
 	const rows = await db
 		.select({
 			id: message.id,
@@ -831,7 +838,7 @@ export async function serveRuns(
 ) {
 	const { config, store, mcp } = deps;
 	// so failRun tells it of a Run that some start in this process could not queue
-	tellFailedRuns(onFailed);
+	const untell = tellFailedRuns(onFailed);
 	// one Provider's limit holds across this worker's Runs and configs
 	const limited = { ...deps, limit: providerLimiter(providerConcurrency) };
 	const databaseUrl = process.env.DATABASE_URL as string;
@@ -930,7 +937,7 @@ export async function serveRuns(
 		clearInterval(sweep);
 		await Promise.all(workers.map((w) => w.close()));
 		listener.release(true); // destroy rather than return a LISTENing connection to the pool
-		tellFailedRuns(undefined);
+		untell();
 	};
 }
 

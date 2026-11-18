@@ -199,23 +199,55 @@ export async function enqueue(conversationId: string) {
 let onFailed:
 	| ((conversationId: string, error: Error) => Promise<void>)
 	| undefined;
+/** Sets it, and returns what unsets it unless a later `serveRuns` set its own since. */
 export const tellFailedRuns = (told: typeof onFailed) => {
 	onFailed = told;
+	return () => {
+		if (onFailed === told) onFailed = undefined;
+	};
 };
 
 /**
  * Fails a top-level Run: marks it failed (and its Firing, see `endRun`), Alerts its User and tells `onFailed`.
- * Every top-level Run that fails ends here: one whose job failed (serve.ts `failed`) and one that could not be queued.
+ * Every top-level Run that fails ends here: one whose job failed (serve.ts `failed`) and one that could not be queued,
+ * `unqueued` naming its job, which fails only while no job opened it: another process's requeue may have queued it meanwhile.
+ * False when it failed nothing. An Alert that throws is logged: `onFailed` is still told.
  */
-export async function failRun(conversationId: string, error: Error) {
+export async function failRun(
+	conversationId: string,
+	error: Error,
+	unqueued?: string,
+) {
 	const paused = await endRun(
 		conversationId,
 		"failed",
 		error instanceof SpendingLimitReached ? "spending_limit" : "error",
+		false,
+		unqueued,
 	);
+	if (paused === undefined) return false;
 	// one Alert: a failure that auto-paused the Firing's task says so
-	await alertRun(conversationId, paused ? "auto_paused" : "failed");
+	await alertRun(conversationId, paused ? "auto_paused" : "failed").catch((e) =>
+		console.error(`could not Alert of Run ${conversationId}'s failure`, e),
+	);
 	await onFailed?.(conversationId, error);
+	return true;
+}
+
+/**
+ * A Run its start could not queue, as job `jobId`, fails (`failRun`) and `error` is thrown, whatever else fails on the way;
+ * unless a job opened it meanwhile, as another process's requeue queued it: it goes on, started.
+ */
+export async function failUnqueued(
+	conversationId: string,
+	jobId: string,
+	error: Error,
+) {
+	const failed = await failRun(conversationId, error, jobId).catch((e) => {
+		console.error(`could not fail Run ${conversationId}`, e);
+		return true;
+	});
+	if (failed) throw error;
 }
 
 /**
@@ -223,7 +255,7 @@ export async function failRun(conversationId: string, error: Error) {
  * decided under its root's lock, so inputs arriving together start one Run. True when it started one.
  * A top-level one that has nothing to wake it may be a Firing whose tree has just finished: that ends now (see `endIdleFiring`).
  * A Run it started that cannot be queued fails, as one whose job failed does: a Subagent's Notification tells the parent;
- * a top-level one is failed by `failRun`, and the error thrown.
+ * a top-level one is failed by `failRun`, and the error thrown, unless a job opened it meanwhile (see `failUnqueued`).
  */
 export async function ensureRun(conversationId: string) {
 	let fired: Awaited<ReturnType<typeof endIdleFiring>>;
@@ -269,11 +301,12 @@ export async function ensureRun(conversationId: string) {
 				.set({ outcome: "running" })
 				.where(eq(subagent.conversationId, conversationId));
 		}
+		const jobId = newJobId();
 		await tx
 			.update(conversation)
-			.set({ status: "running", jobId: newJobId() })
+			.set({ status: "running", jobId })
 			.where(eq(conversation.id, conversationId));
-		return conv;
+		return { parentId: conv.parentId, jobId };
 	});
 	if (fired?.paused) await unschedule(fired.taskId);
 	if (fired)
@@ -286,14 +319,13 @@ export async function ensureRun(conversationId: string) {
 		await enqueue(conversationId);
 	} catch (error) {
 		// it has no job whose failure would end it
-		if (!started.parentId) {
-			await failRun(conversationId, error as Error);
-			throw error;
-		}
-		await endSubagent(conversationId, {
-			outcome: "failed",
-			result: `[The subagent could not be started: ${(error as Error).message}]`,
-		});
+		if (!started.parentId)
+			await failUnqueued(conversationId, started.jobId, error as Error);
+		else
+			await endSubagent(conversationId, {
+				outcome: "failed",
+				result: `[The subagent could not be started: ${(error as Error).message}]`,
+			});
 	}
 	return true;
 }
@@ -680,27 +712,46 @@ export async function firingFailed(conversationId: string) {
  * After a stop, a wake input that arrived meanwhile, such as a User message sent right after Stop, starts the next Run;
  * after a failure the inbox waits for Retry, which delivers it, so the failure still shows.
  * A Firing's Run ends it (see `endFiring`) failed, or partial when stopped, by the User or out of time; at once when the User stopped it,
- * as its whole tree is then. True when that auto-paused its task.
+ * as its whole tree is then. True when that auto-paused its task; undefined when it ended nothing.
+ * `unopened`, the job of a Run its start could not queue, ends that Run only while it goes and no job opened it.
  */
 export async function endRun(
 	conversationId: string,
 	status: "idle" | "failed",
 	failure: RunFailure = "error",
 	byUser = false,
+	unopened?: string,
 ) {
-	const paused = await db.transaction(async (tx) => {
+	const ended = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
-		await tx
+		const [own] = await tx
 			.update(conversation)
 			.set({ status, failure: status === "failed" ? failure : null })
-			.where(eq(conversation.id, conversationId));
-		return endFiring(
-			tx,
-			conversationId,
-			status === "failed" ? "failed" : "partial",
-			byUser,
-		);
+			.where(
+				and(
+					eq(conversation.id, conversationId),
+					unopened === undefined
+						? undefined
+						: and(
+								eq(conversation.status, "running"),
+								eq(conversation.jobId, unopened),
+								sql`${conversation.openedJobId} is distinct from ${unopened}`,
+							),
+				),
+			)
+			.returning({ id: conversation.id });
+		if (!own) return undefined;
+		return {
+			paused: await endFiring(
+				tx,
+				conversationId,
+				status === "failed" ? "failed" : "partial",
+				byUser,
+			),
+		};
 	});
+	if (!ended) return undefined;
+	const { paused } = ended;
 	if (paused?.paused) await unschedule(paused.taskId);
 	await saved(conversationId);
 	if (status === "idle") await ensureRun(conversationId);
@@ -737,14 +788,31 @@ export async function endSubagent(conversationId: string, ended: Ended) {
  * A top-level Run ends completed, or `"partial"` at an Unattended Run's step cap; a Firing's Run records how (see `endFiring`).
  * A `"quiet"` finish, an Unattended Run with nothing to report, ends completed but leaves Unread as it was.
  * That is checked under the same lock a sender starts a Run under, so no input is left behind.
+ * `opening`, the job of a Run that opens, delivers only while that is still the Run going, and records the job opened it; undefined when it is not.
  */
 export async function drain(
 	conversationId: string,
 	finish: boolean | "question" | "partial" | "quiet" | (() => Ended) = false,
+	opening?: string,
 ) {
 	let parentId: string | undefined;
 	const delivered = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
+		if (opening !== undefined) {
+			// a start that could not queue it may have failed it since execute's check; opened, it is this job's to end (see `failRun`)
+			const [own] = await tx
+				.update(conversation)
+				.set({ openedJobId: opening })
+				.where(
+					and(
+						eq(conversation.id, conversationId),
+						eq(conversation.status, "running"),
+						or(isNull(conversation.jobId), eq(conversation.jobId, opening)),
+					),
+				)
+				.returning({ id: conversation.id });
+			if (!own) return undefined;
+		}
 		// at the end, inputs that do not wake it wait for the next Run
 		const [wake] = finish
 			? await tx
