@@ -2,7 +2,7 @@
 // Linear's access tokens last 24 hours; each refresh rotates the refresh token, which lapses 30 days after it was issued.
 import { randomBytes } from "node:crypto";
 import { db } from "@orqestra/db";
-import { linearInstallation } from "@orqestra/db/schema";
+import { agent, linearInstallation } from "@orqestra/db/schema";
 import {
 	decryptSecret,
 	encryptSecret,
@@ -36,6 +36,40 @@ export const linearInstallationInput = z.object({
 export const linearCallbackUrl = (orqestraUrl: string) =>
 	new URL("/api/linear/callback", orqestraUrl).href;
 
+/** Where Linear sends the app's webhooks, set in its settings with Agent session events on. */
+export const linearWebhookUrl = (orqestraUrl: string) =>
+	new URL("/api/linear/webhook", orqestraUrl).href;
+
+export const linearConversationsInput = z.object({
+	defaultAgentId: z.string().min(1),
+	teamRepos: z.record(
+		z.string().trim().min(1),
+		z
+			.string()
+			.trim()
+			.regex(/^[\w.-]+\/[\w.-]+$/, "owner/repo"),
+	),
+});
+
+/** Saves the Agent of the Conversations Linear opens and the repository each team's issues are worked in; refused until the app's credentials are saved. */
+export async function saveLinearConversations(
+	input: z.infer<typeof linearConversationsInput>,
+): Promise<{
+	errors: Partial<Record<"defaultAgentId" | "", { code: "not_found" }>>;
+}> {
+	if (
+		!(await db.query.agent.findFirst({
+			where: eq(agent.id, input.defaultAgentId),
+		}))
+	)
+		return { errors: { defaultAgentId: { code: "not_found" } } };
+	const [row] = await db
+		.update(linearInstallation)
+		.set(input)
+		.returning({ id: linearInstallation.id });
+	return { errors: row ? {} : { "": { code: "not_found" } } };
+}
+
 type LinearTokens = {
 	accessToken: string;
 	refreshToken: string;
@@ -55,6 +89,8 @@ export async function linearInstallationStatus() {
 	return row
 		? {
 				clientId: row.clientId,
+				defaultAgentId: row.defaultAgentId,
+				teamRepos: row.teamRepos,
 				clientSecretReadable: secretReadable(row.clientSecret),
 				webhookSecretReadable: secretReadable(row.webhookSecret),
 				// tokens that no longer decrypt need installing again
@@ -161,11 +197,9 @@ export async function finishInstallation(
 		const { organization } = z
 			.object({ organization: z.object({ name: z.string() }) })
 			.parse(
-				await linearGraphql(
-					tokens.accessToken,
-					"{ organization { name } }",
+				await linearGraphql(tokens.accessToken, "{ organization { name } }", {
 					fetch,
-				),
+				}),
 			);
 		await db
 			.update(linearInstallation)
@@ -237,7 +271,10 @@ async function tokenRequest(
 export async function linearGraphql(
 	accessToken: string,
 	query: string,
-	fetch: Fetch = globalThis.fetch,
+	{
+		variables,
+		fetch = globalThis.fetch,
+	}: { variables?: Record<string, unknown>; fetch?: Fetch } = {},
 ): Promise<unknown> {
 	const response = await fetch("https://api.linear.app/graphql", {
 		method: "POST",
@@ -245,7 +282,7 @@ export async function linearGraphql(
 			authorization: `Bearer ${accessToken}`,
 			"content-type": "application/json",
 		},
-		body: JSON.stringify({ query }),
+		body: JSON.stringify({ query, variables }),
 		signal: AbortSignal.timeout(30_000),
 	});
 	const body = (await response.json().catch(() => ({}))) as {
