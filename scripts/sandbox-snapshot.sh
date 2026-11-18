@@ -9,7 +9,12 @@ SNAPSHOT="${SNAPSHOT:-orqestra}"
 BASE="${BASE:-ubuntu-24.04}"
 DOCKERFILE="$(dirname "$0")/../sandbox/Dockerfile"
 
-api() { curl -sS --fail-with-body -H "Authorization: Bearer $ORRERY_TOKEN" -H 'Content-Type: application/json' "$@"; }
+api() {
+	local out
+	out=$(curl -sS --fail-with-body -H "Authorization: Bearer $ORRERY_TOKEN" -H 'Content-Type: application/json' "$@") ||
+		{ printf '%s\n' "$out" >&2; return 1; }
+	printf '%s\n' "$out"
+}
 
 id="" cursor=""
 while :; do
