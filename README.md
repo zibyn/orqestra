@@ -121,7 +121,7 @@ orrery --api-url https://orrery.example.com login --username orqestra
 orrery token create --name orqestra --scope user
 ```
 
-**构建 Orqestra 的 Snapshot**：Orqestra 自己维护 Sandbox 的工具链，即 [`sandbox/Dockerfile`](sandbox/Dockerfile)：orrery 的平台 Snapshot `ubuntu-24.04`（自带 git、curl、Python 3、Node 等）加上 GitHub CLI `gh`。Skill 需要的其他工具（如 pypdf、pandas）也加在这里。用同一个 orrery User 的 Token 构建，脚本最后打印 Snapshot 名（默认 `orqestra`），把它填进 Snapshot：
+**构建 Orqestra 的 Snapshot**：Orqestra 自己维护 Sandbox 的工具链，即 [`sandbox/Dockerfile`](sandbox/Dockerfile)：orrery 的平台 Snapshot `ubuntu-24.04`（自带 git、curl、Python 3、Node 等）加上 GitHub CLI `gh` 和 Skill 常用的 Python 包（pypdf、openpyxl、python-docx、pandas）。Skill 需要的其他工具也加在这里。用同一个 orrery User 的 Token 构建，脚本最后打印 Snapshot 名（默认 `orqestra`），把它填进 Snapshot：
 
 ```bash
 ORRERY_URL=https://orrery.example.com ORRERY_TOKEN=orr_... scripts/sandbox-snapshot.sh
