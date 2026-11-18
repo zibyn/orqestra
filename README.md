@@ -121,22 +121,13 @@ orrery --api-url https://orrery.example.com login --username orqestra
 orrery token create --name orqestra --scope user
 ```
 
-**构建推荐的 Snapshot**：Skill 常用 Python 3（pypdf、openpyxl、python-docx、pandas）和 Node。用同一个 orrery User 构建（Snapshot 名先在调用方自己的 Snapshot 里找，再找平台的），然后把名字（如 `orqestra-skills`）填进 Snapshot：
-
-```dockerfile
-# Dockerfile
-FROM python:3.12-slim
-RUN apt-get update \
- && apt-get install -y --no-install-recommends nodejs npm git curl ca-certificates \
- && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir pypdf openpyxl python-docx pandas
-```
+**构建 Orqestra 的 Snapshot**：Orqestra 自己维护 Sandbox 的工具链，即 [`sandbox/Dockerfile`](sandbox/Dockerfile)：orrery 的平台 Snapshot `ubuntu-24.04`（自带 git、curl、Python 3、Node 等）加上 GitHub CLI `gh`。Skill 需要的其他工具（如 pypdf、pandas）也加在这里。用同一个 orrery User 的 Token 构建，脚本最后打印 Snapshot 名（默认 `orqestra`），把它填进 Snapshot：
 
 ```bash
-orrery snapshot build orqestra-skills -f Dockerfile
+ORRERY_URL=https://orrery.example.com ORRERY_TOKEN=orr_... scripts/sandbox-snapshot.sh
 ```
 
-再次运行同一条命令即生成新版本，orrery 构建成功后自动把 current 指向它；新建的 Sandbox 使用 current 版本。
+脚本需要 `curl` 和 `jq`。`SNAPSHOT` 改 Snapshot 名，`BASE` 改所基于的平台 Snapshot。再次运行即生成新版本，orrery 构建成功后自动把 current 指向它；新建的 Sandbox 使用 current 版本。
 
 ### 配置 Document Parser（MinerU）
 
