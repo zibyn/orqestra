@@ -3029,6 +3029,70 @@ describe.skipIf(!url)(
 			}
 		});
 
+		it("answers a message sent before a Stop though the stopped Run's job fails before starting its Run, and tells onFailed nothing", async () => {
+			await stopWorker();
+			const told: string[] = [];
+			stopWorker = await serve({
+				onFailed: async (id: string) => {
+					told.push(id);
+				},
+			});
+			let replying = false;
+			const { gate: stopSent, release } = gate();
+			script({
+				parent: [
+					async ({ run }) => {
+						replying = true;
+						await untilAborted(run.signal);
+						await stopSent;
+						throw new Error("aborted");
+					},
+					say("answered"),
+				],
+			});
+			const transaction = db.transaction.bind(db);
+			let id = "";
+			let armed = false;
+			let broke = false;
+			// once the Stop has ended the Run, the transaction that would start the next one fails, as if its worker died there
+			const spy = vi.spyOn(db, "transaction").mockImplementation((async (
+				...args: Parameters<typeof transaction>
+			) => {
+				if (armed) {
+					const { rows } = await db.execute(
+						sql`select 1 from conversation where id = ${id} and status = 'idle'`,
+					);
+					if (rows.length) {
+						armed = false;
+						broke = true;
+						throw new Error("connection lost");
+					}
+				}
+				return transaction(...args);
+			}) as typeof transaction);
+			try {
+				id = await send("a");
+				await waitFor(async () => replying, Boolean);
+				await send("b", id);
+				await conversations.stop(userId, id);
+				armed = true;
+				release();
+				await waitFor(async () => broke, Boolean);
+				const view = await waitFor(() => get(id), idle(3));
+				expect(view?.messages.map((m) => m.message.role)).toEqual([
+					"user",
+					"user",
+					"assistant",
+				]);
+				expect(told).toEqual([]);
+			} finally {
+				spy.mockRestore();
+				release();
+				await stopWorker();
+				stopWorker = await serve();
+			}
+		}, 15_000);
+
 		it("fails a run whose worker crashed, so it can be retried", async () => {
 			await stopWorker();
 			let picked = false;
