@@ -31,15 +31,29 @@ export function s3Store(
 	});
 	return {
 		async put(key, body, { signal } = {}) {
+			// a stream body goes up as a multipart upload, 5 MiB parts sent as they fill; the signal errors it
+			const written = s3.write(
+				key,
+				new Response(body.pipeThrough(new TransformStream(), { signal })),
+			);
+			// Bun's client takes no signal, so storage that stops answering would keep it waiting however long
+			const aborted = new Promise<never>((_, reject) =>
+				signal?.addEventListener("abort", () => reject(signal.reason)),
+			);
+			aborted.catch(() => {});
 			try {
-				// a stream body goes up as a multipart upload, 5 MiB parts sent as they fill; the signal errors it
-				await s3.write(
-					key,
-					new Response(body.pipeThrough(new TransformStream(), { signal })),
-				);
+				await Promise.race([written, aborted]);
 			} catch (error) {
-				// a multipart upload that failed may have left an object
-				await s3.delete(key).catch(() => {});
+				// a multipart upload that failed may have left an object. None is deleted while storage has not answered
+				// the write: the delete could land after a later put of the key
+				const answered = await Promise.race([
+					written.then(
+						() => true,
+						() => true,
+					),
+					Bun.sleep(1000).then(() => false),
+				]);
+				if (answered) await s3.delete(key).catch(() => {});
 				throw error;
 			}
 		},

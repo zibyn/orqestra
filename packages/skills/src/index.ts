@@ -62,13 +62,15 @@ const objectKey = (name: string, sha256: string) =>
 const hash = (content: Uint8Array) =>
 	createHash("sha256").update(content).digest("hex");
 
-/** Locks the Skill until the transaction ends, so its writers put and delete its objects one at a time. */
+/**
+ * Locks the Skill's name until the transaction ends, whether a Skill has it or not, so its writers put and delete its
+ * objects one at a time.
+ */
 const lockSkill = (tx: Tx, name: string) =>
-	tx
-		.select({ name: skill.name })
-		.from(skill)
-		.where(eq(skill.name, name))
-		.for("update");
+	tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`skill:${name}`}))`);
+
+/** How long a Skill's puts may hold its lock, and a database connection. */
+const PUT_TIMEOUT_MS = 60_000;
 
 /**
  * Puts the files the Skill's objects lack, with the Skill locked. One a file of the Skill already names is never put again,
@@ -89,11 +91,13 @@ async function putFiles(
 	const missing = new Map(
 		files.filter((f) => !known.has(f.sha256)).map((f) => [f.sha256, f]),
 	);
+	const signal = AbortSignal.timeout(PUT_TIMEOUT_MS);
 	await Promise.all(
 		[...missing.values()].map((f) =>
 			store.put(
 				objectKey(name, f.sha256),
 				new Response(f.content).body as ReadableStream<Uint8Array>,
+				{ signal },
 			),
 		),
 	);
@@ -110,6 +114,11 @@ export async function skillFiles(
 		.select({
 			path: skillFile.path,
 			sha256: skillFile.sha256,
+			// only a file not moved yet, as one an api of the release before saves while this one starts (ADR 0017)
+			content:
+				sql<Uint8Array | null>`case when ${skillFile.sha256} is null then ${skillFile.content} end`.mapWith(
+					skillFile.content,
+				),
 			name: skillVersion.skillName,
 		})
 		.from(skillFile)
@@ -122,17 +131,16 @@ export async function skillFiles(
 		)
 		.orderBy(skillFile.path);
 	return Promise.all(
-		rows.map(async (f) => {
-			// none when the Skill is being deleted, or the file is from before and not yet moved
-			const object = f.sha256 && (await store.get(objectKey(f.name, f.sha256)));
+		rows.map(async ({ path, sha256, content, name }) => {
+			if (content) return { path, content };
+			// none only when the Skill was deleted since its files were listed
+			const object = sha256 && (await store.get(objectKey(name, sha256)));
 			if (!object)
-				throw new Error(
-					`Skill file ${f.name}/${f.path} is not in object storage`,
-				);
-			const content = new Uint8Array(
-				await new Response(object.body).arrayBuffer(),
-			);
-			return { path: f.path, content };
+				throw new Error(`Skill file ${name}/${path} is not in object storage`);
+			return {
+				path,
+				content: new Uint8Array(await new Response(object.body).arrayBuffer()),
+			};
 		}),
 	);
 }
@@ -417,16 +425,26 @@ export function createSkills(db: Db, store: ObjectStore) {
 		},
 
 		/** Also deletes its versions and their files; Agent Definitions that name it are left to their owner. */
-		delete: (name: string) =>
-			write(async (tx) => {
-				const deleted = await tx
-					.delete(skill)
-					.where(eq(skill.name, name))
-					.returning({ name: skill.name });
-				// before the commit, holding the row, so a new Skill of that name puts its files only after; should this
-				// fail midway, the Skill stays with some files gone, and deleting it again finishes
-				if (deleted.length) await store.deletePrefix(skillPrefix(name));
-			}),
+		async delete(name: string) {
+			await write(async (tx) => {
+				await lockSkill(tx, name);
+				await tx.delete(skill).where(eq(skill.name, name));
+			});
+			// once no version names them, holding the name so no file is put meanwhile, and only while no Skill has it
+			// again. Those storage does not delete are left, named by nothing, until the name is deleted again
+			await db
+				.transaction(async (tx) => {
+					await lockSkill(tx, name);
+					const [again] = await tx
+						.select({ name: skill.name })
+						.from(skill)
+						.where(eq(skill.name, name));
+					if (!again) await store.deletePrefix(skillPrefix(name));
+				})
+				.catch((error) =>
+					console.error(`Skill ${name}'s files are left in storage`, error),
+				);
+		},
 	};
 }
 
