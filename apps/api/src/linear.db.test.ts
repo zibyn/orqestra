@@ -84,6 +84,7 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 		expect(before.body).toEqual({
 			installation: null,
 			callbackUrl: `${orqestraUrl}/api/linear/callback`,
+			webhookUrl: `${orqestraUrl}/api/linear/webhook`,
 		});
 
 		const {
@@ -113,6 +114,8 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 		const after = await call("GET", "/linear");
 		expect(after.body.installation).toEqual({
 			clientId: "lin-client",
+			defaultAgentId: null,
+			teamRepos: {},
 			clientSecretReadable: true,
 			webhookSecretReadable: true,
 			workspace: "Acme",
@@ -206,16 +209,46 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 		expect(await workspace()).toBeNull();
 	});
 
+	it("saves the Agent of the Conversations Linear opens and each team's repository, once the app's credentials are", async () => {
+		const settings = {
+			defaultAgentId: "general",
+			teamRepos: { ENG: "acme/web" },
+		};
+		const put = (body: unknown) =>
+			call("PUT", "/linear/conversations", { body });
+		expect((await put(settings)).body.errors).toEqual({
+			"": { code: "not_found" },
+		});
+
+		await start();
+		expect((await put(settings)).status).toBe(200);
+		expect((await call("GET", "/linear")).body.installation).toMatchObject(
+			settings,
+		);
+		expect(
+			(await put({ ...settings, defaultAgentId: "gone" })).body.errors,
+		).toEqual({ defaultAgentId: { code: "not_found" } });
+		const bad = await put({ ...settings, teamRepos: { ENG: "not a repo" } });
+		expect(bad.status).toBe(422);
+		expect(Object.keys(bad.body.errors)).toEqual(["teamRepos.ENG"]);
+	});
+
 	it("is for Admins only, the callback too", async () => {
 		await start();
 		for (const [method, path] of [
 			["GET", "/linear"],
 			["POST", "/linear"],
+			["PUT", "/linear/conversations"],
 			["GET", "/linear/callback?code=c&state=s"],
 		] as const) {
 			const { status } = await call(method, path, {
 				user: "u1",
-				body: method === "POST" ? credentials : undefined,
+				body:
+					method === "POST"
+						? credentials
+						: method === "PUT"
+							? { defaultAgentId: "general", teamRepos: {} }
+							: undefined,
 			});
 			expect(status).toBe(403);
 		}

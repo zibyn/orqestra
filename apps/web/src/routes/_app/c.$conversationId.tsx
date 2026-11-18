@@ -330,7 +330,7 @@ function ConversationView() {
 									text={messageText(row.message)}
 								/>
 							) : row.message.role === "user" ? (
-								<UserMessage message={row.message} />
+								<UserMessage message={row.message} origin={row.origin} />
 							) : row.message.role === "assistant" ? (
 								<AgentReply
 									message={row.message}
@@ -399,7 +399,7 @@ function ConversationView() {
 									text={messageText(row.message)}
 								/>
 							) : (
-								<UserMessage message={row.message} queued />
+								<UserMessage message={row.message} origin={row.origin} queued />
 							)}
 						</MessageScrollerItem>
 					))}
@@ -1308,9 +1308,12 @@ function UserBubble({
 /** A User message: its text, and the names of its attachments, whose paths a second text gives the Agent. */
 function UserMessage({
 	message,
+	origin,
 	queued,
 }: {
 	message: PiMessage;
+	/** Sent from elsewhere on the User's behalf: Linear's is marked. */
+	origin?: string | null;
 	/** Still in the inbox. */
 	queued?: boolean;
 }) {
@@ -1344,7 +1347,13 @@ function UserMessage({
 						))}
 					</AttachmentGroup>
 				)}
-				{queued && <MessageFooter>{m.queued()}</MessageFooter>}
+				{(queued || origin === "linear") && (
+					<MessageFooter>
+						{[origin === "linear" && m.from_linear(), queued && m.queued()]
+							.filter(Boolean)
+							.join(" · ")}
+					</MessageFooter>
+				)}
 			</MessageContent>
 		</Message>
 	);
