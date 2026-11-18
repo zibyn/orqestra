@@ -112,6 +112,10 @@ _Avoid_: Runtime, execution backend
 Orqestra's app installed by an Admin into one Linear workspace, where it acts as itself rather than as the Admin who installed it, so people there can assign issues to it and mention it. The Admin registers the app in Linear and enters its credentials in the console; installing needs a Linear workspace admin's approval. At most one exists, and installing again, for a new app or the same one, replaces it.
 _Avoid_: Linear integration, Linear connection, Linear account
 
+**Agent Session**:
+Linear's record of one piece of work for Orqestra's app. It starts when someone in the Linear Installation's workspace delegates an issue to the app or mentions it, and goes on with what they write in it. Each one opens one Conversation for the User with that person's email, with the Agent the Admin picked for Linear. Its first message names the issue and the repository of the issue's team. Later messages go to the same Conversation, marked as from Linear, and only that User's reach it. Someone with no User is told to sign in first.
+_Avoid_: Linear thread, Linear task, session
+
 **Search**:
 The Tool that queries the web and returns matching pages.
 _Avoid_: Web search, lookup
@@ -153,7 +157,7 @@ The most a User may spend on Model requests in a calendar month, reset at the st
 _Avoid_: Quota, budget, balance, credit
 
 **Conversation**:
-An ordered series of messages between one User and the Agent, owned by and visible only to that User. A Subagent's Conversation is nested under the one that started it and is seen only through it; one started by a Firing records which Scheduled Task started it, and otherwise is like any other.
+An ordered series of messages between one User and the Agent, owned by and visible only to that User. A Subagent's Conversation is nested under the one that started it and is seen only through it; one started by a Firing records which Scheduled Task started it, one opened from Linear which Agent Session it is, and otherwise is like any other.
 _Avoid_: Session, thread, chat
 
 **Attachment**:
@@ -173,7 +177,7 @@ The work of producing one Turn's reply: a queued job a worker picks up, which st
 _Avoid_: Job, task, generation
 
 **Unattended Run**:
-A Run started by a Firing's prompt or a Timer's note, in a Conversation where no User message has arrived since, together with the Runs of the Subagents it starts. It stops after a limited number of steps or a limited time, set by the Admin, ending with what it has so far, and is never retried on its own. It may end with nothing to report instead of a reply: it has completed, but its Conversation is not made Unread and no Alert goes out. The User's next message in that Conversation makes its later Runs ordinary ones again.
+A Run started by a Firing's prompt, a Timer's note or a message from an Agent Session, in a Conversation where no User message has arrived in Orqestra since, together with the Runs of the Subagents it starts. It stops after a limited number of steps or a limited time, set by the Admin, ending with what it has so far, and is never retried on its own. It may end with nothing to report instead of a reply: it has completed, but its Conversation is not made Unread and no Alert goes out. The User's next message in that Conversation makes its later Runs ordinary ones again.
 _Avoid_: Background run, headless run, autonomous run
 
 ### Memory
