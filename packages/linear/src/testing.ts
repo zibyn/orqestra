@@ -1,5 +1,5 @@
 // A scripted Linear, its token endpoint and GraphQL API reachable through `fetch`, for testing what installs and uses the app without it.
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 
 /**
  * `authorize` plays a workspace admin approving an authorization URL: the redirect's query, with a code that `clientSecret` and the
@@ -93,7 +93,7 @@ export function fakeLinear({
 	return linear;
 }
 
-/** An AgentSessionEvent webhook's body as Linear sends it, trimmed to what Orqestra reads; `prompt` makes it a `prompted` event. */
+/** An AgentSessionEvent webhook's body as Linear sends it, with fewer fields; `prompt` makes it a `prompted` event. */
 export function agentSessionEvent({
 	sessionId = "session-1",
 	email = "uma@example.com",
@@ -134,7 +134,7 @@ export function agentSessionEvent({
 			prompt === undefined
 				? null
 				: {
-						id: `activity-${prompt.length}-${webhookTimestamp}`,
+						id: randomUUID(),
 						agentSessionId: sessionId,
 						signal: signal ?? null,
 						content: { type: "prompt", body: prompt },
