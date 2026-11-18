@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import {
 	type AssistantMessage,
 	type Context,
@@ -28,7 +28,7 @@ import { fakeMcpServer, memoryConnections } from "@orqestra/mcp/testing";
 import { zip } from "@orqestra/skills/test-zip";
 import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
 import { otelTelemetry, tracing } from "../tracing.ts";
-import { runAgent } from "./index.ts";
+import { runAgent, titlesSettled } from "./index.ts";
 import { openToolbox } from "./toolbox.ts";
 import { MAX_SUBAGENT_STEPS } from "./tools.ts";
 
@@ -120,6 +120,8 @@ function script(replies: FauxResponseStep[], title = "T") {
 	);
 }
 const roles = (messages: Message[]) => messages.map((m) => m.role);
+// faux replies are one queue: each test's titles, which runAgent does not wait for, are done before the next sets its own
+afterEach(titlesSettled);
 
 describe("runAgent", () => {
 	it("streams a reply, then saves it and a title", async () => {
@@ -134,6 +136,7 @@ describe("runAgent", () => {
 		);
 		const m = memoryRun({ transcript: transcript(user("hi")), turn: turn() });
 		await runAgent(m.run, deps());
+		await titlesSettled();
 
 		expect(m.streamed[0]).toEqual({ type: "start" });
 		const deltas = (kind: string) =>
@@ -158,6 +161,7 @@ describe("runAgent", () => {
 			turn: turn(),
 		});
 		await runAgent(later.run, deps());
+		await titlesSettled();
 		expect(later.titles).toEqual(["T"]);
 
 		let asked = false;
@@ -174,6 +178,7 @@ describe("runAgent", () => {
 			titled: true,
 		});
 		await runAgent(titled.run, deps());
+		await titlesSettled();
 		expect(asked).toBe(false);
 	});
 
@@ -190,6 +195,7 @@ describe("runAgent", () => {
 			await stream(event);
 		};
 		await runAgent(m.run, deps());
+		await titlesSettled();
 
 		const reply = m.saved[0] as AssistantMessage;
 		expect(reply.stopReason).toBe("aborted");
@@ -412,6 +418,7 @@ describe("runAgent", () => {
 		);
 		const m = memoryRun({ transcript: transcript(user("pi?")), turn: turn() });
 		await runAgent(m.run, deps());
+		await titlesSettled();
 
 		expect(roles(m.saved)).toEqual(["assistant", "toolResult"]);
 		expect((m.saved[1] as ToolResultMessage).isError).toBe(false);
@@ -1422,6 +1429,7 @@ describe("runAgent traces", () => {
 			turn: turn(),
 		});
 		await runAgent(m.run, { ...deps(), telemetry: t.telemetry });
+		await titlesSettled();
 
 		const spans = t.spans();
 		const [root] = named(spans, "invoke_agent");

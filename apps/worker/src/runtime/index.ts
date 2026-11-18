@@ -157,9 +157,15 @@ const errorText = (error: unknown) =>
 const runPurpose = (run: RunHandle) =>
 	run.isSubagent ? "subagent" : run.firingId === undefined ? "turn" : "firing";
 
+/** The Runs' spans not ended yet: each stays open for its Run's title, which the Run's handler does not wait for. */
+const open = new Set<Promise<void>>();
+
+/** Resolves once the spans open now have ended: the titles under way are set or given up. */
+export const titlesSettled = () => Promise.all(open);
+
 /**
  * Replies to one Run, step by step, until no input is left: the Agent loop, compaction and the title.
- * A failed reply throws, and the Run fails.
+ * Resolves once the Run has replied, before its title. A failed reply throws, and the Run fails.
  */
 export function runAgent(
 	run: RunHandle,
@@ -179,7 +185,11 @@ export function runAgent(
 		run.trace.parent && propagation
 			? propagation.extract(run.trace.parent)
 			: telemetry;
-	return parent.startSpan(
+	let replied!: () => void;
+	const done = new Promise<void>((resolve) => {
+		replied = resolve;
+	});
+	const traced = parent.startSpan(
 		{
 			name: "invoke_agent",
 			attributes: {
@@ -194,6 +204,7 @@ export function runAgent(
 		(span) =>
 			reply(run, {
 				...deps,
+				replied,
 				span,
 				attributes,
 				captureContent,
@@ -230,6 +241,14 @@ export function runAgent(
 				},
 			}),
 	);
+	// a failed reply fails the handler instead
+	const ended = traced
+		.catch(() => {})
+		.then(() => {
+			open.delete(ended);
+		});
+	open.add(ended);
+	return Promise.race([traced, done]);
 }
 
 async function reply(
@@ -238,12 +257,15 @@ async function reply(
 		config,
 		streamSimple,
 		openToolbox,
+		replied,
 		span,
 		attributes,
 		captureContent = false,
 	}: Omit<RuntimeDeps, "telemetry"> & {
 		/** The Run's metered Model requests, each a child of its span. */
 		streamSimple: RunHandle["streamSimple"];
+		/** Lets the Run's handler return before the title. */
+		replied: () => void;
 		span: TelemetrySpan;
 		/** Whose the Run is and what for, on each of its Tool calls too. */
 		attributes: SpanAttributes;
@@ -446,8 +468,10 @@ async function reply(
 			.filter((m): m is AssistantMessage => m.role === "assistant")
 			.at(-1) as AssistantMessage;
 
-		// titled after any Turn while it has no title, stopped ones included, so one the Spending Limit put off comes later
-		if (!run.titled)
+		// titled after any Turn while it has no title, stopped ones included, so one the Spending Limit put off comes later;
+		// the Run is over already, so its job and worker slot go now, and only its span waits
+		if (!run.titled) {
+			replied();
 			await generateTitle(
 				last.message,
 				answer,
@@ -462,6 +486,7 @@ async function reply(
 					if (!(error instanceof SpendingLimitReached))
 						console.error("title generation failed", error);
 				});
+		}
 	} catch (error) {
 		// a stopped or timed-out Run is no error, though it throws
 		if (signal.aborted) {
