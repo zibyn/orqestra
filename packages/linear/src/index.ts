@@ -17,10 +17,10 @@ export type Fetch = (
 ) => Promise<Response>;
 
 /** What Orqestra asks of the workspace: to read and write, and to be assigned issues and mentioned as an agent. */
-export const LINEAR_SCOPES = "read,write,app:assignable,app:mentionable";
+const LINEAR_SCOPES = "read,write,app:assignable,app:mentionable";
 
 /** How long the Admin has at Linear's authorization page. */
-export const PENDING_TTL_MS = 10 * 60_000;
+const PENDING_TTL_MS = 10 * 60_000;
 
 /** An access token is refreshed once it expires within this. */
 const REFRESH_MARGIN_MS = 60_000;
@@ -161,9 +161,11 @@ export async function finishInstallation(
 		const { organization } = z
 			.object({ organization: z.object({ name: z.string() }) })
 			.parse(
-				await linearGraphql(tokens.accessToken, "{ organization { name } }", {
+				await linearGraphql(
+					tokens.accessToken,
+					"{ organization { name } }",
 					fetch,
-				}),
+				),
 			);
 		await db
 			.update(linearInstallation)
@@ -235,10 +237,7 @@ async function tokenRequest(
 export async function linearGraphql(
 	accessToken: string,
 	query: string,
-	{
-		variables,
-		fetch = globalThis.fetch,
-	}: { variables?: Record<string, unknown>; fetch?: Fetch } = {},
+	fetch: Fetch = globalThis.fetch,
 ): Promise<unknown> {
 	const response = await fetch("https://api.linear.app/graphql", {
 		method: "POST",
@@ -246,7 +245,7 @@ export async function linearGraphql(
 			authorization: `Bearer ${accessToken}`,
 			"content-type": "application/json",
 		},
-		body: JSON.stringify({ query, variables }),
+		body: JSON.stringify({ query }),
 		signal: AbortSignal.timeout(30_000),
 	});
 	const body = (await response.json().catch(() => ({}))) as {
