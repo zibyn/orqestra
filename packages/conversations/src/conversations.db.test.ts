@@ -1118,6 +1118,61 @@ describe.skipIf(!url)(
 			}
 		});
 
+		it("keeps a Subagent its start could not queue going when a worker's startup requeue queued it meanwhile and a worker opened it: the parent gets one Notification, its result", async () => {
+			const queue = runs.runQueue(runs.SUBAGENT_RUNS_QUEUE);
+			let working = false;
+			const { gate: going, release } = gate();
+			const spy = vi.spyOn(queue, "add").mockImplementationOnce(async () => {
+				await conversations.requeue();
+				await waitFor(async () => working, Boolean);
+				throw new Error("queue down");
+			});
+			try {
+				script({
+					parent: [call(start("task")), say("started"), say("summed up")],
+					sub: [
+						async () => {
+							working = true;
+							await going;
+							return "done";
+						},
+					],
+				});
+				const id = await send("go");
+				// the start has returned
+				await waitFor(
+					() => get(id),
+					(v) => !!v?.messages.some((m) => m.message.role === "toolResult"),
+				);
+				release();
+				const sub = (await get(id))?.subagents[0].id as string;
+				await waitFor(
+					() => conversations.subagentTranscript(userId, sub),
+					(t) => t?.length === 2,
+				);
+				// any Notification it sends, and the parent's answer to it, have had their time
+				await new Promise((r) => setTimeout(r, 300));
+				const view = await waitFor(
+					() => get(id),
+					(v) => v?.status === "idle",
+				);
+				expect(view?.subagents.map((s) => s.outcome)).toEqual(["completed"]);
+				expect(
+					view?.messages
+						.filter((m) => m.subagentId === view.subagents[0].id)
+						.map((m) => m.message.content),
+				).toEqual([
+					'<task-notification subagent="1" status="completed">\ndone\n</task-notification>',
+				]);
+				expect(messageText(view?.messages.at(-1)?.message as Message)).toBe(
+					"summed up",
+				);
+			} finally {
+				spy.mockRestore();
+				release();
+			}
+		}, 15_000);
+
 		it("wakes the parent in one Run for two Subagents that finish together, and delivers both Notifications", async () => {
 			const { gate: done, release } = gate();
 			const { gate: blocked, release: unblock } = gate();
@@ -3354,6 +3409,97 @@ describe.skipIf(!url)(
 					throw new Error("queue down");
 				});
 				await failedOnce(await send("a"));
+			});
+
+			/**
+			 * As above, but the requeued job's 'failed' handler, having read the Run running, marks it only once released:
+			 * after the start's own add failed and the start failed it.
+			 */
+			const handlerMarksLate = () => {
+				const transaction = db.transaction.bind(db);
+				let step = "";
+				let marked = false;
+				const { gate: mark, release } = gate();
+				vi.spyOn(db, "transaction").mockImplementation((async (
+					...args: Parameters<typeof transaction>
+				) => {
+					// the worker's open cannot reach the database, and its job fails
+					if (step === "open") {
+						step = "mark";
+						throw new Error("connection lost");
+					}
+					if (step === "mark") {
+						step = "held";
+						await mark;
+						try {
+							return await transaction(...args);
+						} finally {
+							marked = true;
+						}
+					}
+					return transaction(...args);
+				}) as typeof transaction);
+				vi.spyOn(queue, "add").mockImplementationOnce(async () => {
+					step = "open";
+					await conversations.requeue();
+					await waitFor(async () => step === "held", Boolean);
+					throw new Error("queue down");
+				});
+				return {
+					release,
+					marked: () => waitFor(async () => marked, Boolean),
+				};
+			};
+
+			it("and tells onFailed once when that job's 'failed' handler, which read it running, marks it after the start did", async () => {
+				const handler = handlerMarksLate();
+				try {
+					await expect(send("a")).rejects.toThrow("queue down");
+					handler.release();
+					await handler.marked();
+					const [{ id }] = await db
+						.select({ id: schema.conversation.id })
+						.from(schema.conversation);
+					await failedOnce(id);
+				} finally {
+					handler.release();
+				}
+			});
+
+			it("and that handler's late mark fails no Run Retry started meanwhile", async () => {
+				let replying = false;
+				const { gate: going, release: answer } = gate();
+				script({
+					parent: [
+						async () => {
+							replying = true;
+							await going;
+							return "answered";
+						},
+					],
+				});
+				const handler = handlerMarksLate();
+				try {
+					await expect(send("a")).rejects.toThrow("queue down");
+					const [{ id }] = await db
+						.select({ id: schema.conversation.id })
+						.from(schema.conversation);
+					await conversations.retry(userId, id);
+					await waitFor(async () => replying, Boolean);
+					handler.release();
+					await handler.marked();
+					expect((await get(id))?.status).toBe("running");
+					answer();
+					const view = await waitFor(() => get(id), idle(2));
+					expect(view?.messages.map((m) => m.message.role)).toEqual([
+						"user",
+						"assistant",
+					]);
+					expect(told).toEqual([id]);
+				} finally {
+					handler.release();
+					answer();
+				}
 			});
 
 			it("and throws the queue's error though onFailed throws too", async () => {
