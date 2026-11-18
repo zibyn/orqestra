@@ -74,14 +74,22 @@ function Linear() {
 		<ConsolePage title={m.linear()} description={m.linear_hint()}>
 			<Card>
 				<CardContent className="flex flex-col gap-5">
-					{workspace && (
-						<Alert>
-							<CheckCircle2Icon />
-							<AlertDescription>
-								{m.linear_connected({ workspace })}
-							</AlertDescription>
-						</Alert>
-					)}
+					{workspace &&
+						(installation?.needsReinstall ? (
+							<Alert variant="destructive">
+								<TriangleAlertIcon />
+								<AlertDescription>
+									{m.linear_needs_reinstall({ workspace })}
+								</AlertDescription>
+							</Alert>
+						) : (
+							<Alert>
+								<CheckCircle2Icon />
+								<AlertDescription>
+									{m.linear_connected({ workspace })}
+								</AlertDescription>
+							</Alert>
+						))}
 					{search.error && (
 						<Alert variant="destructive">
 							<TriangleAlertIcon />
@@ -168,7 +176,11 @@ function Linear() {
 							<Button
 								type="submit"
 								className="self-start"
-								variant={workspace ? "outline" : "default"}
+								variant={
+									workspace && !installation?.needsReinstall
+										? "outline"
+										: "default"
+								}
 								disabled={busy}
 							>
 								{busy && (

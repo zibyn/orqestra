@@ -1,5 +1,5 @@
 // Orqestra's Linear app: installing it into a Linear workspace as itself (OAuth with actor=app), its tokens, and GraphQL as the app.
-// Linear's access tokens last 24 hours; each refresh rotates the refresh token, which lapses 30 days after it was issued.
+// Linear's access tokens last 24 hours; each refresh rotates the refresh token, which lapses 30 days after it was issued, used or not.
 import { randomBytes } from "node:crypto";
 import { db } from "@orqestra/db";
 import { agent, linearInstallation } from "@orqestra/db/schema";
@@ -96,6 +96,7 @@ export async function linearInstallationStatus() {
 				// tokens that no longer decrypt need installing again
 				workspace:
 					row.tokens && secretReadable(row.tokens) ? row.workspace : null,
+				needsReinstall: row.needsReinstall,
 			}
 		: null;
 }
@@ -139,6 +140,7 @@ export async function startInstallation(
 		...(stored?.clientId !== input.clientId && {
 			tokens: null,
 			workspace: null,
+			needsReinstall: false,
 		}),
 	};
 	await db
@@ -203,7 +205,11 @@ export async function finishInstallation(
 			);
 		await db
 			.update(linearInstallation)
-			.set({ tokens: sealed(tokens), workspace: organization.name })
+			.set({
+				tokens: sealed(tokens),
+				workspace: organization.name,
+				needsReinstall: false,
+			})
 			// not over the app of an installation started since
 			.where(eq(linearInstallation.clientId, taken.clientId));
 		return undefined;
@@ -213,30 +219,48 @@ export async function finishInstallation(
 	}
 }
 
+/** Linear's token endpoint refused a grant (RFC 6749 5.2: 400 such as invalid_grant, or 401 invalid_client): sending it again will not help. */
+export class LinearGrantRefused extends Error {
+	override name = "LinearGrantRefused";
+}
+
 /**
  * The app's access token, refreshed first when it is about to expire; undefined when the app is not installed or its tokens no longer
- * decrypt. Throws when Linear refuses the refresh. Holds the installation's row lock, so processes refresh one at a time.
+ * decrypt. Holds the installation's row lock, so processes refresh one at a time. Throws LinearGrantRefused when Linear refuses the
+ * refresh, having marked the installation as needing a reinstall; a refresh that succeeds clears that.
  */
-export const linearAccessToken = ({
+export async function linearAccessToken({
 	fetch = globalThis.fetch,
 }: {
 	fetch?: Fetch;
-} = {}) =>
-	db.transaction(async (tx) => {
+} = {}) {
+	const token = await db.transaction(async (tx) => {
 		const [row] = await tx.select().from(linearInstallation).for("update");
 		const tokens = row?.tokens ? opened(row.tokens) : undefined;
 		if (!row || !tokens) return undefined;
 		if (tokens.expiresAt - REFRESH_MARGIN_MS > Date.now())
 			return tokens.accessToken;
-		const refreshed = await tokenRequest(fetch, {
-			grant_type: "refresh_token",
-			refresh_token: tokens.refreshToken,
-			client_id: row.clientId,
-			client_secret: decryptSecret(row.clientSecret) ?? "",
-		});
-		await tx.update(linearInstallation).set({ tokens: sealed(refreshed) });
-		return refreshed.accessToken;
+		try {
+			const refreshed = await tokenRequest(fetch, {
+				grant_type: "refresh_token",
+				refresh_token: tokens.refreshToken,
+				client_id: row.clientId,
+				client_secret: decryptSecret(row.clientSecret) ?? "",
+			});
+			await tx
+				.update(linearInstallation)
+				.set({ tokens: sealed(refreshed), needsReinstall: false });
+			return refreshed.accessToken;
+		} catch (error) {
+			if (!(error instanceof LinearGrantRefused)) throw error;
+			// returned, not thrown, so the mark commits
+			await tx.update(linearInstallation).set({ needsReinstall: true });
+			return error;
+		}
 	});
+	if (token instanceof LinearGrantRefused) throw token;
+	return token;
+}
 
 const tokenResponse = z.object({
 	access_token: z.string(),
@@ -255,10 +279,12 @@ async function tokenRequest(
 		body: new URLSearchParams(params),
 		signal: AbortSignal.timeout(30_000),
 	});
-	if (!response.ok)
-		throw new Error(
-			`Linear's token endpoint answered ${response.status}: ${await response.text()}`,
-		);
+	if (!response.ok) {
+		const message = `Linear's token endpoint answered ${response.status}: ${await response.text()}`;
+		throw response.status === 400 || response.status === 401
+			? new LinearGrantRefused(message)
+			: new Error(message);
+	}
 	const body = tokenResponse.parse(await response.json());
 	return {
 		accessToken: body.access_token,

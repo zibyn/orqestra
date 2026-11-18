@@ -1,0 +1,1 @@
+ALTER TABLE "linear_installation" ADD COLUMN "needs_reinstall" boolean DEFAULT false NOT NULL;

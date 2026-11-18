@@ -444,6 +444,7 @@
   "secret_required": "请先填写这个 Secret。",
   "linear_hint": "把 Orqestra 作为智能体安装到一个 Linear workspace，之后就能在 Linear 里把 issue 指派给它。授权需要 Linear workspace 的管理员。",
   "linear_connected": "已连接到 {workspace}",
+  "linear_needs_reinstall": "Linear 已不再接受 Orqestra 对 {workspace} 的访问，那里的 Agent Session 不会再得到回复。请重新安装以恢复连接。",
   "linear_webhook_secret": "Webhook Secret",
   "linear_webhook_secret_hint": "Linear 应用设置里 webhook 的签名密钥，用来确认 webhook 来自 Linear。",
   "linear_install": "安装到 Linear",

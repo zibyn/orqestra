@@ -779,6 +779,8 @@ export const linearInstallation = pgTable(
 		tokens: text("tokens"),
 		// the Linear workspace's name; null until the app is installed
 		workspace: text("workspace"),
+		// Linear refused the last refresh of the tokens, so the app must be installed again; cleared by any grant that succeeds
+		needsReinstall: boolean("needs_reinstall").default(false).notNull(),
 		// the Agent of a Conversation Linear opens; null: none picked
 		defaultAgentId: text("default_agent_id").references(() => agent.id, {
 			onDelete: "set null",
