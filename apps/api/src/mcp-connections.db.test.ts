@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { user as userRecord } from "@orqestra/db/schema";
@@ -412,6 +412,69 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 		expect(as.registered).toHaveLength(2);
 		await disconnect("u1");
 		expect(as.revoked.map((r) => r.clientId)).toEqual([as.registered[0]]);
+	});
+
+	describe("at GitHub, whose authorization server lists no revocation endpoint", () => {
+		const app = { oauthClientId: "orq-app", oauthClientSecret: "s3cret" };
+		beforeEach(() => {
+			as = fakeAuthorizationServer({
+				issuer: "https://github.com/login/oauth",
+			});
+			as.github = true;
+		});
+
+		it("disconnects and deletes the User's grant of the App as it, which ends the access and refresh tokens", async () => {
+			await save(app);
+			await connect("u1");
+			const [live] = as.accessTokens;
+			const sent: (string | null)[] = [];
+			const { fetch } = as;
+			as.fetch = (input, init) => {
+				if (init?.method === "DELETE")
+					sent.push(new Headers(init.headers).get("authorization"));
+				return fetch(input, init);
+			};
+			const response = await disconnect("u1");
+			expect(response.status).toBe(200);
+			expect(JSON.stringify(response.body)).not.toMatch(/gh[ur]_/);
+			expect((await listed("u1"))[0].status).toBe("none");
+			expect(as.revoked).toEqual([
+				{ token: live, hint: null, clientId: "orq-app" },
+			]);
+			expect(sent).toEqual([`Basic ${btoa("orq-app:s3cret")}`]);
+			expect(as.accessTokens.size).toBe(0);
+			expect(as.refreshTokens.size).toBe(0);
+		});
+
+		it("refreshes an expired access token first, since GitHub deletes a grant only by a live one", async () => {
+			await save(app);
+			as.expiresIn = 0;
+			await connect("u1");
+			as.accessTokens.clear();
+			expect((await disconnect("u1")).status).toBe(200);
+			expect(as.refreshed).toBe(1);
+			expect(as.revoked).toHaveLength(1);
+			expect(as.accessTokens.size).toBe(0);
+			expect(as.refreshTokens.size).toBe(0);
+		});
+
+		it("disconnects all the same when GitHub refuses, and logs no token", async () => {
+			await save(app);
+			await connect("u1");
+			as.revocation = "fails";
+			const logged = spyOn(console, "error");
+			try {
+				const response = await disconnect("u1");
+				expect(response.status).toBe(200);
+				expect(JSON.stringify(response.body)).not.toMatch(/gh[ur]_/);
+				expect((await listed("u1"))[0].status).toBe("none");
+				expect(logged).toHaveBeenCalled();
+				expect(Bun.inspect(logged.mock.calls)).not.toMatch(/gh[ur]_/);
+			} finally {
+				logged.mockRestore();
+			}
+			expect(as.refreshTokens.size).toBe(1);
+		});
 	});
 
 	it("ends every Connection and pending authorization when the Admin changes the URL, makes it shared with an Authorization header, or changes the pre-registered Client, and revokes them", async () => {
