@@ -169,7 +169,7 @@ export function sandboxTools(
 	const resolve = (path: string) =>
 		workspacePath(posix.isAbsolute(path) ? path : `${dir}/${path}`);
 	const own = run.isSubagent
-		? ` It is your own folder in a sandbox you share with the agent that started you: name the files you leave for it, with their full paths, in your final answer.`
+		? ` It is your own folder in a sandbox you share with the agent that started you: name the files you leave for it, with their full paths, in your final answer. To change a git repository elsewhere under /workspace, never edit it in place: add a worktree of your own on a branch of your own, as in git -C /workspace/<repo> worktree add ${dir}/<repo> -b <its branch>-<your part>. Commit there and leave pushing to the agent that started you: name that branch in your final answer.`
 		: "";
 	let written = false;
 	let queue: Promise<unknown> = Promise.resolve();
@@ -177,7 +177,7 @@ export function sandboxTools(
 		(e): e is GitHostServer => e[1].auth === "oauth" && !!e[1].git,
 	);
 	const gitHint = gitHosts.length
-		? ` git and gh sign in to ${gitHosts.map(([, s]) => s.git.host).join(", ")} as the user once they connect ${gitHosts.map(([, s]) => s.name).join(", ")} on their Connections page (/connections): when cloning, pushing or gh fails to authenticate there, ask them to connect or reconnect it.`
+		? ` git and gh sign in to ${gitHosts.map(([, s]) => s.git.host).join(", ")} as the user once they connect ${gitHosts.map(([, s]) => s.name).join(", ")} on their Connections page (/connections): when cloning, pushing or gh fails to authenticate there, ask them to connect or reconnect it. Clone a repository to /workspace/<repo> and work there on a branch orqestra/<slug>; never push the default branch. Before committing, set the clone's user.name to the user's login and user.email to <id>+<login>@users.noreply.github.com, both from gh api user, so GitHub links the commits to them. To split a change among subagents, tell each one to add its own worktree of /workspace/<repo> in the folder it starts in, whose path only it knows, on a branch orqestra/<slug>-<its part>, to commit there and to push nothing; then merge their branches into yours. Push your branch, open a pull request with gh pr create and give the user its link.`
 		: "";
 
 	// the Sandbox is shared with the other Agents of the Conversation's tree, whose Skills may differ: write only the
