@@ -353,10 +353,11 @@ export const mcpServerAdmin = ({
 				(!!oauthClientId &&
 					!!input.oauthClientSecret &&
 					input.oauthClientSecret !== oldClient?.client_secret) ||
-				// where Users' tokens go
-				stored.gitHost !== values.gitHost ||
-				stored.gitUsername !== values.gitUsername ||
-				stored.tokenEnv !== values.tokenEnv);
+				// where Users' tokens go, added or changed; removed, they go to fewer places
+				(values.gitHost !== null &&
+					(stored.gitHost !== values.gitHost ||
+						stored.gitUsername !== values.gitUsername ||
+						stored.tokenEnv !== values.tokenEnv)));
 		const cleared = await write(async (tx) => {
 			await tx
 				.insert(mcpServer)

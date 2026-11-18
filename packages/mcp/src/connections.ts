@@ -34,11 +34,45 @@ const theirs = (userId: string, serverId: string) =>
 		eq(mcpConnection.mcpServerId, serverId),
 	);
 
+const lockKey = (userId: string, serverId: string) =>
+	`mcp_connection:${userId}:${serverId}`;
+
 /** Holds the lock of the User's Connection until `tx` ends: refreshing it takes it, and so does deleting it, to revoke the latest tokens. */
 const lock = (tx: Tx, userId: string, serverId: string) =>
 	tx.execute(
-		sql`select pg_advisory_xact_lock(hashtext(${`mcp_connection:${userId}:${serverId}`}))`,
+		sql`select pg_advisory_xact_lock(hashtext(${lockKey(userId, serverId)}))`,
 	);
+
+/** How long ending Connections waits in all for Runs refreshing them, whose authorization server may hang: under the api's 30 s idle timeout. */
+const END_WAIT_MS = 5_000;
+
+/**
+ * Holds the locks of these Users' Connections to the server until `tx` ends, as `lock` does. Past END_WAIT_MS it holds none and goes
+ * on, logged: the User's disconnect or the Admin's save must not fail, and tokens a refresh still under way stores are not revoked.
+ */
+async function lockToEnd(tx: Tx, serverId: string, userIds: string[]) {
+	const keys = userIds.map((userId) => lockKey(userId, serverId));
+	try {
+		// a savepoint, so a timeout leaves `tx` usable and releases the locks it took
+		await tx.transaction(async (sp) => {
+			await sp.execute(
+				sql`set local statement_timeout = ${sql.raw(String(END_WAIT_MS))}`,
+			);
+			// one statement, so the timeout bounds all the waits together
+			await sp.execute(
+				sql`select pg_advisory_xact_lock(hashtext(k)) from unnest(${sql.param(keys)}::text[]) k`,
+			);
+			await sp.execute(sql`set local statement_timeout to default`);
+		});
+	} catch (error) {
+		// query_canceled, as statement_timeout cancels
+		if ((error as { cause?: { code?: string } }).cause?.code !== "57014")
+			throw error;
+		console.error(
+			`Ending Connections to ${serverId} went on without waiting for a Run refreshing one; the tokens it stores are not revoked`,
+		);
+	}
+}
 
 export const connectionStore: ConnectionStore = {
 	async connection(userId, serverId) {
@@ -228,7 +262,7 @@ export async function deleteConnection(
 		db.query.mcpServer.findFirst({ where: eq(mcpServer.id, serverId) }),
 		connectionStore.registeredClient(serverId),
 		db.transaction(async (tx) => {
-			await lock(tx, userId, serverId);
+			await lockToEnd(tx, serverId, [userId]);
 			return tx
 				.delete(mcpConnection)
 				.where(theirs(userId, serverId))
@@ -255,7 +289,11 @@ export async function clearConnections(
 		.select({ userId: mcpConnection.userId })
 		.from(mcpConnection)
 		.where(eq(mcpConnection.mcpServerId, serverId));
-	for (const { userId } of users) await lock(tx, userId, serverId);
+	await lockToEnd(
+		tx,
+		serverId,
+		users.map(({ userId }) => userId),
+	);
 	const rows = await tx
 		.delete(mcpConnection)
 		.where(eq(mcpConnection.mcpServerId, serverId))

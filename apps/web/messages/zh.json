@@ -158,7 +158,7 @@
   "mcp_advanced": "高级设置",
   "mcp_auth_detected_hint": "保存时 Orqestra 会测试这个服务：它用 OAuth 登录的话，每个 User 在自己的「连接」页用自己的账号连接；否则所有 User 共用高级设置里的请求头。",
   "mcp_headers_shared_hint": "填 API key 这类固定凭据，所有 User 共用，访问到的数据也相同。按人区分数据的服务请用 OAuth。",
-  "mcp_auth_change_warning": "改认证方式、URL、预注册的 Client 或 Git Host 后，所有 User 的连接都会被删除，需要重新连接。",
+  "mcp_auth_change_warning": "改认证方式、URL 或预注册的 Client，或者添加、修改 Git Host 后，所有 User 的连接都会被删除，需要重新连接。",
   "mcp_oauth_client": "预注册的 Client（可选）",
   "mcp_oauth_client_hint": "一般不用填：Orqestra 会先用自己的 Client ID Metadata Document，服务端不支持时再动态注册。只有服务端要求事先注册应用时才填；填了即为每个 User 各自连接，请求头里不能有 Authorization。",
   "mcp_oauth_callback": "回调地址（注册应用时填这个）",
