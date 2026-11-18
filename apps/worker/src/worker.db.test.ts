@@ -55,8 +55,14 @@ mock.module(
 const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
 const { asc, eq, sql } = await import("drizzle-orm");
-const { limits, linearInstallation, pushSubscription, usage, user } =
-	await import("@orqestra/db/schema");
+const {
+	limits,
+	linearInstallation,
+	linearSession,
+	pushSubscription,
+	usage,
+	user,
+} = await import("@orqestra/db/schema");
 const { encryptSecret } = await import("@orqestra/db/secret");
 const { createConversations, DEFAULT_LIMITS, MAX_SUBAGENTS_PER_USER_MESSAGE } =
 	await import("@orqestra/conversations");
@@ -65,6 +71,7 @@ const { createCapabilities } = await import("./capabilities.ts");
 const { store } = memoryStore();
 const config = createCapabilities(db, store);
 const { startAgentWorker } = await import("./worker.ts");
+const { handleLinearEvent } = await import("./linear.ts");
 const { otelTelemetry } = await import("./tracing.ts");
 const { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } =
 	await import("@opentelemetry/sdk-trace");
@@ -1333,6 +1340,62 @@ describe.skipIf(!url)(
 						content: { type: "response", body: "Picked up again." },
 					},
 				]);
+			});
+
+			it("closes the turn once when Linear stops a Run its start then could not queue: with the stop's confirmation, and no error after it", async () => {
+				// the queue's add waits on a lock the test holds, then fails, as when the queue's database goes away mid-add
+				const held = await db.$client.connect();
+				await held.query("select pg_advisory_lock(4242)");
+				await db.execute(
+					sql.raw(
+						"create function bullmq.add_fails() returns trigger language plpgsql as $$ begin perform pg_advisory_xact_lock(4242); raise exception 'queue down'; end $$",
+					),
+				);
+				await db.execute(
+					sql.raw(
+						"create trigger add_fails before insert on bullmq.job for each row when (new.queue = 'agent-runs') execute function bullmq.add_fails()",
+					),
+				);
+				try {
+					const sent = fromLinear("Fix the login button");
+					const [session] = await waitFor(
+						() => db.select().from(linearSession),
+						(s) => s.length > 0,
+					);
+					await handleLinearEvent(
+						{
+							id: "stop-1",
+							agentSessionId: "session-1",
+							action: "prompted",
+							from: null,
+							issue: null,
+							text: "Stop",
+							stop: true,
+						},
+						conversations,
+						{ fetch: fetchFake },
+					);
+					await held.query("select pg_advisory_unlock(4242)");
+					await expect(sent).rejects.toThrow("queue down");
+					await waitFor(
+						() => conversations.get(userId, session.conversationId),
+						(v) => v?.status === "failed",
+					);
+					expect(await posted(1)).toEqual([
+						{
+							agentSessionId: "session-1",
+							content: { type: "response", body: "Stopped." },
+						},
+					]);
+				} finally {
+					await held.query("select pg_advisory_unlock_all()");
+					held.release();
+					await db.execute(
+						sql.raw(
+							"drop trigger if exists add_fails on bullmq.job; drop function if exists bullmq.add_fails()",
+						),
+					);
+				}
 			});
 
 			it("posts a Run that found nothing to report as a response saying so, not what it said on its way", async () => {
