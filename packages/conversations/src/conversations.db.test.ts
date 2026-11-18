@@ -3251,6 +3251,162 @@ describe.skipIf(!url)(
 					release();
 				}
 			}, 15_000);
+
+			it("but not one that a worker's startup requeue queued meanwhile and a worker opened: it answers, and nothing is told", async () => {
+				let replying = false;
+				const { gate: going, release } = gate();
+				script({
+					parent: [
+						async () => {
+							replying = true;
+							await going;
+							return "answered";
+						},
+					],
+				});
+				vi.spyOn(queue, "add").mockImplementationOnce(async () => {
+					// a worker starting queues the Run its start saved, and a worker opens it, before the start's own add fails
+					await conversations.requeue();
+					await waitFor(async () => replying, Boolean);
+					throw new Error("queue down");
+				});
+				try {
+					const id = await send("a");
+					expect((await get(id))?.status).toBe("running");
+					release();
+					const view = await waitFor(() => get(id), idle(2));
+					expect(view?.messages.map((m) => m.message.role)).toEqual([
+						"user",
+						"assistant",
+					]);
+					await new Promise((r) => setTimeout(r, 300));
+					expect(told).toEqual([]);
+				} finally {
+					release();
+				}
+			});
+
+			it("and one that a worker's startup requeue queued meanwhile, which a worker took but had not opened: that job runs nothing", async () => {
+				script({ parent: [say("answered")] });
+				const transaction = db.transaction.bind(db);
+				let armed = false;
+				let held = false;
+				const { gate: opening, release } = gate();
+				// the worker's open, past execute's check, waits while the start's add fails
+				vi.spyOn(db, "transaction").mockImplementation((async (
+					...args: Parameters<typeof transaction>
+				) => {
+					if (armed) {
+						armed = false;
+						held = true;
+						await opening;
+					}
+					return transaction(...args);
+				}) as typeof transaction);
+				vi.spyOn(queue, "add").mockImplementationOnce(async () => {
+					armed = true;
+					await conversations.requeue();
+					await waitFor(async () => held, Boolean);
+					throw new Error("queue down");
+				});
+				try {
+					await expect(send("a")).rejects.toThrow("queue down");
+					release();
+					const [{ id, jobId }] = await db
+						.select({
+							id: schema.conversation.id,
+							jobId: schema.conversation.jobId,
+						})
+						.from(schema.conversation);
+					await waitFor(
+						async () => !(await queue.getJob(jobId as string)),
+						Boolean,
+					);
+					const view = await get(id);
+					expect(view?.status).toBe("failed");
+					expect(view?.messages.map((m) => m.message.role)).toEqual(["user"]);
+					expect(told).toEqual([id]);
+				} finally {
+					release();
+				}
+			});
+
+			it("and tells onFailed once when the job a worker's startup requeue queued meanwhile failed before opening it", async () => {
+				const transaction = db.transaction.bind(db);
+				let armed = false;
+				// the worker's open, past execute's check, cannot reach the database, and its job fails
+				vi.spyOn(db, "transaction").mockImplementation((async (
+					...args: Parameters<typeof transaction>
+				) => {
+					if (armed) {
+						armed = false;
+						throw new Error("connection lost");
+					}
+					return transaction(...args);
+				}) as typeof transaction);
+				vi.spyOn(queue, "add").mockImplementationOnce(async (_name, data) => {
+					armed = true;
+					await conversations.requeue();
+					await waitFor(
+						() => get(data.conversationId),
+						(v) => v?.status === "failed",
+					);
+					throw new Error("queue down");
+				});
+				await failedOnce(await send("a"));
+			});
+
+			it("and throws the queue's error though onFailed throws too", async () => {
+				await stopWorker();
+				stopWorker = await serve({
+					onFailed: async (id: string) => {
+						told.push(id);
+						throw new Error("Linear down");
+					},
+				});
+				addFails();
+				await expect(send("a")).rejects.toThrow("queue down");
+				const [{ id }] = await db
+					.select({ id: schema.conversation.id })
+					.from(schema.conversation);
+				await failedOnce(id);
+			});
+
+			it("and tells onFailed though its Alert cannot be sent", async () => {
+				vi.spyOn(queue, "add").mockImplementationOnce(() => {
+					// the next query outside a transaction is the Alert's
+					vi.spyOn(db, "select").mockImplementationOnce(() => {
+						throw new Error("push down");
+					});
+					return Promise.reject(new Error("queue down"));
+				});
+				await expect(send("a")).rejects.toThrow("queue down");
+				const [{ id }] = await db
+					.select({ id: schema.conversation.id })
+					.from(schema.conversation);
+				await failedOnce(id);
+			});
+
+			it("and tells the onFailed of the worker still serving, though another stopped serving since it started", async () => {
+				const before = stopWorker;
+				const told2: string[] = [];
+				stopWorker = await serve({
+					onFailed: async (id: string) => {
+						told2.push(id);
+					},
+				});
+				await before();
+				addFails();
+				await expect(send("a")).rejects.toThrow("queue down");
+				const [{ id }] = await db
+					.select({ id: schema.conversation.id })
+					.from(schema.conversation);
+				await waitFor(
+					() => get(id),
+					(v) => v?.status === "failed",
+				);
+				expect(told2).toEqual([id]);
+			});
 		});
 
 		it("has the parent answer a Subagent's Notification though the Subagent's job failed after settling it, before waking the parent", async () => {
