@@ -4,16 +4,14 @@ import {
 	resolveTurn,
 	turnSkills,
 } from "@orqestra/agents";
-import { db, type Tx } from "@orqestra/db";
+import { db } from "@orqestra/db";
 import {
 	attachment,
 	backgroundCall,
-	compaction,
 	conversation,
 	inbox,
 	message,
 	subagent,
-	timer,
 } from "@orqestra/db/schema";
 import {
 	type ConnectionStore,
@@ -135,10 +133,58 @@ export { listUsers, rememberUser, setSpendingLimit } from "./users.ts";
 // The only module that reads and writes Conversations, their Inbox, messages, Subagents and compactions.
 // The User's side takes the signed-in user's id everywhere: nobody else, Admins included, can see a Conversation.
 
-const owned = (userId: string, id: string, q: Pick<Tx, "query"> = db) =>
-	q.query.conversation.findFirst({
+const owned = (userId: string, id: string) =>
+	db.query.conversation.findFirst({
 		where: and(eq(conversation.id, id), eq(conversation.userId, userId)),
 	});
+
+/** A message or inbox input as a Conversation's view shows it. */
+type Shown = Pick<
+	typeof message.$inferSelect,
+	| "id"
+	| "message"
+	| "model"
+	| "thinkingLevel"
+	| "subagentId"
+	| "backgroundCallId"
+	| "origin"
+> & { queued: boolean };
+
+/** The row `get` reads, its lists as JSON arrays. */
+type Read = Pick<
+	typeof conversation.$inferSelect,
+	| "id"
+	| "agentId"
+	| "title"
+	| "status"
+	| "failure"
+	| "incognito"
+	| "unread"
+	| "awaitingReply"
+> & {
+	messages: Shown[];
+	pending: Shown[];
+	compactedBefore: number[];
+	subagents: (Pick<
+		typeof subagent.$inferSelect,
+		"toolCallId" | "number" | "brief" | "outcome"
+	> & {
+		id: string;
+		parentId: string;
+		depth: number;
+		template: string | null;
+	})[];
+	timer: { note: string; ringsAt: string } | null;
+	calls: Pick<
+		typeof backgroundCall.$inferSelect,
+		| "id"
+		| "conversationId"
+		| "toolCallId"
+		| "mcpServerId"
+		| "toolName"
+		| "status"
+	>[];
+};
 
 /** The parent's Subagent with this Conversation id, when the parent is the user's. */
 const ownedSubagent = async (userId: string, id: string) => {
@@ -304,99 +350,39 @@ export function createConversations({
 				.orderBy(desc(conversation.updatedAt)),
 
 		async get(userId: string, id: string) {
-			// one snapshot, so a write across tables shows whole or not at all: a Background Call's end and its Notification, a drain
-			const read = await db.transaction(
-				async (tx) => {
-					const conv = await owned(userId, id, tx);
-					if (!conv) return undefined;
-					const messages = await tx
-						.select({
-							id: message.id,
-							message: message.message,
-							model: message.model,
-							thinkingLevel: message.thinkingLevel,
-							subagentId: message.subagentId,
-							backgroundCallId: message.backgroundCallId,
-							origin: message.origin,
-							queued: sql<boolean>`false`,
-						})
-						.from(message)
-						.where(eq(message.conversationId, id))
-						.orderBy(asc(message.id));
-					// inputs the Run has yet to deliver show after what it has
-					const pending = await tx
-						.select({
-							id: inbox.id,
-							message: inbox.message,
-							model: inbox.model,
-							thinkingLevel: inbox.thinkingLevel,
-							subagentId: inbox.subagentId,
-							backgroundCallId: inbox.backgroundCallId,
-							origin: inbox.origin,
-							// its id is the inbox's, not a message's
-							queued: sql<boolean>`true`,
-						})
-						.from(inbox)
-						.where(eq(inbox.conversationId, id))
-						.orderBy(asc(inbox.id));
-					const compactions = await tx
-						.select({ firstKeptMessageId: compaction.firstKeptMessageId })
-						.from(compaction)
-						.where(eq(compaction.conversationId, id));
-					// the whole tree's, so its panels drill down to Subagents of Subagents
-					const subagents = await tx
-						.select({
-							id: subagent.conversationId,
-							parentId: sql<string>`${conversation.parentId}`,
-							depth: conversation.depth,
-							toolCallId: subagent.toolCallId,
-							number: subagent.number,
-							template: conversation.agentId,
-							brief: subagent.brief,
-							outcome: subagent.outcome,
-						})
-						.from(subagent)
-						.innerJoin(
-							conversation,
-							eq(conversation.id, subagent.conversationId),
-						)
-						.where(eq(conversation.rootId, id))
-						.orderBy(asc(conversation.depth), asc(subagent.number));
-					const set = await tx.query.timer.findFirst({
-						where: eq(timer.conversationId, id),
-					});
-					// the whole tree's, each shown at the Tool call that made it
-					const calls = await tx
-						.select({
-							id: backgroundCall.id,
-							conversationId: backgroundCall.conversationId,
-							toolCallId: backgroundCall.toolCallId,
-							mcpServerId: backgroundCall.mcpServerId,
-							toolName: backgroundCall.toolName,
-							status: backgroundCall.status,
-						})
-						.from(backgroundCall)
-						.innerJoin(
-							conversation,
-							eq(conversation.id, backgroundCall.conversationId),
-						)
-						.where(eq(conversation.rootId, id))
-						.orderBy(asc(backgroundCall.startedAt));
-					return {
-						conv,
-						messages,
-						pending,
-						compactions,
-						subagents,
-						set,
-						calls,
-					};
-				},
-				{ isolationLevel: "repeatable read", accessMode: "read only" },
-			);
+			// one statement, so one snapshot: a write across tables shows whole or not at all, such as a Background Call's end and its Notification
+			const {
+				rows: [read],
+			} = await db.execute<Read>(sql`
+				select c.id, c.agent_id "agentId", c.title, c.status, c.failure, c.incognito, c.unread, c.awaiting_reply "awaitingReply",
+					(select coalesce(json_agg(json_build_object('id', m.id, 'message', m.message, 'model', m.model, 'thinkingLevel', m.thinking_level,
+						'subagentId', m.subagent_id, 'backgroundCallId', m.background_call_id, 'origin', m.origin, 'queued', false) order by m.id), '[]')
+						from message m where m.conversation_id = c.id) messages,
+					-- inputs the Run has yet to deliver show after what it has, with the inbox's ids, not a message's
+					(select coalesce(json_agg(json_build_object('id', i.id, 'message', i.message, 'model', i.model, 'thinkingLevel', i.thinking_level,
+						'subagentId', i.subagent_id, 'backgroundCallId', i.background_call_id, 'origin', i.origin, 'queued', true) order by i.id), '[]')
+						from inbox i where i.conversation_id = c.id) pending,
+					(select coalesce(json_agg(k.first_kept_message_id), '[]') from compaction k where k.conversation_id = c.id) "compactedBefore",
+					-- the whole tree's, so its panels drill down to Subagents of Subagents
+					(select coalesce(json_agg(json_build_object('id', s.conversation_id, 'parentId', t.parent_id, 'depth', t.depth, 'toolCallId', s.tool_call_id,
+						'number', s.number, 'template', t.agent_id, 'brief', s.brief, 'outcome', s.outcome) order by t.depth, s.number), '[]')
+						from subagent s join conversation t on t.id = s.conversation_id where t.root_id = c.id) subagents,
+					(select json_build_object('note', note, 'ringsAt', rings_at) from timer where conversation_id = c.id) timer,
+					-- the whole tree's, each shown at the Tool call that made it
+					(select coalesce(json_agg(json_build_object('id', b.id, 'conversationId', b.conversation_id, 'toolCallId', b.tool_call_id,
+						'mcpServerId', b.mcp_server_id, 'toolName', b.tool_name, 'status', b.status) order by b.started_at), '[]')
+						from background_call b join conversation t on t.id = b.conversation_id where t.root_id = c.id) calls
+				from conversation c where c.id = ${id} and c.user_id = ${userId}`);
 			if (!read) return undefined;
-			const { conv, messages, pending, compactions, subagents, set, calls } =
-				read;
+			const {
+				messages,
+				pending,
+				compactedBefore,
+				subagents,
+				timer: set,
+				calls,
+				...conv
+			} = read;
 			const cfg = await config();
 			return {
 				id: conv.id,
@@ -414,10 +400,10 @@ export function createConversations({
 					...m,
 					message: m.message as Message,
 				})),
-				compactedBefore: compactions.map((c) => c.firstKeptMessageId),
+				compactedBefore,
 				subagents,
 				/** The Timer set to ring, if any: the Conversation stays idle until it does. */
-				timer: set ? { note: set.note, ringsAt: set.ringsAt } : null,
+				timer: set ? { note: set.note, ringsAt: new Date(set.ringsAt) } : null,
 				/** The tree's Background Calls, with the name of their MCP Server (its id once it is gone). */
 				backgroundCalls: calls.map((c) => ({
 					...c,
