@@ -177,8 +177,9 @@ export async function serveLinearEvents(
 }
 
 /**
- * Refreshes the app's tokens when due, now and `every` ms after, so a workspace with no Agent Session for 30 days keeps its installation;
- * a refusal marks it as needing a reinstall. One schedule however many workers run it, until the returned worker is closed.
+ * Refreshes the app's tokens when due, checking every `every` ms, so a workspace with no Agent Session for 30 days keeps its installation;
+ * a refusal marks it as needing a reinstall. One schedule however many workers run it, kept in the queue: the first check is when it is
+ * first made, and a worker starting again keeps its cadence. Until the returned worker is closed.
  */
 export async function serveLinearTokenRefresh({
 	every = TOKEN_CHECK_EVERY_MS,
