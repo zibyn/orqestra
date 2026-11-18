@@ -1,16 +1,12 @@
 import {
 	type ConversationCapabilities,
 	createConversations,
+	handleSessionEvent,
+	reportingToSessions,
+	reportSessionFailure,
 } from "@orqestra/conversations";
-import {
-	serveLinearEvents,
-	serveLinearTokenRefresh,
-} from "@orqestra/linear/events";
-import {
-	handleLinearEvent,
-	reportFailureToLinear,
-	reportingToLinear,
-} from "./linear.ts";
+import { serveEvents, serveTokenRefresh } from "@orqestra/integrations";
+import { linear } from "@orqestra/integrations/linear";
 import { type RuntimeDeps, runAgent, titlesSettled } from "./runtime/index.ts";
 import { openToolbox } from "./runtime/toolbox.ts";
 
@@ -51,7 +47,7 @@ export async function startAgentWorker(
 	});
 	// Linear's requests go through `fetch` too: tests route each host to its fake
 	const stopRuns = await conversations.serveRuns(
-		reportingToLinear(
+		reportingToSessions(
 			(run, config) =>
 				runAgent(run, {
 					config,
@@ -64,17 +60,17 @@ export async function startAgentWorker(
 		{
 			...options,
 			onFailed: (id, error, jobId) =>
-				reportFailureToLinear(id, error, jobId, { fetch }),
+				reportSessionFailure(id, error, jobId, { fetch }),
 		},
 	);
-	const linear = await serveLinearEvents((event) =>
-		handleLinearEvent(event, conversations, { fetch }),
+	const events = await serveEvents(linear, (event) =>
+		handleSessionEvent(linear, event, conversations, { fetch }),
 	);
-	const tokens = await serveLinearTokenRefresh({ fetch });
+	const tokens = await serveTokenRefresh(linear, { fetch });
 	// a Run's title outlives it: closing waits for those under way, so none is cut off with its Usage unrecorded
 	return async () => {
 		await tokens.close();
-		await linear.close();
+		await events.close();
 		await stopRuns();
 		await titlesSettled();
 	};

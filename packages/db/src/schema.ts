@@ -786,50 +786,54 @@ export const usage = pgTable(
 	(table) => [index().on(table.userId, table.createdAt)],
 );
 
-// Orqestra's Linear app, installed by an Admin in /console/linear into one Linear workspace, acting as itself (actor=app); at most one row, id 1
-export const linearInstallation = pgTable(
-	"linear_installation",
-	{
-		id: integer("id").primaryKey().default(1),
-		// the Linear OAuth app's
-		clientId: text("client_id").notNull(),
-		// these two encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
-		clientSecret: text("client_secret").notNull(),
-		webhookSecret: text("webhook_secret").notNull(),
-		// access token, refresh token and expiry as one JSON, encrypted with ORQESTRA_ENCRYPTION_KEY; null until the app is installed
-		tokens: text("tokens"),
-		// the Linear workspace's name; null until the app is installed
-		workspace: text("workspace"),
-		// Linear refused the last refresh of the tokens, so the app must be installed again; cleared by any grant that succeeds
-		needsReinstall: boolean("needs_reinstall").default(false).notNull(),
-		// the Agent of a Conversation Linear opens; null: none picked
-		defaultAgentId: text("default_agent_id").references(() => agent.id, {
-			onDelete: "set null",
-		}),
-		// a Linear team's key to the repository its issues are worked in, "owner/repo"
-		teamRepos: jsonb("team_repos")
-			.$type<Record<string, string>>()
-			.default({})
-			.notNull(),
-		// the authorization an Admin started, sent as its `state`, and when; its callback takes it, so it is used once
-		pendingState: text("pending_state"),
-		pendingAt: timestamp("pending_at", { withTimezone: true }),
-		createdAt: timestamp("created_at").defaultNow().notNull(),
-		updatedAt: timestamp("updated_at")
-			.defaultNow()
-			.$onUpdate(() => new Date())
-			.notNull(),
-	},
-	(table) => [check("linear_installation_single_row", sql`${table.id} = 1`)],
-);
+/** The kinds of Integration (ADR 0018): each has its adapter in @orqestra/integrations. */
+export type IntegrationKind = "linear";
 
-// The Conversation a Linear Agent Session opened (ADR 0015): the session's later prompts go to it; gone with it
-export const linearSession = pgTable("linear_session", {
-	agentSessionId: text("agent_session_id").primaryKey(),
-	conversationId: uuid("conversation_id")
-		.notNull()
-		.unique()
-		.references(() => conversation.id, { onDelete: "cascade" }),
-	/** The job whose Run's turn was last closed in the session: by its reply, its failure or the stop Linear asked for, whichever came first. */
-	closedJobId: text("closed_job_id"),
+// Orqestra's app installed by an Admin in /console/<kind> into one workspace of an outside tool (an Integration), acting as itself (actor=app); one per kind
+export const integrationInstallation = pgTable("integration_installation", {
+	kind: text("kind").$type<IntegrationKind>().primaryKey(),
+	// the OAuth app's
+	clientId: text("client_id").notNull(),
+	// these two encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
+	clientSecret: text("client_secret").notNull(),
+	webhookSecret: text("webhook_secret").notNull(),
+	// access token, refresh token and expiry as one JSON, encrypted with ORQESTRA_ENCRYPTION_KEY; null until the app is installed
+	tokens: text("tokens"),
+	// the workspace's name; null until the app is installed
+	workspace: text("workspace"),
+	// the Integration refused the last refresh of the tokens, so the app must be installed again; cleared by any grant that succeeds
+	needsReinstall: boolean("needs_reinstall").default(false).notNull(),
+	// the Agent of a Conversation the app opens; null: none picked
+	defaultAgentId: text("default_agent_id").references(() => agent.id, {
+		onDelete: "set null",
+	}),
+	// a team's key to the repository its issues are worked in, "owner/repo"
+	teamRepos: jsonb("team_repos")
+		.$type<Record<string, string>>()
+		.default({})
+		.notNull(),
+	// the authorization an Admin started, sent as its `state`, and when; its callback takes it, so it is used once
+	pendingState: text("pending_state"),
+	pendingAt: timestamp("pending_at", { withTimezone: true }),
+	createdAt: timestamp("created_at").defaultNow().notNull(),
+	updatedAt: timestamp("updated_at")
+		.defaultNow()
+		.$onUpdate(() => new Date())
+		.notNull(),
 });
+
+// The Conversation an Integration Session (a Linear Agent Session) opened (ADR 0018): the session's later prompts go to it; gone with it
+export const integrationSession = pgTable(
+	"integration_session",
+	{
+		kind: text("kind").$type<IntegrationKind>().notNull(),
+		sessionId: text("session_id").notNull(),
+		conversationId: uuid("conversation_id")
+			.notNull()
+			.unique()
+			.references(() => conversation.id, { onDelete: "cascade" }),
+		/** The job whose Run's turn was last closed in the session: by its reply, its failure or the stop the Integration asked for, whichever came first. */
+		closedJobId: text("closed_job_id"),
+	},
+	(table) => [primaryKey({ columns: [table.kind, table.sessionId] })],
+);

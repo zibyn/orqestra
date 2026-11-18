@@ -1,20 +1,21 @@
 import {
+	callbackUrl,
+	conversationsInput,
 	type Fetch,
 	finishInstallation,
-	linearCallbackUrl,
-	linearConversationsInput,
-	linearInstallationInput,
-	linearInstallationStatus,
-	linearWebhookUrl,
-	saveLinearConversations,
+	installationInput,
+	installationStatus,
+	saveConversations,
 	startInstallation,
-} from "@orqestra/linear";
+	webhookUrl,
+} from "@orqestra/integrations";
+import { linear } from "@orqestra/integrations/linear";
 import { Elysia } from "elysia";
 import { adminOnly } from "./admin.ts";
 import type { SignedIn } from "./app.ts";
 import { saved } from "./saved.ts";
 
-// Orqestra's Linear app, installed by an Admin in /console/linear. Its secrets and tokens only go in.
+// Orqestra's Linear app, an Integration Installation an Admin installs in /console/linear. Its secrets and tokens only go in.
 export const linearRoutes = (
 	signedIn: SignedIn,
 	{ orqestraUrl, fetch }: { orqestraUrl: string; fetch?: Fetch },
@@ -23,25 +24,27 @@ export const linearRoutes = (
 		.use(signedIn)
 		.derive(adminOnly)
 		.get("/", async () => ({
-			installation: await linearInstallationStatus(),
-			callbackUrl: linearCallbackUrl(orqestraUrl),
-			webhookUrl: linearWebhookUrl(orqestraUrl),
+			installation: await installationStatus(linear),
+			callbackUrl: callbackUrl(linear, orqestraUrl),
+			webhookUrl: webhookUrl(linear, orqestraUrl),
 		}))
 		// the Agent and repositories of the Conversations Linear opens
 		.put(
 			"/conversations",
-			async ({ body }) => saved(await saveLinearConversations(body)),
-			{ body: linearConversationsInput },
+			async ({ body }) => saved(await saveConversations(linear, body)),
+			{ body: conversationsInput },
 		)
 		// once the credentials are saved, the Linear URL to send the Admin to
 		.post(
 			"/",
-			async ({ body }) => saved(await startInstallation(body, orqestraUrl)),
-			{ body: linearInstallationInput },
+			async ({ body }) =>
+				saved(await startInstallation(linear, body, orqestraUrl)),
+			{ body: installationInput },
 		)
 		// Linear sends the Admin back here, then on to the console page
 		.get("/callback", async ({ request, redirect }) => {
 			const error = await finishInstallation(
+				linear,
 				new URL(request.url).searchParams,
 				{
 					orqestraUrl,

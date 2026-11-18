@@ -9,7 +9,6 @@ const LAYERS = {
 	"@orqestra/db": 0,
 	// the outside systems' clients, below every capability that uses them (ADR 0018)
 	"@orqestra/integrations": 1,
-	"@orqestra/linear": 2,
 	"@orqestra/mcp": 2,
 	"@orqestra/memory": 2,
 	"@orqestra/models": 2,

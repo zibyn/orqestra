@@ -1,39 +1,39 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/agents";
-import {
-	createConversations,
-	type RunHandle,
-	type Snapshots,
-	SpendingLimitReached,
-} from "@orqestra/conversations";
-import { db } from "@orqestra/db";
-import {
-	agent as agentRow,
-	conversation,
-	inbox,
-	linearInstallation,
-	linearSession,
-	user,
-} from "@orqestra/db/schema";
-import { encryptSecret } from "@orqestra/db/secret";
-import { memoryStore } from "@orqestra/db/store";
-import { linearWebhookEvent } from "@orqestra/linear/events";
 import {
 	agentSessionEvent,
 	fakeLinear,
 	signed,
-} from "@orqestra/linear/testing";
-import { eq, sql } from "drizzle-orm";
-import {
-	handleLinearEvent,
-	reportFailureToLinear,
-	reportingToLinear,
-} from "./linear.ts";
+} from "@orqestra/integrations/testing";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import type { RunHandle, Snapshots } from "./index.ts";
 
-// Linear Agent Session events becoming Conversations, against a migrated, throwaway Postgres (TEST_DATABASE_URL, wiped before every
-// test) and the real @orqestra/conversations; Linear is a fake behind the injected fetch. No worker runs, so Runs stay queued.
 const url = process.env.TEST_DATABASE_URL;
+if (url) process.env.DATABASE_URL = url;
+const { db } = await import("@orqestra/db");
+const {
+	agent: agentRow,
+	conversation,
+	inbox,
+	integrationInstallation,
+	integrationSession,
+	user,
+} = await import("@orqestra/db/schema");
+const { encryptSecret } = await import("@orqestra/db/secret");
+const { memoryStore } = await import("@orqestra/db/store");
+const { webhookEvent } = await import("@orqestra/integrations");
+const { linear: source } = await import("@orqestra/integrations/linear");
+const { eq, sql } = await import("drizzle-orm");
+const {
+	createConversations,
+	handleSessionEvent,
+	reportingToSessions,
+	reportSessionFailure,
+	SpendingLimitReached,
+} = await import("./index.ts");
+
+// Linear Agent Sessions (Integration Sessions) becoming Conversations, against a migrated, throwaway Postgres (TEST_DATABASE_URL, wiped before every
+// test) and the real @orqestra/conversations; Linear is a fake behind the injected fetch. No worker runs, so Runs stay queued.
 
 const agent = (id: string): AgentDefinition => ({
 	id,
@@ -70,9 +70,15 @@ let linear = fakeLinear();
 /** Delivers an event as Linear's webhook would, through its signature check. */
 async function deliver(payload: ReturnType<typeof agentSessionEvent>) {
 	const { body, signature } = signed(payload, secret);
-	const event = await linearWebhookEvent(body, signature);
+	const event = await webhookEvent(
+		source,
+		body,
+		new Headers({ "linear-signature": signature }),
+	);
 	if (!event) throw new Error("not an event Orqestra acts on");
-	await handleLinearEvent(event, conversations, { fetch: linear.fetch });
+	await handleSessionEvent(source, event, conversations, {
+		fetch: linear.fetch,
+	});
 }
 
 const conversationsOf = (userId: string) =>
@@ -92,14 +98,15 @@ const inputsOf = async (conversationId: string) =>
 describe.skipIf(!url)("Linear Agent Session events", () => {
 	const reset = async () => {
 		await db.execute(
-			sql`truncate conversation, linear_installation, "user" cascade`,
+			sql`truncate conversation, integration_installation, "user" cascade`,
 		);
 		await db.delete(agentRow).where(eq(agentRow.id, "coder"));
 		linear = fakeLinear();
 	};
 	beforeEach(async () => {
 		await reset();
-		await db.insert(linearInstallation).values({
+		await db.insert(integrationInstallation).values({
+			kind: "linear",
 			clientId: "lin-client",
 			clientSecret: encryptSecret(linear.clientSecret),
 			webhookSecret: encryptSecret(secret),
@@ -136,12 +143,15 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		expect(
 			await db
 				.select({
-					agentSessionId: linearSession.agentSessionId,
-					conversationId: linearSession.conversationId,
+					kind: integrationSession.kind,
+					sessionId: integrationSession.sessionId,
+					conversationId: integrationSession.conversationId,
 				})
-				.from(linearSession)
-				.where(eq(linearSession.conversationId, opened.id)),
-		).toEqual([{ agentSessionId: "session-1", conversationId: opened.id }]);
+				.from(integrationSession)
+				.where(eq(integrationSession.conversationId, opened.id)),
+		).toEqual([
+			{ kind: "linear", sessionId: "session-1", conversationId: opened.id },
+		]);
 		expect(await inputsOf(opened.id)).toEqual([
 			{
 				text: "Linear issue ENG-7: Fix the login button\nhttps://linear.app/acme/issue/ENG-7\n\nRepository: acme/web\n\nIt does nothing on Safari.",
@@ -161,7 +171,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		await deliver(agentSessionEvent({ email: "stranger@example.com" }));
 
 		expect(await db.select().from(conversation)).toEqual([]);
-		expect(await db.select().from(linearSession)).toEqual([]);
+		expect(await db.select().from(integrationSession)).toEqual([]);
 		expect(linear.activities).toEqual([
 			{
 				agentSessionId: "session-1",
@@ -176,7 +186,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 	it("opens it with the installation's default Agent", async () => {
 		// the Agent's row, which the installation refers to; the snapshot has its definition
 		await db.insert(agentRow).values({ id: "coder", definition: coder });
-		await db.update(linearInstallation).set({ defaultAgentId: "coder" });
+		await db.update(integrationInstallation).set({ defaultAgentId: "coder" });
 		await deliver(agentSessionEvent());
 		expect((await conversationsOf("u1"))[0].agentId).toBe("coder");
 	});
@@ -213,9 +223,11 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		await deliver(agentSessionEvent({ prompt: "Signed in now." }));
 
 		const [opened] = await conversationsOf("u1");
-		expect((await inputsOf(opened.id))[0].text).toEndWith(
-			"It does nothing on Safari.\n\nSigned in now.",
-		);
+		expect(
+			(await inputsOf(opened.id))[0].text.endsWith(
+				"It does nothing on Safari.\n\nSigned in now.",
+			),
+		).toBe(true);
 		expect(linear.activities.map((a) => a.content.type)).toEqual([
 			"error",
 			"thought",
@@ -263,10 +275,11 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 	});
 
 	it("tells a session no person started to sign in first, opening nothing", async () => {
-		await handleLinearEvent(
+		await handleSessionEvent(
+			source,
 			{
 				id: "created-session-1",
-				agentSessionId: "session-1",
+				sessionId: "session-1",
 				action: "created",
 				from: null,
 				issue: null,
@@ -291,7 +304,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 	it("tells the session why Orqestra refused to open its Conversation, and opens none", async () => {
 		// an Agent the installation picked that no Run can use
 		await db.insert(agentRow).values({ id: "coder", definition: coder });
-		await db.update(linearInstallation).set({ defaultAgentId: "coder" });
+		await db.update(integrationInstallation).set({ defaultAgentId: "coder" });
 		const offline = createConversations({
 			capabilities: {
 				current: async () =>
@@ -309,9 +322,13 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 			store: memoryStore().store,
 		});
 		const { body, signature } = signed(agentSessionEvent(), secret);
-		const event = await linearWebhookEvent(body, signature);
+		const event = await webhookEvent(
+			source,
+			body,
+			new Headers({ "linear-signature": signature }),
+		);
 		if (!event) throw new Error("not an event Orqestra acts on");
-		await handleLinearEvent(event, offline, { fetch: linear.fetch });
+		await handleSessionEvent(source, event, offline, { fetch: linear.fetch });
 
 		expect(await db.select().from(conversation)).toEqual([]);
 		expect(linear.activities).toEqual([
@@ -351,7 +368,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 			return { id: conv.id, jobId: conv.jobId };
 		};
 		const replied = (conversationId: string, jobId: string, text: string) =>
-			reportingToLinear(
+			reportingToSessions(
 				async (run) => {
 					await run.save(fauxAssistantMessage(text));
 					await run.finish();
@@ -381,14 +398,14 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 
 		it("posts a failure once per Run, saying so when the Spending Limit refused it, and nothing after its reply", async () => {
 			const { id, jobId } = await opened();
-			await reportFailureToLinear(id, new SpendingLimitReached(), jobId, {
+			await reportSessionFailure(id, new SpendingLimitReached(), jobId, {
 				fetch: linear.fetch,
 			});
-			await reportFailureToLinear(id, new Error("again"), jobId, {
+			await reportSessionFailure(id, new Error("again"), jobId, {
 				fetch: linear.fetch,
 			});
 			await replied(id, "job-2", "Done.");
-			await reportFailureToLinear(id, new Error("late"), "job-2", {
+			await reportSessionFailure(id, new Error("late"), "job-2", {
 				fetch: linear.fetch,
 			});
 
@@ -404,7 +421,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		it("posts nothing for a Run of a Conversation of no session", async () => {
 			const id = await conversations.send("u1", { text: "Hi" });
 			await replied(id, "job-x", "Hello.");
-			await reportFailureToLinear(id, new Error("down"), "job-y", {
+			await reportSessionFailure(id, new Error("down"), "job-y", {
 				fetch: linear.fetch,
 			});
 			expect(linear.activities).toEqual([]);
@@ -423,7 +440,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		} as unknown as RunHandle;
 		// cut at either parity, so one of them between the halves of a surrogate pair
 		for (const long of ["😀".repeat(130_000), `x${"😀".repeat(130_000)}`]) {
-			await reportingToLinear(
+			await reportingToSessions(
 				async (run) => {
 					await run.save(fauxAssistantMessage(long));
 					await run.finish();
