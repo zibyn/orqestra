@@ -346,6 +346,7 @@ export async function ensureRun(conversationId: string) {
 					result: `[The subagent could not be started: ${(error as Error).message}]`,
 				},
 				started.jobId,
+				true,
 			);
 	}
 	return true;
@@ -777,20 +778,21 @@ export async function endRun(
 /**
  * Ends a Subagent's Run that did not drain to the end (stopped, failed, crashed or never queued); see `settle`.
  * A failure leaves its Background Calls running: it waits for them idle, as one whose Run finished does, and settles on a later Run's end.
- * `unopened`, the job of a Run its start could not queue, ends it only while no job opened it, as `failUnqueued`.
+ * With `job`, it ends the Run only while that is still the job's (see `runOf`); `unopened`, a Run its start could not queue, only while no job opened it either, as `failUnqueued`.
  */
 export async function endSubagent(
 	conversationId: string,
 	ended: Ended,
-	unopened?: string,
+	job?: string,
+	unopened = false,
 ) {
 	const parentId = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
-		if (unopened !== undefined) {
+		if (job !== undefined) {
 			const [own] = await tx
 				.select({ id: conversation.id })
 				.from(conversation)
-				.where(and(eq(conversation.id, conversationId), runOf(unopened, true)));
+				.where(and(eq(conversation.id, conversationId), runOf(job, unopened)));
 			if (!own) return undefined;
 		}
 		if (
