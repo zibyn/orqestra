@@ -167,10 +167,16 @@ export async function serveLinearEvents(
 	return worker;
 }
 
-/** Posts an activity into an Agent Session as the app: a thought, which Linear shows as the agent at work, or an error. */
+/**
+ * Posts an activity into an Agent Session as the app, its body Markdown: a thought, which Linear shows as the agent at work; a response,
+ * which completes the turn; an elicitation, which waits for the person's answer; or an error.
+ */
 export async function postAgentActivity(
 	agentSessionId: string,
-	content: { type: "thought" | "error"; body: string },
+	content: {
+		type: "thought" | "response" | "elicitation" | "error";
+		body: string;
+	},
 	{ fetch }: { fetch?: Fetch } = {},
 ) {
 	const token = await linearAccessToken({ fetch });

@@ -3,7 +3,7 @@ import {
 	createConversations,
 } from "@orqestra/conversations";
 import { serveLinearEvents } from "@orqestra/linear/events";
-import { handleLinearEvent } from "./linear.ts";
+import { handleLinearEvent, reportingToLinear } from "./linear.ts";
 import { type RuntimeDeps, runAgent, titlesSettled } from "./runtime/index.ts";
 import { openToolbox } from "./runtime/toolbox.ts";
 
@@ -39,18 +39,22 @@ export async function startAgentWorker(
 		fetch,
 		connections,
 	});
+	// Linear's requests go through `fetch` too: tests route each host to its fake
 	const stopRuns = await conversations.serveRuns(
-		(run, config) =>
-			runAgent(run, {
-				config,
-				openToolbox: toolbox,
-				telemetry,
-				captureContent,
-			}),
+		reportingToLinear(
+			(run, config) =>
+				runAgent(run, {
+					config,
+					openToolbox: toolbox,
+					telemetry,
+					captureContent,
+				}),
+			{ fetch },
+		),
 		options,
 	);
 	const linear = await serveLinearEvents((event) =>
-		handleLinearEvent(event, conversations),
+		handleLinearEvent(event, conversations, { fetch }),
 	);
 	// a Run's title outlives it: closing waits for those under way, so none is cut off with its Usage unrecorded
 	return async () => {
