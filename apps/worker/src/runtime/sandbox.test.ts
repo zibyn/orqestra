@@ -128,7 +128,7 @@ describe("bash signed in to a Git Host", () => {
 			GIT_CONFIG_COUNT: "1",
 			GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
 			GIT_CONFIG_VALUE_0:
-				'!f(){ echo username=x-access-token; echo password="$GH_TOKEN"; }; f',
+				`!f(){ printf '%s\\n' username=x-access-token "password=$GH_TOKEN"; }; f`,
 		});
 		expect(request.stdin).toBeUndefined();
 		expect(bash.description).toContain("/connections");
@@ -137,8 +137,8 @@ describe("bash signed in to a Git Host", () => {
 	it("signs git in with the token as it is, read from the Secret's variable by the credential helper git runs", async () => {
 		const { o, m, bashOf, stdout, stored } = await gitHost();
 		const c = await stored();
-		// a token the helper's shell would split and glob, were its variable unquoted
-		if (c?.tokens) c.tokens.access_token = "ghu_a  b *";
+		// a token the helper's shell would split and glob were its variable unquoted, and echo would read the backslashes of
+		if (c?.tokens) c.tokens.access_token = "ghu_a  b *\\nc";
 
 		expect(
 			await stdout(
@@ -146,7 +146,7 @@ describe("bash signed in to a Git Host", () => {
 				"git credential fill <<< $'protocol=https\\nhost=github.com\\n'",
 			),
 		).toBe(
-			"protocol=https\nhost=github.com\nusername=x-access-token\npassword=ghu_a  b *\n",
+			"protocol=https\nhost=github.com\nusername=x-access-token\npassword=ghu_a  b *\\nc\n",
 		);
 		// the Exec's argv and env hold no token: the command reads it from GH_TOKEN, which orrery fills from the Secret
 		expect(JSON.stringify(o.execs)).not.toContain("ghu_a");
