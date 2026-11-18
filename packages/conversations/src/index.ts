@@ -58,6 +58,7 @@ import {
 	drain,
 	enqueue,
 	ensureRun,
+	failRun,
 	lockRoot,
 	newJobId,
 	requestStop,
@@ -66,7 +67,12 @@ import {
 	stopFiring,
 	stopSubagents,
 } from "./runs.ts";
-import { type RunHandler, type ServeOptions, serveRuns } from "./serve.ts";
+import {
+	type RunHandler,
+	requeue,
+	type ServeOptions,
+	serveRuns,
+} from "./serve.ts";
 import type { Snapshots } from "./snapshots.ts";
 import { SPENDING_LIMIT_USED_UP, spendingLimitStatus } from "./spending.ts";
 import { tasksOf } from "./tasks.ts";
@@ -291,6 +297,9 @@ export function createConversations({
 		/** Works on queued Runs in this process, each by `handler`, until the returned function is called. */
 		serveRuns: (handler: RunHandler, options?: ServeOptions) =>
 			serveRuns({ config, store, orrery, skillFiles, mcp }, handler, options),
+
+		/** Queues again the Runs a crash left without a job: the api does this as it starts, as `serveRuns` does. */
+		requeue,
 
 		/** Deletes the Attachments not sent with a message for a day before `now`; the worker does this every hour. */
 		sweepUnsentAttachments: (now?: Date) => sweepUnsentAttachments(store, now),
@@ -700,7 +709,11 @@ export function createConversations({
 				...dropped.keys,
 				...dropped.subagents.map((d) => `${conv.rootId}/${d.id}/`),
 			]);
-			await enqueue(id);
+			// no job of its would fail it
+			await enqueue(id).catch(async (error) => {
+				await failRun(id, error);
+				throw error;
+			});
 			return true;
 		},
 

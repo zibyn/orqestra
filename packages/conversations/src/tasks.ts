@@ -309,8 +309,10 @@ export async function fire(
 	if (started)
 		await ensureRun(started).catch(async (error) => {
 			console.error(`could not start the Run of Firing ${started}`, error);
+			// one that could not be queued has failed, with its Firing and its Alert
 			const paused = await firingFailed(started);
-			await alertRun(started, paused ? "auto_paused" : "failed");
+			if (paused !== undefined)
+				await alertRun(started, paused ? "auto_paused" : "failed");
 		});
 	// (b) and (d): it failed before opening a Conversation, or paused or finished on its own
 	if (task && alert)

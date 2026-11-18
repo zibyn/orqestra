@@ -32,6 +32,7 @@ import {
 import { alertRun } from "./alerts.ts";
 import type { TraceCarrier } from "./serve.ts";
 import { messageText } from "./shared.ts";
+import { SpendingLimitReached } from "./spending.ts";
 
 /** Locks the row of a Conversation's root, the top-level Conversation of its tree: every Run start and finish in the tree decides under it. */
 export const lockRoot = (tx: Tx, conversationId: string) =>
@@ -176,37 +177,53 @@ export const newJobId = () => randomUUID();
 /**
  * Queues the Run a Conversation's `running` status started, as the job its `jobId` names:
  * queueing it again (the worker's startup requeue racing the start) adds no second job.
- * Marks the Conversation failed when queueing fails.
+ * Marks nothing when it throws: the Run's start fails it (`ensureRun`, `retry`); one that has its job is that job's to end.
  */
 export async function enqueue(conversationId: string) {
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
 	if (!conv) return;
-	try {
-		await runQueue(conv.parentId ? SUBAGENT_RUNS_QUEUE : AGENT_RUNS_QUEUE).add(
-			"run",
-			{ conversationId },
-			{
-				jobId: conv.jobId ?? undefined,
-				removeOnComplete: true,
-				removeOnFail: 1000,
-			},
-		);
-	} catch (error) {
-		await db
-			.update(conversation)
-			.set({ status: "failed", failure: "error" })
-			.where(eq(conversation.id, conversationId));
-		throw error;
-	}
+	await runQueue(conv.parentId ? SUBAGENT_RUNS_QUEUE : AGENT_RUNS_QUEUE).add(
+		"run",
+		{ conversationId },
+		{
+			jobId: conv.jobId ?? undefined,
+			removeOnComplete: true,
+			removeOnFail: 1000,
+		},
+	);
+}
+
+/** The `onFailed` of the Runs this process serves, which `serveRuns` sets: a process that serves none tells nobody. */
+let onFailed:
+	| ((conversationId: string, error: Error) => Promise<void>)
+	| undefined;
+export const tellFailedRuns = (told: typeof onFailed) => {
+	onFailed = told;
+};
+
+/**
+ * Fails a top-level Run: marks it failed (and its Firing, see `endRun`), Alerts its User and tells `onFailed`.
+ * Every top-level Run that fails ends here: one whose job failed (serve.ts `failed`) and one that could not be queued.
+ */
+export async function failRun(conversationId: string, error: Error) {
+	const paused = await endRun(
+		conversationId,
+		"failed",
+		error instanceof SpendingLimitReached ? "spending_limit" : "error",
+	);
+	// one Alert: a failure that auto-paused the Firing's task says so
+	await alertRun(conversationId, paused ? "auto_paused" : "failed");
+	await onFailed?.(conversationId, error);
 }
 
 /**
  * Starts a Run for a Conversation that has none, a wake input in its inbox and room to run (a Subagent waits for a free slot);
  * decided under its root's lock, so inputs arriving together start one Run. True when it started one.
  * A top-level one that has nothing to wake it may be a Firing whose tree has just finished: that ends now (see `endIdleFiring`).
- * A Subagent whose Run cannot be queued fails, and its Notification tells the parent; a top-level Conversation's throws.
+ * A Run it started that cannot be queued fails, as one whose job failed does: a Subagent's Notification tells the parent;
+ * a top-level one is failed by `failRun`, and the error thrown.
  */
 export async function ensureRun(conversationId: string) {
 	let fired: Awaited<ReturnType<typeof endIdleFiring>>;
@@ -268,7 +285,11 @@ export async function ensureRun(conversationId: string) {
 	try {
 		await enqueue(conversationId);
 	} catch (error) {
-		if (!started.parentId) throw error;
+		// it has no job whose failure would end it
+		if (!started.parentId) {
+			await failRun(conversationId, error as Error);
+			throw error;
+		}
 		await endSubagent(conversationId, {
 			outcome: "failed",
 			result: `[The subagent could not be started: ${(error as Error).message}]`,
@@ -496,8 +517,11 @@ export async function waiting(tx: Tx, conversationId: string) {
 	return row?.outcome === "running";
 }
 
-/** After a Subagent's Run ended: the parent answers its Notification, and the tree's Subagents waiting for a slot get one. */
-async function wakeAfter(parentId: string) {
+/**
+ * After a Subagent's Run ended: the parent answers its Notification, and the tree's Subagents waiting for a slot get one.
+ * Again when its job then failed, as its worker may have died before this ran (serve.ts `failed`): what is running already starts nothing.
+ */
+export async function wakeAfter(parentId: string) {
 	const rootId = await rootOf(parentId);
 	if (!rootId) return;
 	await saved(rootId);
@@ -638,14 +662,17 @@ export async function stopFiring(conversationId: string) {
 	});
 }
 
-/** A Firing's Conversation whose Run could not even be queued: the Firing failed. True when that auto-paused its task. */
+/**
+ * A Firing's Conversation whose Run could not even start: the Firing failed. Whether that auto-paused its task;
+ * undefined when its Firing had ended, as a Run that could not be queued ends it (`failRun`).
+ */
 export async function firingFailed(conversationId: string) {
-	const paused = await db.transaction(async (tx) => {
+	const ended = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
 		return endFiring(tx, conversationId, "failed");
 	});
-	if (paused?.paused) await unschedule(paused.taskId);
-	return !!paused?.paused;
+	if (ended?.paused) await unschedule(ended.taskId);
+	return ended?.paused;
 }
 
 /**

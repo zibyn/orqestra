@@ -64,15 +64,18 @@ await config.current().catch((error) => {
 });
 
 const { session, auth } = polaris(env.data);
+const conversations = createConversations({
+	capabilities: config,
+	store,
+	connections: connectionStore,
+});
+// queues a Run whose start this api saved just before crashing, as a worker's start does
+await conversations.requeue();
 createApp({
 	session: rememberUsers(session),
 	auth,
 	orqestraUrl: env.data.ORQESTRA_URL,
 	config,
-	conversations: createConversations({
-		capabilities: config,
-		store,
-		connections: connectionStore,
-	}),
+	conversations,
 }).listen(3001);
 console.log("api listening on 3001");
