@@ -6,7 +6,11 @@ import {
 	serveLinearEvents,
 	serveLinearTokenRefresh,
 } from "@orqestra/linear/events";
-import { handleLinearEvent, reportingToLinear } from "./linear.ts";
+import {
+	handleLinearEvent,
+	reportFailureToLinear,
+	reportingToLinear,
+} from "./linear.ts";
 import { type RuntimeDeps, runAgent, titlesSettled } from "./runtime/index.ts";
 import { openToolbox } from "./runtime/toolbox.ts";
 
@@ -57,7 +61,10 @@ export async function startAgentWorker(
 				}),
 			{ fetch },
 		),
-		options,
+		{
+			...options,
+			onFailed: (id, error) => reportFailureToLinear(id, error, { fetch }),
+		},
 	);
 	const linear = await serveLinearEvents((event) =>
 		handleLinearEvent(event, conversations, { fetch }),

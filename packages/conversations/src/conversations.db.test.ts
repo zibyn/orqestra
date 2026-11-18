@@ -2997,6 +2997,38 @@ describe.skipIf(!url)(
 			expect(view?.messages.map((m) => m.message.role)).toEqual(["user"]);
 		});
 
+		it("tells onFailed of a Run it marks failed, and keeps a Run that ended before it threw as it ended", async () => {
+			await stopWorker();
+			const told: string[] = [];
+			stopWorker = await serve({
+				onFailed: async (id: string) => {
+					told.push(id);
+				},
+			});
+			try {
+				// its Tools failing to close after its end
+				override = async (run) => {
+					await run.finish();
+					throw new Error("could not close the Tools");
+				};
+				const ended = await send("a");
+				await waitFor(() => get(ended), idle(1));
+				override = undefined;
+				script({ parent: [fail] });
+				const failing = await send("b");
+				await waitFor(
+					() => get(failing),
+					(v) => v?.status === "failed",
+				);
+				await new Promise((r) => setTimeout(r, 300));
+				expect(told).toEqual([failing]);
+				expect((await get(ended))?.status).toBe("idle");
+			} finally {
+				await stopWorker();
+				stopWorker = await serve();
+			}
+		});
+
 		it("fails a run whose worker crashed, so it can be retried", async () => {
 			await stopWorker();
 			let picked = false;
