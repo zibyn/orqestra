@@ -138,7 +138,7 @@ async function gitCredentials(
 					[`GIT_CONFIG_KEY_${i}`, `credential.https://${h.host}.helper`],
 					[
 						`GIT_CONFIG_VALUE_${i}`,
-						`!f(){ echo username=${h.username}; echo password="$${h.tokenEnv}"; }; f`,
+						`!f(){ printf '%s\\n' username=${h.username} "password=$${h.tokenEnv}"; }; f`,
 					],
 				]),
 			),
