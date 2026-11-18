@@ -448,7 +448,7 @@
   "integrations": "Integrations",
   "linear": "Linear",
   "secret_required": "Enter this secret first.",
-  "linear_hint": "Install Orqestra in a Linear workspace as an agent, so issues can be assigned to it in Linear. A Linear workspace admin must authorize it.",
+  "linear_hint": "Install Orqestra in a Linear workspace as an agent, an Integration Installation, so issues can be assigned to it in Linear. A Linear workspace admin must authorize it.",
   "linear_connected": "Connected to {workspace}",
   "linear_needs_reinstall": "Linear no longer accepts Orqestra's access to {workspace}, so Agent Sessions there go unanswered. Reinstall to reconnect.",
   "linear_webhook_secret": "Webhook Secret",
