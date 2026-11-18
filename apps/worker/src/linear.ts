@@ -117,9 +117,10 @@ export async function handleLinearEvent(
 }
 
 /**
- * Replies to a Run with `reply`, then, for a Linear Agent Session's Conversation, posts how the Run ended into the session: a failure as an
- * error; else what it said last, as an elicitation when it ended asking the User a question, else as the response. A Run the User stopped
- * posts nothing (the stop request confirms it in Linear), nor one that said nothing.
+ * Replies to a Run with `reply`, then, for a Linear Agent Session's Conversation, posts how the Run ended into the session, once: a failure as an
+ * error, and so a Run cut off by the unattended time limit, with what it had written; else what it said last, as an elicitation when it ended
+ * asking the User a question, else as the response, which says there was nothing to report when it said nothing. A Run the User stopped posts
+ * nothing (the stop request confirms it in Linear).
  * shortcut: a Run that fails before `reply` (its Agent removed) or on a crashed worker posts no error; report from serve.ts's `failed` if that bites.
  */
 export const reportingToLinear =
@@ -138,6 +139,24 @@ export const reportingToLinear =
 				),
 			);
 		const replies: AssistantMessage[] = [];
+		const said = () =>
+			replies
+				.map((m) => messageText(m).trim())
+				.filter(Boolean)
+				.at(-1);
+		// as its last `finish` found it: a limit passing later, while the Run is titled, leaves it completed
+		let timedOut = false;
+		// Linear's response "indicates work has been completed", which a cut-off one has not
+		const cutOff = () =>
+			post({
+				type: "error",
+				body: [
+					"Partly done: this ran out of time and stopped before it finished. Reply here to carry on.",
+					said() && `What it had written when it stopped:\n\n${said()}`,
+				]
+					.filter(Boolean)
+					.join("\n\n"),
+			});
 		try {
 			await reply(
 				{
@@ -146,11 +165,16 @@ export const reportingToLinear =
 						await run.save(message);
 						if (message.role === "assistant") replies.push(message);
 					},
+					finish(outcome, options) {
+						timedOut = run.signal.reason instanceof RunTimedOut;
+						return run.finish(outcome, options);
+					},
 				},
 				config,
 			);
 		} catch (error) {
-			if (!run.signal.aborted)
+			if (run.signal.reason instanceof RunTimedOut) await cutOff();
+			else if (!run.signal.aborted)
 				await post({
 					type: "error",
 					body:
@@ -160,6 +184,7 @@ export const reportingToLinear =
 				});
 			throw error;
 		}
+		if (timedOut) return cutOff();
 		if (run.signal.aborted && !(run.signal.reason instanceof RunTimedOut))
 			return;
 		const last = replies.at(-1);
@@ -182,9 +207,19 @@ export const reportingToLinear =
 					.join("\n\n"),
 			});
 		}
-		const said = replies
-			.map((m) => messageText(m).trim())
-			.filter(Boolean)
-			.at(-1);
-		if (said) await post({ type: "response", body: said });
+		const quiet = last?.content.find(
+			(c) => c.type === "toolCall" && c.name === "nothing_to_report",
+		);
+		// it found nothing to report: that, not what it said on its way
+		if (last && quiet?.type === "toolCall") {
+			const { reason } = quiet.arguments as { reason?: string };
+			return post({
+				type: "response",
+				body:
+					messageText(last).trim() ||
+					(reason ? `Nothing to report: ${reason}` : "Nothing to report."),
+			});
+		}
+		// a response is what closes the turn, so one goes out however little was said
+		await post({ type: "response", body: said() ?? "Nothing to report." });
 	};

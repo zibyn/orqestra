@@ -1118,6 +1118,138 @@ describe.skipIf(!url)(
 				]);
 			});
 
+			it("posts a Run that found nothing to report as a response saying so, not what it said on its way", async () => {
+				script({
+					parent: [
+						fauxAssistantMessage([
+							fauxText("Let me look."),
+							fauxToolCall("bash", { command: "make report" }),
+						]),
+						fauxAssistantMessage(
+							fauxToolCall("nothing_to_report", {
+								reason: "The button already works.",
+							}),
+						),
+					],
+				});
+				await fromLinear("Fix the login button");
+				expect(await posted(1)).toEqual([
+					{
+						agentSessionId: "session-1",
+						content: {
+							type: "response",
+							body: "Nothing to report: The button already works.",
+						},
+					},
+				]);
+			});
+
+			it("posts a Run that said nothing as a response saying there was nothing to report", async () => {
+				script({
+					parent: [fauxAssistantMessage([fauxThinking("Nothing to add.")])],
+				});
+				await fromLinear("Fix the login button");
+				expect(await posted(1)).toEqual([
+					{
+						agentSessionId: "session-1",
+						content: { type: "response", body: "Nothing to report." },
+					},
+				]);
+			});
+
+			describe("out of time", () => {
+				// the shortest limit, a second, against replies faux takes seconds to stream
+				let was = DEFAULT_LIMITS;
+				beforeEach(async () => {
+					const loaded = await config.current();
+					was = loaded.limits;
+					loaded.limits = { ...was, unattendedMaxDuration: 1 };
+				});
+				afterEach(async () => {
+					(await config.current()).limits = was;
+				});
+				const cutOff =
+					"Partly done: this ran out of time and stopped before it finished. Reply here to carry on.";
+
+				it("posts a Run cut off while thinking as an error", async () => {
+					script({
+						parent: [
+							fauxAssistantMessage([
+								fauxThinking("hmm ".repeat(4000)),
+								fauxText("Done."),
+							]),
+						],
+					});
+					await fromLinear("Fix the login button");
+					expect(await posted(1)).toEqual([
+						{
+							agentSessionId: "session-1",
+							content: { type: "error", body: cutOff },
+						},
+					]);
+				});
+
+				it("posts a reply cut off as an error, with what it had written", async () => {
+					const full = "word ".repeat(4000).trim();
+					script({ parent: [fauxAssistantMessage(full)] });
+					await fromLinear("Fix the login button");
+					const [activity, ...more] = await posted(1);
+					expect(more).toEqual([]);
+					expect(activity.content.type).toBe("error");
+					const [head, written] = activity.content.body.split(
+						"\n\nWhat it had written when it stopped:\n\n",
+					);
+					expect(head).toBe(cutOff);
+					expect(full.startsWith(written)).toBe(true);
+					expect(written.length).toBeLessThan(full.length);
+				});
+
+				it("posts a Run out of time before its reply began as an error", async () => {
+					// its MCP Server still connecting when the limit passes
+					const real = newSlow();
+					slow = {
+						...real,
+						fetch: async (input, init) => {
+							await new Promise((r) => setTimeout(r, 1500));
+							return real.fetch(input, init);
+						},
+					};
+					try {
+						await conversations.send(userId, {
+							agentId: "mcp",
+							linearSessionId: "session-1",
+							text: "Fix the login button",
+							origin: "linear",
+						});
+						expect(await posted(1)).toEqual([
+							{
+								agentSessionId: "session-1",
+								content: { type: "error", body: cutOff },
+							},
+						]);
+					} finally {
+						slow = newSlow();
+					}
+				});
+
+				it("posts the reply of a Run that ended in time, though the limit passed while it was titled", async () => {
+					faux.setResponses([
+						fauxAssistantMessage("Done."),
+						async () => {
+							await new Promise((r) => setTimeout(r, 1500));
+							return fauxAssistantMessage("T");
+						},
+					]);
+					await fromLinear("Fix the login button");
+					expect(await posted(1)).toEqual([
+						{
+							agentSessionId: "session-1",
+							content: { type: "response", body: "Done." },
+						},
+					]);
+				});
+			});
+
 			it("posts nothing for a Conversation of no Agent Session", async () => {
 				script({ parent: [fauxAssistantMessage("Hello")] });
 				const id = await conversations.send(userId, {
