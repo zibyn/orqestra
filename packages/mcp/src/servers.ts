@@ -15,7 +15,7 @@ import {
 	connectedUsers,
 	revokeConnections,
 } from "./connections.ts";
-import type { McpServer } from "./index.ts";
+import type { GitHost, McpServer } from "./index.ts";
 import { type McpTestResult, probeMcpServer } from "./mcp.ts";
 import type { OrqestraReach } from "./oauth.ts";
 
@@ -45,6 +45,24 @@ export const mcpServerInput = z.object({
 			value: z.string().trim().optional(),
 		}),
 	),
+	// a Git Host; none: not one. Each part ends up in a shell helper or an Exec's environment, hence their character sets
+	git: z
+		.object({
+			host: z
+				.string()
+				.trim()
+				.regex(/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$/),
+			username: z
+				.string()
+				.trim()
+				.regex(/^[A-Za-z0-9._-]+$/),
+			// not one orrery reserves (LD_*, ORRERY_*, PATH, HOME) nor the git config Orqestra sets beside it
+			tokenEnv: z
+				.string()
+				.trim()
+				.regex(/^(?!(LD_|ORRERY_|GIT_CONFIG_)|(PATH|HOME)$)[A-Z_][A-Z0-9_]*$/),
+		})
+		.nullish(),
 });
 export const mcpServerEnabledInput = z.object({
 	id: mcpServerId,
@@ -86,6 +104,17 @@ export const storedClient = (
 			}
 		: undefined;
 
+/** The MCP Server's Git Host, when it is one. */
+const storedGitHost = (
+	row: Pick<
+		typeof mcpServer.$inferSelect,
+		"gitHost" | "gitUsername" | "tokenEnv"
+	>,
+): GitHost | null =>
+	row.gitHost && row.gitUsername && row.tokenEnv
+		? { host: row.gitHost, username: row.gitUsername, tokenEnv: row.tokenEnv }
+		: null;
+
 /** Every MCP Server as stored, decrypted; a header `value` is undefined when it cannot be decrypted. */
 export type McpServerSettings = {
 	id: string;
@@ -99,6 +128,7 @@ export type McpServerSettings = {
 		client_secret: string | undefined;
 	} | null;
 	headers: { name: string; value: string | undefined }[];
+	git?: GitHost | null;
 }[];
 
 /** Every MCP Server, decrypted with `key`. */
@@ -118,6 +148,7 @@ export const loadMcpServers = async (
 				name: h.name,
 				value: decryptSecret(h.value, key),
 			})),
+			git: storedGitHost(s),
 		}),
 	);
 
@@ -141,6 +172,7 @@ export function resolveMcpServers(settings: McpServerSettings): McpSnapshot {
 		auth,
 		oauthClient,
 		headers,
+		git,
 	} of settings) {
 		const plain = headers.flatMap((h) =>
 			h.value === undefined ? [] : [[h.name, h.value]],
@@ -153,6 +185,7 @@ export function resolveMcpServers(settings: McpServerSettings): McpSnapshot {
 			auth,
 			...(oauthClient && { oauthClient }),
 			headers: Object.fromEntries(plain),
+			...(git && { git }),
 		};
 		if (enabled) mcpServers[id] = allMcpServers[id];
 	}
@@ -216,6 +249,7 @@ export const mcpServerAdmin = ({
 				name: h.name,
 				readable: secretReadable(h.value),
 			})),
+			git: storedGitHost(r),
 			// the Admin sees who relies on it, but cannot disconnect them
 			...(r.auth === "oauth" && { connections: connected[r.id] ?? [] }),
 		}));
@@ -287,6 +321,9 @@ export const mcpServerAdmin = ({
 					)) ||
 				null,
 			headers,
+			gitHost: input.git?.host ?? null,
+			gitUsername: input.git?.username ?? null,
+			tokenEnv: input.git?.tokenEnv ?? null,
 		};
 		const oldClient = stored && storedClient(stored);
 		// Connections made for another setup must never reach the new one

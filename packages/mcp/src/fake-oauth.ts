@@ -7,6 +7,8 @@
  * whether that fails. `authorize` plays the User approving an authorization URL. `registered` lists the client_ids it handed out,
  * `revoked` the revocation requests it received. Refresh tokens rotate, each used once; `accessTokens` and `refreshTokens` hold the
  * live ones (clear them to expire or revoke), `refreshed` counts refreshes, and `rejectClients` answers them `invalid_client`.
+ * `expiresIn` is the access tokens' lifetime in seconds. `github` answers as GitHub's does for a GitHub App: `ghu_`/`ghr_` tokens,
+ * a refresh ends the access token it replaces, and a refused refresh token is `bad_refresh_token` with HTTP 200.
  * `guard(fetch)` puts the MCP Server reached through `fetch` behind it: 401 without a live access token.
  */
 export function fakeAuthorizationServer({
@@ -21,16 +23,22 @@ export function fakeAuthorizationServer({
 		{ challenge: string; clientId: string; redirectUri: string }
 	>();
 	let n = 0;
+	// the access token each refresh token came with
+	const accessOf = new Map<string, string>();
 	const issue = (clientId: string) => {
+		const [access, refresh] = as.github
+			? ["ghu_", "ghr_"]
+			: ["access-", "refresh-"];
 		const tokens = {
-			access_token: `access-${++n}`,
+			access_token: `${access}${++n}`,
 			token_type: "Bearer",
-			refresh_token: `refresh-${n}`,
-			expires_in: 3600,
-			scope: "repo",
+			refresh_token: `${refresh}${n}`,
+			expires_in: as.expiresIn,
+			scope: as.github ? "" : "repo",
 		};
 		as.accessTokens.add(tokens.access_token);
 		as.refreshTokens.set(tokens.refresh_token, clientId);
+		accessOf.set(tokens.refresh_token, tokens.access_token);
 		return Response.json(tokens);
 	};
 	const as = {
@@ -46,6 +54,8 @@ export function fakeAuthorizationServer({
 		refreshTokens: new Map<string, string>(),
 		refreshed: 0,
 		rejectClients: false,
+		expiresIn: 3600,
+		github: false,
 		guard:
 			(mcp: (input: string | URL, init?: RequestInit) => Promise<Response>) =>
 			(input: string | URL, init?: RequestInit) => {
@@ -129,8 +139,15 @@ export function fakeAuthorizationServer({
 						return Response.json({ error: "invalid_client" }, { status: 401 });
 					const refresh = form.get("refresh_token") ?? "";
 					if (as.refreshTokens.get(refresh) !== clientId)
-						return Response.json({ error: "invalid_grant" }, { status: 400 });
+						return as.github
+							? Response.json({
+									error: "bad_refresh_token",
+									error_description:
+										"The refresh token passed is incorrect or expired.",
+								})
+							: Response.json({ error: "invalid_grant" }, { status: 400 });
 					as.refreshTokens.delete(refresh);
+					if (as.github) as.accessTokens.delete(accessOf.get(refresh) ?? "");
 					as.refreshed++;
 					return issue(clientId);
 				}

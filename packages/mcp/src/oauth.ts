@@ -125,14 +125,82 @@ export interface ConnectionStore {
 
 /**
  * How a Run sends the User's own token to a per-User OAuth MCP Server, read once as the Run starts; undefined when the User has no
- * Connection to it, it needs reconnecting, or its tokens no longer decrypt. A 401 refreshes the tokens, holding the Connection's lock;
- * when another process refreshed them meanwhile, theirs are used. A refresh the authorization server refuses (or no refresh token)
- * fails the call and leaves the Connection needing reconnecting.
+ * Connection to it, it needs reconnecting, or its tokens no longer decrypt. A 401 refreshes the tokens (see refreshConnection); one
+ * the authorization server refuses (or no refresh token) fails the call and leaves the Connection needing reconnecting.
  */
 export async function connectionAuth(
 	store: ConnectionStore,
 	userId: string,
 	serverId: string,
+	options: {
+		server: Pick<McpServer, "url" | "headers" | "oauthClient">;
+		fetch?: Fetch;
+	},
+): Promise<AuthProvider | undefined> {
+	let token = usable(await store.connection(userId, serverId))?.access_token;
+	if (token === undefined) return undefined;
+	return {
+		token: async () => token,
+		async onUnauthorized() {
+			token = await refreshConnection(store, userId, serverId, token, options);
+			if (token === undefined)
+				throw new UnauthorizedError(
+					`The Connection to MCP Server "${serverId}" needs reconnecting`,
+				);
+		},
+	};
+}
+
+/**
+ * The User's access token to a per-User OAuth MCP Server for a command that may run `marginMs`: refreshed first (see
+ * refreshConnection) when it expires sooner, since what the command sends it to cannot tell Orqestra it was refused; undefined
+ * when they have no usable Connection to it, or it needs reconnecting now.
+ */
+export async function connectionToken(
+	store: ConnectionStore,
+	userId: string,
+	serverId: string,
+	{
+		marginMs,
+		...options
+	}: {
+		server: Pick<McpServer, "url" | "headers" | "oauthClient">;
+		fetch?: Fetch;
+		marginMs: number;
+	},
+): Promise<string | undefined> {
+	const tokens = usable(await store.connection(userId, serverId));
+	if (!tokens) return undefined;
+	if (
+		tokens.expires_at === undefined ||
+		tokens.expires_at > Date.now() + marginMs
+	)
+		return tokens.access_token;
+	return refreshConnection(
+		store,
+		userId,
+		serverId,
+		tokens.access_token,
+		options,
+	);
+}
+
+/** A Connection's tokens, when it is connected and they decrypt. */
+const usable = (connection: StoredConnection | undefined) =>
+	connection && connectionStatus(connection) === "connected"
+		? connection.tokens
+		: undefined;
+
+/**
+ * Refreshes the Connection whose access token was `sent`, holding its lock, and answers the access token to use now: when another
+ * process refreshed it meanwhile, theirs, for a refresh token is used once and refreshing ends the access token before it. A refresh
+ * the authorization server refuses (or no refresh token) leaves the Connection needing reconnecting, and answers undefined.
+ */
+async function refreshConnection(
+	store: ConnectionStore,
+	userId: string,
+	serverId: string,
+	sent: string | undefined,
 	{
 		server,
 		fetch = globalThis.fetch,
@@ -140,13 +208,7 @@ export async function connectionAuth(
 		server: Pick<McpServer, "url" | "headers" | "oauthClient">;
 		fetch?: Fetch;
 	},
-): Promise<AuthProvider | undefined> {
-	const connection = await store.connection(userId, serverId);
-	let token =
-		connection && connectionStatus(connection) === "connected"
-			? connection.tokens?.access_token
-			: undefined;
-	if (token === undefined) return undefined;
+): Promise<string | undefined> {
 	// read outside the lock: a Run waiting for it holds a database connection, the holder must not need another
 	const registered = await store.registeredClient(serverId);
 	// the refresh runs holding the lock, so it may not hang
@@ -158,70 +220,66 @@ export async function connectionAuth(
 				...(init?.signal ? [init.signal] : []),
 			]),
 		});
-	return {
-		token: async () => token,
-		async onUnauthorized() {
-			const sent = token;
-			let forgetClient = false;
-			token = await store.lockConnection(
-				userId,
-				serverId,
-				async (current, change) => {
-					const tokens =
-						current?.status === "connected" ? current.tokens : undefined;
-					if (!tokens) return undefined;
-					if (tokens.access_token !== sent) return tokens.access_token;
-					const reconnect = async () => {
-						await change({ status: "needs_reconnect" });
-						return undefined;
-					};
-					const { refresh_token, client_id = "" } = tokens;
-					if (!refresh_token) return reconnect();
-					const discovery = await discoverAuthorization(server, timed);
-					const metadata = discovery.authorizationServerMetadata;
-					// tokens of an authorization server the server no longer names
-					if (
-						(metadata?.issuer ?? discovery.authorizationServerUrl) !==
-						current?.issuer
-					)
-						return reconnect();
-					const client = [server.oauthClient, registered].find(
-						(c) => c?.client_id === client_id,
-					);
-					try {
-						const refreshed = withExpiry(
-							await refreshAuthorization(discovery.authorizationServerUrl, {
-								metadata,
-								// the Client ID Metadata Document is a public Client: its client_id is all there is
-								clientInformation: client ?? { client_id },
-								refreshToken: refresh_token,
-								resource: discovery.resourceMetadata?.resource,
-								fetchFn: timed,
-							}),
-							client_id,
-						);
-						await change({ tokens: refreshed, scope: refreshed.scope });
-						return refreshed.access_token;
-					} catch (error) {
-						if (!(error instanceof OAuthError)) throw error;
-						if (
-							error.code === "invalid_client" ||
-							error.code === "unauthorized_client"
-						)
-							// only the one Orqestra registered: a pre-registered Client is the Admin's, the Metadata Document Orqestra's own
-							forgetClient = client !== undefined && client === registered;
-						else if (error.code !== "invalid_grant") throw error;
-						return reconnect();
-					}
-				},
+	let forgetClient = false;
+	const token = await store.lockConnection(
+		userId,
+		serverId,
+		async (current, change) => {
+			const tokens =
+				current?.status === "connected" ? current.tokens : undefined;
+			if (!tokens) return undefined;
+			if (tokens.access_token !== sent) return tokens.access_token;
+			const reconnect = async () => {
+				await change({ status: "needs_reconnect" });
+				return undefined;
+			};
+			const { refresh_token, client_id = "" } = tokens;
+			if (!refresh_token) return reconnect();
+			const discovery = await discoverAuthorization(server, timed);
+			const metadata = discovery.authorizationServerMetadata;
+			// tokens of an authorization server the server no longer names
+			if (
+				(metadata?.issuer ?? discovery.authorizationServerUrl) !==
+				current?.issuer
+			)
+				return reconnect();
+			const client = [server.oauthClient, registered].find(
+				(c) => c?.client_id === client_id,
 			);
-			if (forgetClient) await store.deleteRegisteredClient(serverId);
-			if (token === undefined)
-				throw new UnauthorizedError(
-					`The Connection to MCP Server "${serverId}" needs reconnecting`,
+			try {
+				const refreshed = withExpiry(
+					await refreshAuthorization(discovery.authorizationServerUrl, {
+						metadata,
+						// the Client ID Metadata Document is a public Client: its client_id is all there is
+						clientInformation: client ?? { client_id },
+						refreshToken: refresh_token,
+						resource: discovery.resourceMetadata?.resource,
+						fetchFn: timed,
+					}),
+					client_id,
 				);
+				await change({ tokens: refreshed, scope: refreshed.scope });
+				return refreshed.access_token;
+			} catch (error) {
+				if (!(error instanceof OAuthError)) throw error;
+				if (
+					error.code === "invalid_client" ||
+					error.code === "unauthorized_client"
+				)
+					// only the one Orqestra registered: a pre-registered Client is the Admin's, the Metadata Document Orqestra's own
+					forgetClient = client !== undefined && client === registered;
+				// GitHub answers a used or expired refresh token so, with HTTP 200
+				else if (
+					error.code !== "invalid_grant" &&
+					error.code !== "bad_refresh_token"
+				)
+					throw error;
+				return reconnect();
+			}
 		},
-	};
+	);
+	if (forgetClient) await store.deleteRegisteredClient(serverId);
+	return token;
 }
 
 /** How long a User has to come back from the authorization server. */
