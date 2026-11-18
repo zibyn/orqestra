@@ -174,6 +174,8 @@ const fetchFake = (async (input: string | URL, init?: RequestInit) => {
 	return new Response(JSON.stringify({ results: [] }));
 }) as typeof fetch;
 const userId = "u1";
+/** When set as a Run opens its Tools, closing them throws, after its reply. */
+let closeFails = false;
 // a command that runs until it is canceled, one that writes a report, and the check attach makes
 const orrery = memoryOrrery({
 	exec: (command, files) => {
@@ -351,8 +353,21 @@ describe.skipIf(!url)(
 					concurrency: 1,
 					orrery: () => orrery.client,
 					store,
-					toolbox: (services, allowed, options) =>
-						openToolbox(services, allowed, { ...options, fetch: fetchFake }),
+					toolbox: async (services, allowed, options) => {
+						// a Run still being titled from the test before closes its own Tools fine
+						const fails = closeFails;
+						const box = await openToolbox(services, allowed, {
+							...options,
+							fetch: fetchFake,
+						});
+						return {
+							...box,
+							close: async () => {
+								await box.close();
+								if (fails) throw new Error("could not close the Tools");
+							},
+						};
+					},
 					fetch: fetchFake,
 					connections,
 					telemetry,
@@ -1009,11 +1024,16 @@ describe.skipIf(!url)(
 					text,
 					origin: "linear",
 				});
-			const posted = (n: number) =>
-				waitFor(
+			/** The session's activities once there are `n`, and still `n` a moment later: no other one follows. */
+			const posted = async (n: number) => {
+				await waitFor(
 					async () => linear.activities,
 					(a) => a.length >= n,
 				);
+				await new Promise((r) => setTimeout(r, 300));
+				expect(linear.activities).toHaveLength(n);
+				return linear.activities;
+			};
 
 			it("posts each Run's last reply into the session as its response", async () => {
 				script({
@@ -1043,6 +1063,70 @@ describe.skipIf(!url)(
 					type: "response",
 					body: "Firefox works too.",
 				});
+			});
+
+			it("posts one response for a Run that took a message sent meanwhile, its reply to that", async () => {
+				let begun!: () => void;
+				const replying = new Promise<void>((r) => {
+					begun = r;
+				});
+				let release!: () => void;
+				const held = new Promise<void>((r) => {
+					release = r;
+				});
+				faux.setResponses([
+					async () => {
+						begun();
+						await held;
+						return fauxAssistantMessage("Looking.");
+					},
+					fauxAssistantMessage("Both fixed."),
+					fauxAssistantMessage("T"),
+				]);
+				const id = await fromLinear("Fix the login button");
+				await replying;
+				try {
+					await fromLinear("Also check Firefox.", id);
+				} finally {
+					release();
+				}
+				expect(await posted(1)).toEqual([
+					{
+						agentSessionId: "session-1",
+						content: { type: "response", body: "Both fixed." },
+					},
+				]);
+			});
+
+			it("closes the turn before the Conversation is titled", async () => {
+				let release!: () => void;
+				const titling = new Promise<void>((r) => {
+					release = r;
+				});
+				faux.setResponses([
+					fauxAssistantMessage("Done."),
+					async () => {
+						await titling;
+						return fauxAssistantMessage("T");
+					},
+				]);
+				const id = await fromLinear("Fix the login button");
+				try {
+					expect(await posted(1)).toEqual([
+						{
+							agentSessionId: "session-1",
+							content: { type: "response", body: "Done." },
+						},
+					]);
+					expect((await conversations.get(userId, id))?.title).toBeNull();
+				} finally {
+					release();
+				}
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.title === "T",
+				);
+				expect(await posted(1)).toHaveLength(1);
 			});
 
 			it("posts a Run that failed as an error", async () => {
@@ -1247,6 +1331,33 @@ describe.skipIf(!url)(
 							content: { type: "response", body: "Done." },
 						},
 					]);
+				});
+
+				it("posts only the reply of a Run that ended in time, though the limit passed while it was titled and its Tools then failed to close", async () => {
+					closeFails = true;
+					try {
+						faux.setResponses([
+							fauxAssistantMessage("Done."),
+							async () => {
+								await new Promise((r) => setTimeout(r, 1500));
+								return fauxAssistantMessage("T");
+							},
+						]);
+						const id = await fromLinear("Fix the login button");
+						// its Tools fail to close once it is titled, after its end, which fails nothing
+						await waitFor(
+							() => conversations.get(userId, id),
+							(v) => v?.title === "T",
+						);
+						expect(await posted(1)).toEqual([
+							{
+								agentSessionId: "session-1",
+								content: { type: "response", body: "Done." },
+							},
+						]);
+					} finally {
+						closeFails = false;
+					}
 				});
 			});
 
