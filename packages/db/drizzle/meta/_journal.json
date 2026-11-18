@@ -232,6 +232,13 @@
       "when": 1795015043772,
       "tag": "0032_linear_session",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795016470554,
+      "tag": "0033_linear_needs_reinstall",
+      "breakpoints": true
     }
   ]
 }

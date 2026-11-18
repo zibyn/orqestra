@@ -1,4 +1,5 @@
-// What Linear's webhook tells Orqestra's app about its Agent Sessions, queued for the worker, and the activities it answers with.
+// What Linear's webhook tells Orqestra's app about its Agent Sessions, queued for the worker, and the activities it answers with; and the
+// worker's schedule that keeps the app's tokens from lapsing.
 // https://linear.app/developers/webhooks, https://linear.app/developers/agent-interaction
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { db } from "@orqestra/db";
@@ -6,6 +7,14 @@ import { decryptSecret } from "@orqestra/db/secret";
 import { createPostgresBackend, Queue, Worker } from "bullmq";
 import { z } from "zod";
 import { type Fetch, linearAccessToken, linearGraphql } from "./index.ts";
+
+const LINEAR_TOKENS_QUEUE = "linear-tokens";
+
+/**
+ * How often the worker checks the app's tokens. An access token lasts 24 hours and comes with its refresh token, so a daily check
+ * refreshes each refresh token within 2 days of its issue, far inside the 30 days after which it lapses however much it was used.
+ */
+const TOKEN_CHECK_EVERY_MS = 24 * 3_600_000;
 
 /** How far a webhook's signed `webhookTimestamp` may be from now: Linear's own SDK refuses one over a minute off. */
 const FRESH_MS = 60_000;
@@ -161,6 +170,45 @@ export async function serveLinearEvents(
 	);
 	worker.on("failed", (job, err) =>
 		console.error(`Linear event ${job?.id} failed`, err),
+	);
+	worker.on("error", (err) => console.error("worker error", err));
+	await worker.waitUntilReady();
+	return worker;
+}
+
+/**
+ * Refreshes the app's tokens when due, now and `every` ms after, so a workspace with no Agent Session for 30 days keeps its installation;
+ * a refusal marks it as needing a reinstall. One schedule however many workers run it, until the returned worker is closed.
+ */
+export async function serveLinearTokenRefresh({
+	every = TOKEN_CHECK_EVERY_MS,
+	fetch,
+}: {
+	every?: number;
+	fetch?: Fetch;
+} = {}) {
+	const queue = new Queue(
+		LINEAR_TOKENS_QUEUE,
+		{ connection: connection() },
+		createPostgresBackend,
+	);
+	await queue.upsertJobScheduler(
+		LINEAR_TOKENS_QUEUE,
+		{ every },
+		{ name: "refresh", opts: { removeOnComplete: true, removeOnFail: 100 } },
+	);
+	await queue.close();
+	const worker = new Worker(
+		LINEAR_TOKENS_QUEUE,
+		// returns nothing: BullMQ would store a returned token
+		async () => {
+			await linearAccessToken({ fetch });
+		},
+		{ connection: connection() },
+		createPostgresBackend,
+	);
+	worker.on("failed", (_job, err) =>
+		console.error("Refreshing the Linear app's tokens failed", err),
 	);
 	worker.on("error", (err) => console.error("worker error", err));
 	await worker.waitUntilReady();

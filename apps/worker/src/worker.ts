@@ -2,14 +2,20 @@ import {
 	type ConversationCapabilities,
 	createConversations,
 } from "@orqestra/conversations";
-import { serveLinearEvents } from "@orqestra/linear/events";
+import {
+	serveLinearEvents,
+	serveLinearTokenRefresh,
+} from "@orqestra/linear/events";
 import { handleLinearEvent, reportingToLinear } from "./linear.ts";
 import { type RuntimeDeps, runAgent, titlesSettled } from "./runtime/index.ts";
 import { openToolbox } from "./runtime/toolbox.ts";
 
 type Deps = Parameters<typeof createConversations>[0];
 
-/** Works on queued Runs and Linear's Agent Session events in this process, replying to each, until the returned close function is called. */
+/**
+ * Works on queued Runs and Linear's Agent Session events in this process, replying to each, and keeps the Linear app's tokens fresh,
+ * until the returned close function is called.
+ */
 export async function startAgentWorker(
 	// `current` read per Run: a Run keeps the config it started with, the next one picks up a reload
 	capabilities: ConversationCapabilities,
@@ -56,8 +62,10 @@ export async function startAgentWorker(
 	const linear = await serveLinearEvents((event) =>
 		handleLinearEvent(event, conversations, { fetch }),
 	);
+	const tokens = await serveLinearTokenRefresh({ fetch });
 	// a Run's title outlives it: closing waits for those under way, so none is cut off with its Usage unrecorded
 	return async () => {
+		await tokens.close();
 		await linear.close();
 		await stopRuns();
 		await titlesSettled();
