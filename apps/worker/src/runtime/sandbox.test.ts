@@ -1,4 +1,8 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Turn } from "@orqestra/conversations";
 import { memoryRun } from "@orqestra/conversations/testing";
@@ -37,12 +41,26 @@ async function gitHost() {
 		},
 	};
 	const connections = memoryConnections();
-	// printenv as the Sandbox runs it, with the Exec's env and Secrets
+	// printenv as the Sandbox runs it, with the Exec's env and Secrets; git for real with that env, in a home of its own
 	const o = memoryOrrery({
-		exec: (command, _files, env) =>
-			command.startsWith("printenv ")
-				? { stdout: env[command.slice(9)] ?? "" }
-				: {},
+		exec: (command, _files, env) => {
+			if (command.startsWith("printenv "))
+				return { stdout: env[command.slice(9)] ?? "" };
+			if (!command.startsWith("git ")) return {};
+			const home = mkdtempSync(join(tmpdir(), "git-home-"));
+			const r = spawnSync("bash", ["-c", command], {
+				cwd: home,
+				env: {
+					PATH: process.env.PATH,
+					HOME: home,
+					GIT_CONFIG_NOSYSTEM: "1",
+					...env,
+				},
+				encoding: "utf8",
+			});
+			rmSync(home, { recursive: true });
+			return { stdout: r.stdout, stderr: r.stderr, exit_code: r.status ?? 1 };
+		},
 	});
 	const newRun = () =>
 		memoryRun({
@@ -53,10 +71,10 @@ async function gitHost() {
 		});
 	const m = newRun();
 	const userId = m.run.userId;
-	const bashOf = (run: typeof m.run) =>
+	const bashOf = (run: typeof m.run, fetch = as.fetch) =>
 		sandboxTools(run, [], {
 			mcpServers: { [serverId]: server },
-			fetch: as.fetch,
+			fetch,
 		}).find((t) => t.name === "bash") as AgentTool;
 	const output = async (bash: AgentTool, command: string) => {
 		const result = await bash.execute("1", { command });
@@ -110,10 +128,29 @@ describe("bash signed in to a Git Host", () => {
 			GIT_CONFIG_COUNT: "1",
 			GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
 			GIT_CONFIG_VALUE_0:
-				"!f(){ echo username=x-access-token; echo password=$GH_TOKEN; }; f",
+				'!f(){ echo username=x-access-token; echo password="$GH_TOKEN"; }; f',
 		});
 		expect(request.stdin).toBeUndefined();
 		expect(bash.description).toContain("/connections");
+	});
+
+	it("signs git in with the token as it is, read from the Secret's variable by the credential helper git runs", async () => {
+		const { o, m, bashOf, stdout, stored } = await gitHost();
+		const c = await stored();
+		// a token the helper's shell would split and glob, were its variable unquoted
+		if (c?.tokens) c.tokens.access_token = "ghu_a  b *";
+
+		expect(
+			await stdout(
+				bashOf(m.run),
+				"git credential fill <<< $'protocol=https\\nhost=github.com\\n'",
+			),
+		).toBe(
+			"protocol=https\nhost=github.com\nusername=x-access-token\npassword=ghu_a  b *\n",
+		);
+		// the Exec's argv and env hold no token: the command reads it from GH_TOKEN, which orrery fills from the Secret
+		expect(JSON.stringify(o.execs)).not.toContain("ghu_a");
+		expect(o.execs[0].secrets).toEqual({ GH_TOKEN: [...o.secrets.keys()][0] });
 	});
 
 	it("writes the Secret once while the token stays the same", async () => {
@@ -158,10 +195,10 @@ describe("bash signed in to a Git Host", () => {
 		]);
 	});
 
-	it("runs the command signed in to nothing once GitHub refuses the refresh token, and the Connection needs reconnecting", async () => {
+	it("runs the command signed in to nothing once GitHub refuses the refresh token, even before the token it has expires, and the Connection needs reconnecting", async () => {
 		const { as, o, m, bashOf, output, stored, expireIn, puts } =
 			await gitHost();
-		await expireIn(-1);
+		await expireIn(5 * 60_000);
 		// used or expired: GitHub answers bad_refresh_token, with HTTP 200
 		as.refreshTokens.clear();
 		expect(await output(bashOf(m.run), "true")).toContain("Exit code: 0");
@@ -169,6 +206,36 @@ describe("bash signed in to a Git Host", () => {
 		expect(o.execs.at(-1)).toEqual({ argv: ["bash", "-lc", "true"] });
 		expect(puts()).toHaveLength(0);
 	});
+
+	for (const [failure, fail] of [
+		["unreachable", () => Promise.reject(new TypeError("fetch failed"))],
+		["answering 502", async () => new Response("Bad Gateway", { status: 502 })],
+	] as const)
+		it(`runs the command on the token it has while its authorization server is ${failure}, until that token expires`, async () => {
+			const { as, o, m, bashOf, stdout, stored, expireIn } = await gitHost();
+			const bash = bashOf(m.run, (input, init) =>
+				new URL(input).pathname === "/token" ? fail() : as.fetch(input, init),
+			);
+			const { access_token, refresh_token } = (await stored())?.tokens ?? {};
+			await expireIn(5 * 60_000);
+			const errors = spyOn(console, "error").mockImplementation(() => {});
+			try {
+				expect(await stdout(bash, "printenv GH_TOKEN")).toBe(access_token);
+				expect(errors).toHaveBeenCalled();
+				const logged = Bun.inspect(errors.mock.calls);
+				for (const t of [access_token, refresh_token])
+					expect(logged).not.toContain(t ?? "");
+
+				await expireIn(-1);
+				await stdout(bash, "true");
+				expect(o.execs.at(-1)).toEqual({ argv: ["bash", "-lc", "true"] });
+			} finally {
+				errors.mockRestore();
+			}
+			expect(as.refreshed).toBe(0);
+			// refreshing again may work: nothing refused it
+			expect((await stored())?.status).toBe("connected");
+		});
 
 	it("writes the Secret again when orrery no longer has it, and the command runs", async () => {
 		const { o, m, bashOf, stdout, stored, puts } = await gitHost();

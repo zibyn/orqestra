@@ -155,7 +155,8 @@ export async function connectionAuth(
 /**
  * The User's access token to a per-User OAuth MCP Server for a command that may run `marginMs`: refreshed first (see
  * refreshConnection) when it expires sooner, since what the command sends it to cannot tell Orqestra it was refused; undefined
- * when they have no usable Connection to it, or it needs reconnecting now.
+ * when they have no usable Connection to it, or it needs reconnecting now. A refresh that fails without being refused
+ * (unreachable, 5xx, timed out) leaves the token it has while that has not expired.
  */
 export async function connectionToken(
 	store: ConnectionStore,
@@ -172,18 +173,26 @@ export async function connectionToken(
 ): Promise<string | undefined> {
 	const tokens = usable(await store.connection(userId, serverId));
 	if (!tokens) return undefined;
-	if (
-		tokens.expires_at === undefined ||
-		tokens.expires_at > Date.now() + marginMs
-	)
-		return tokens.access_token;
-	return refreshConnection(
-		store,
-		userId,
-		serverId,
-		tokens.access_token,
-		options,
-	);
+	const { access_token, expires_at } = tokens;
+	if (expires_at === undefined || expires_at > Date.now() + marginMs)
+		return access_token;
+	try {
+		return await refreshConnection(
+			store,
+			userId,
+			serverId,
+			access_token,
+			options,
+		);
+	} catch (error) {
+		// a refused refresh answers undefined, needing reconnecting; this one only did not happen
+		if (expires_at <= Date.now()) throw error;
+		console.error(
+			`Refreshing the Connection of ${userId} to MCP Server "${serverId}" failed: using its access token until it expires`,
+			error,
+		);
+		return access_token;
+	}
 }
 
 /** A Connection's tokens, when it is connected and they decrypt. */
