@@ -18,14 +18,18 @@ const { zip } = await import("./test-zip.ts");
 const db = drizzle(url ?? "", { schema });
 const { store: memory, objects } = memoryStore();
 /**
- * Puts wait for `puts.before`, then fail once `puts.left` reaches 0, deleting the key as s3Store does after a failed
- * multipart upload. Deleting a prefix waits for `deletes.before`; with `deletes.fail` it stops after its first object;
- * `deletes.after` runs after one.
+ * Puts wait for `puts.before`, then fail once `puts.left` reaches 0, deleting the key unless `keepOnFailure`, as s3Store
+ * does after a failed multipart upload. Deleting a prefix waits for `deletes.before`; with `deletes.fail` it stops after
+ * its first object; `deletes.after` runs after one.
  */
 const puts = {
 	left: Number.POSITIVE_INFINITY,
 	before: undefined as
-		| ((key: string, signal?: AbortSignal) => Promise<void>)
+		| ((
+				key: string,
+				signal?: AbortSignal,
+				keepOnFailure?: boolean,
+		  ) => Promise<void>)
 		| undefined,
 };
 const deletes = {
@@ -36,9 +40,9 @@ const deletes = {
 const store: ObjectStore = {
 	...memory,
 	put: async (key, body, options) => {
-		await puts.before?.(key, options?.signal);
+		await puts.before?.(key, options?.signal, options?.keepOnFailure);
 		if (puts.left-- <= 0) {
-			objects.delete(key);
+			if (!options?.keepOnFailure) objects.delete(key);
 			throw new Error("object storage is down");
 		}
 		await memory.put(key, body);
@@ -566,6 +570,55 @@ describe.skipIf(!url)("@orqestra/skills writes (Postgres)", () => {
 			errors: {},
 			name: "pdf",
 		});
+	});
+
+	it("deletes nothing when a put fails, so a delete storage answers late cannot take the file the next save put", async () => {
+		await skills.upload(skillZip("pdf", "v1"), false);
+		const late: (() => void)[] = [];
+		puts.before = async (key, _, keepOnFailure) => {
+			if (!key.endsWith(sha256("x"))) return;
+			puts.before = undefined;
+			// answered only after the next save
+			if (!keepOnFailure) late.push(() => objects.delete(key));
+			throw new Error("object storage is down");
+		};
+		await expect(
+			skills.upload(skillZip("pdf", "a", { "x.py": "x" }), true),
+		).rejects.toThrow(/down/);
+		expect(
+			await skills.upload(skillZip("pdf", "b", { "x.py": "x" }), true),
+		).toEqual({ errors: {}, name: "pdf" });
+		for (const land of late) land();
+		expect(await currentFiles("pdf")).toMatchObject({ "x.py": "x" });
+	});
+
+	it("fails a save with what storage answered for one file, not the timeout of the others, logging those", async () => {
+		await skills.upload(skillZip("pdf", "v1"), false);
+		puts.before = async (key, signal) => {
+			if (key.endsWith(sha256("denied"))) throw new Error("403 Forbidden");
+			if (signal?.aborted) throw signal.reason;
+		};
+		// the time is up as soon as it starts, for every file but the one storage refused
+		const timeout = vi
+			.spyOn(AbortSignal, "timeout")
+			.mockImplementation(() =>
+				AbortSignal.abort(new DOMException("timed out", "TimeoutError")),
+			);
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			await expect(
+				skills.upload(
+					skillZip("pdf", "v2", { "a.py": "1", "b.py": "denied" }),
+					true,
+				),
+			).rejects.toThrow(/403/);
+			// SKILL.md's and a.py's
+			expect(logged).toHaveBeenCalledTimes(2);
+			expect(String(logged.mock.calls[0][1])).toMatch(/timed out/);
+		} finally {
+			timeout.mockRestore();
+			logged.mockRestore();
+		}
 	});
 
 	it("ends a save whose object storage stops answering once its time is up, freeing the Skill", async () => {

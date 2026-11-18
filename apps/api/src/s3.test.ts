@@ -15,6 +15,13 @@ const server = Bun.serve({
 				"<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>mute/k</Key></Contents></ListBucketResult>",
 			);
 		if (url.pathname === "/b/mute/k") return new Promise<Response>(() => {});
+		// refuses every write under denied/, and never answers a delete
+		if (url.pathname.startsWith("/b/denied/"))
+			return req.method === "DELETE"
+				? new Promise<Response>(() => {})
+				: new Response("<Error><Code>AccessDenied</Code></Error>", {
+						status: 403,
+					});
 		if (url.searchParams.has("uploads"))
 			return new Response(
 				"<InitiateMultipartUploadResult><UploadId>u</UploadId></InitiateMultipartUploadResult>",
@@ -53,6 +60,30 @@ describe("s3Store", () => {
 		).rejects.toThrow("gone");
 		expect(sent).toBeLessThan(128);
 		expect(requests.at(-1)).toBe("DELETE /b/k");
+	});
+
+	it("fails a write storage refused within a few seconds, though storage never answers its delete", async () => {
+		const started = performance.now();
+		await expect(
+			store.put(
+				"denied/k",
+				new Response("hi").body as ReadableStream<Uint8Array>,
+			),
+		).rejects.toThrow();
+		expect(performance.now() - started).toBeLessThan(3000);
+		expect(requests.at(-1)).toBe("DELETE /b/denied/k");
+	});
+
+	it("deletes nothing after a failed write with keepOnFailure", async () => {
+		await expect(
+			store.put(
+				"denied/kept",
+				new Response("hi").body as ReadableStream<Uint8Array>,
+				{ keepOnFailure: true },
+			),
+		).rejects.toThrow();
+		expect(requests).not.toContain("DELETE /b/denied/kept");
+		expect(requests.at(-1)).toMatch(/^(POST|PUT) \/b\/denied\/kept$/);
 	});
 
 	it("gives up deleting once the signal aborts, though storage never answers a delete", async () => {
