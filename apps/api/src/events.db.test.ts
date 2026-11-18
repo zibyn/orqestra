@@ -33,7 +33,9 @@ const events = (id: string, signal?: AbortSignal) =>
 	new Request(`http://localhost/api/conversations/${id}/events`, { signal });
 
 describe.skipIf(!url)("/api/conversations/:id/events", () => {
-	beforeEach(() => db.execute(sql`truncate conversation cascade`));
+	beforeEach(async () => {
+		await db.execute(sql`truncate conversation cascade`);
+	});
 
 	const create = async (userId: string) => {
 		const [row] = await db
