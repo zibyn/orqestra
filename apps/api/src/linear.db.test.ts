@@ -1,6 +1,14 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import {
+	afterAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	setSystemTime,
+} from "bun:test";
 import type { Conversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
+import { LinearGrantRefused, linearAccessToken } from "@orqestra/linear";
 import { fakeLinear } from "@orqestra/linear/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
@@ -119,6 +127,7 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 			clientSecretReadable: true,
 			webhookSecretReadable: true,
 			workspace: "Acme",
+			needsReinstall: false,
 		});
 		const [row] = (
 			await db.execute<{
@@ -139,6 +148,54 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 		])
 			expect(sent).not.toContain(secret);
 		expect(Object.values(row).join()).not.toMatch(/s3cret|access-1|refresh-1/);
+	});
+
+	it("says the installation needs installing again once Linear refuses to refresh its tokens, never sending a secret back, until it is", async () => {
+		await callback(linear.authorize(await start()));
+		// a day on, access-1 has expired, and the app's refresh-1 is one Linear revoked
+		linear.refreshTokens.clear();
+		setSystemTime(new Date(Date.now() + 25 * 3_600_000));
+		try {
+			await expect(
+				linearAccessToken({ fetch: linear.fetch }),
+			).rejects.toBeInstanceOf(LinearGrantRefused);
+		} finally {
+			setSystemTime();
+		}
+		const refused = await call("GET", "/linear");
+		expect(refused.body.installation).toMatchObject({
+			workspace: "Acme",
+			needsReinstall: true,
+		});
+		const [row] = (
+			await db.execute<{
+				client_secret: string;
+				webhook_secret: string;
+				tokens: string;
+			}>(
+				sql`select client_secret, webhook_secret, tokens from linear_installation`,
+			)
+		).rows;
+		for (const secret of [
+			...Object.values(row),
+			"client-s3cret",
+			"hook-s3cret",
+			"access-1",
+			"refresh-1",
+		])
+			expect(refused.text).not.toContain(secret);
+
+		expect(
+			(
+				await callback(
+					linear.authorize(await start({ clientId: "lin-client" })),
+				)
+			).location,
+		).toBe("/console/linear");
+		expect((await call("GET", "/linear")).body.installation).toMatchObject({
+			workspace: "Acme",
+			needsReinstall: false,
+		});
 	});
 
 	it("never installs on a wrong, used, expired or voided state", async () => {
