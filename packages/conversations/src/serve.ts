@@ -318,7 +318,8 @@ async function failed(
 			? wakeAfter(conv.parentId)
 			: ensureRun(conversationId)));
 	if (conv.status !== "running") return;
-	if (!conv.parentId) return failRun(conversationId, error);
+	// only while it is still this job's Run: since the read, a start that could not queue it may have failed it, and Retry started another
+	if (!conv.parentId) return failRun(conversationId, error, jobId ?? "");
 	// the Subagents under it would report to nobody
 	await stopSubagents(conversationId, cancelStopped(config, mcp));
 	await endSubagent(conversationId, {

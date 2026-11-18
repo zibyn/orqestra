@@ -195,6 +195,19 @@ export async function enqueue(conversationId: string) {
 	);
 }
 
+/**
+ * A Conversation whose Run is still the one job `job` runs: running with that jobId (or none, as before jobIds);
+ * `unopened`, and no job opened it yet (see `drain`).
+ */
+const runOf = (job: string, unopened = false) =>
+	and(
+		eq(conversation.status, "running"),
+		or(isNull(conversation.jobId), eq(conversation.jobId, job)),
+		unopened
+			? sql`${conversation.openedJobId} is distinct from ${job}`
+			: undefined,
+	);
+
 /** The `onFailed` of the Runs this process serves, which `serveRuns` sets: a process that serves none tells nobody. */
 let onFailed:
 	| ((conversationId: string, error: Error) => Promise<void>)
@@ -208,22 +221,24 @@ export const tellFailedRuns = (told: typeof onFailed) => {
 };
 
 /**
- * Fails a top-level Run: marks it failed (and its Firing, see `endRun`), Alerts its User and tells `onFailed`.
- * Every top-level Run that fails ends here: one whose job failed (serve.ts `failed`) and one that could not be queued,
- * `unqueued` naming its job, which fails only while no job opened it: another process's requeue may have queued it meanwhile.
+ * Fails a top-level Run, job `job`'s: marks it failed (and its Firing, see `endRun`), Alerts its User and tells `onFailed`.
+ * Every top-level Run that fails ends here, only while it is still that job's (`runOf`): one whose job failed (serve.ts `failed`),
+ * and one that could not be queued, `unopened`, only while no job opened it either: another process's requeue may have queued it meanwhile.
  * False when it failed nothing. An Alert that throws is logged: `onFailed` is still told.
  */
 export async function failRun(
 	conversationId: string,
 	error: Error,
-	unqueued?: string,
+	job: string,
+	unopened = false,
 ) {
 	const paused = await endRun(
 		conversationId,
 		"failed",
 		error instanceof SpendingLimitReached ? "spending_limit" : "error",
 		false,
-		unqueued,
+		job,
+		unopened,
 	);
 	if (paused === undefined) return false;
 	// one Alert: a failure that auto-paused the Firing's task says so
@@ -243,10 +258,12 @@ export async function failUnqueued(
 	jobId: string,
 	error: Error,
 ) {
-	const failed = await failRun(conversationId, error, jobId).catch((e) => {
-		console.error(`could not fail Run ${conversationId}`, e);
-		return true;
-	});
+	const failed = await failRun(conversationId, error, jobId, true).catch(
+		(e) => {
+			console.error(`could not fail Run ${conversationId}`, e);
+			return true;
+		},
+	);
 	if (failed) throw error;
 }
 
@@ -254,8 +271,8 @@ export async function failUnqueued(
  * Starts a Run for a Conversation that has none, a wake input in its inbox and room to run (a Subagent waits for a free slot);
  * decided under its root's lock, so inputs arriving together start one Run. True when it started one.
  * A top-level one that has nothing to wake it may be a Firing whose tree has just finished: that ends now (see `endIdleFiring`).
- * A Run it started that cannot be queued fails, as one whose job failed does: a Subagent's Notification tells the parent;
- * a top-level one is failed by `failRun`, and the error thrown, unless a job opened it meanwhile (see `failUnqueued`).
+ * A Run it started that cannot be queued fails, as one whose job failed does, unless a job opened it meanwhile (see `failUnqueued`):
+ * a Subagent's Notification tells the parent; a top-level one is failed by `failRun`, and the error thrown.
  */
 export async function ensureRun(conversationId: string) {
 	let fired: Awaited<ReturnType<typeof endIdleFiring>>;
@@ -322,10 +339,14 @@ export async function ensureRun(conversationId: string) {
 		if (!started.parentId)
 			await failUnqueued(conversationId, started.jobId, error as Error);
 		else
-			await endSubagent(conversationId, {
-				outcome: "failed",
-				result: `[The subagent could not be started: ${(error as Error).message}]`,
-			});
+			await endSubagent(
+				conversationId,
+				{
+					outcome: "failed",
+					result: `[The subagent could not be started: ${(error as Error).message}]`,
+				},
+				started.jobId,
+			);
 	}
 	return true;
 }
@@ -713,14 +734,15 @@ export async function firingFailed(conversationId: string) {
  * after a failure the inbox waits for Retry, which delivers it, so the failure still shows.
  * A Firing's Run ends it (see `endFiring`) failed, or partial when stopped, by the User or out of time; at once when the User stopped it,
  * as its whole tree is then. True when that auto-paused its task; undefined when it ended nothing.
- * `unopened`, the job of a Run its start could not queue, ends that Run only while it goes and no job opened it.
+ * With `job`, it ends the Run only while that is still the job's (see `runOf`).
  */
 export async function endRun(
 	conversationId: string,
 	status: "idle" | "failed",
 	failure: RunFailure = "error",
 	byUser = false,
-	unopened?: string,
+	job?: string,
+	unopened = false,
 ) {
 	const ended = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
@@ -730,13 +752,7 @@ export async function endRun(
 			.where(
 				and(
 					eq(conversation.id, conversationId),
-					unopened === undefined
-						? undefined
-						: and(
-								eq(conversation.status, "running"),
-								eq(conversation.jobId, unopened),
-								sql`${conversation.openedJobId} is distinct from ${unopened}`,
-							),
+					job === undefined ? undefined : runOf(job, unopened),
 				),
 			)
 			.returning({ id: conversation.id });
@@ -761,10 +777,22 @@ export async function endRun(
 /**
  * Ends a Subagent's Run that did not drain to the end (stopped, failed, crashed or never queued); see `settle`.
  * A failure leaves its Background Calls running: it waits for them idle, as one whose Run finished does, and settles on a later Run's end.
+ * `unopened`, the job of a Run its start could not queue, ends it only while no job opened it, as `failUnqueued`.
  */
-export async function endSubagent(conversationId: string, ended: Ended) {
+export async function endSubagent(
+	conversationId: string,
+	ended: Ended,
+	unopened?: string,
+) {
 	const parentId = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
+		if (unopened !== undefined) {
+			const [own] = await tx
+				.select({ id: conversation.id })
+				.from(conversation)
+				.where(and(eq(conversation.id, conversationId), runOf(unopened, true)));
+			if (!own) return undefined;
+		}
 		if (
 			ended.outcome === "failed" &&
 			(await callsRunning(tx, conversationId))
@@ -803,13 +831,7 @@ export async function drain(
 			const [own] = await tx
 				.update(conversation)
 				.set({ openedJobId: opening })
-				.where(
-					and(
-						eq(conversation.id, conversationId),
-						eq(conversation.status, "running"),
-						or(isNull(conversation.jobId), eq(conversation.jobId, opening)),
-					),
-				)
+				.where(and(eq(conversation.id, conversationId), runOf(opening)))
 				.returning({ id: conversation.id });
 			if (!own) return undefined;
 		}
