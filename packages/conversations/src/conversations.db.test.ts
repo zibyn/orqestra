@@ -511,10 +511,11 @@ describe.skipIf(!url)(
 			await ending.query("begin");
 			await ending.query("lock table background_call in access exclusive mode");
 			const view = get(id);
+			// get's own statement, the only one with json_agg, which shows within the 1 kB of it pg_stat_activity keeps
 			await waitFor(
 				() =>
 					db.execute(
-						sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and query like '%background_call%'`,
+						sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and query like '%json_agg%'`,
 					),
 				(r) => r.rows.length > 0,
 			);
