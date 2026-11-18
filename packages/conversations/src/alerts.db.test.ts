@@ -46,6 +46,7 @@ const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
 const { createConversations, DEFAULT_LIMITS } = await import("./index.ts");
 const { noMcpServerDeletes } = await import("./testing.ts");
+const { AGENT_RUNS_QUEUE, runQueue } = await import("./runs.ts");
 
 const vapid = {
 	VAPID_PUBLIC_KEY: "public",
@@ -255,6 +256,22 @@ describe.skipIf(!url)("Alerts (Postgres)", { timeout: 20_000 }, () => {
 			status: "failed",
 			url: `/tasks?task=${gone}`,
 		});
+	});
+
+	it("sends one Alert for a Firing whose Run could not be queued", async () => {
+		const add = vi
+			.spyOn(runQueue(AGENT_RUNS_QUEUE), "add")
+			.mockImplementationOnce(() => Promise.reject(new Error("queue down")));
+		try {
+			const fired = await firingOf(await tasks.create(ada, input()));
+			expect(fired.outcome).toBe("failed");
+			expect((await settled()).filter((a) => a.status === "failed")).toEqual([
+				{ title: "News", status: "failed", url: `/c/${fired.conversationId}` },
+				{ title: "News", status: "failed", url: `/c/${fired.conversationId}` },
+			]);
+		} finally {
+			add.mockRestore();
+		}
 	});
 
 	it("keeps quiet about completed and partial Runs of a task that has Alerts off, but not about its Questions or its end", async () => {

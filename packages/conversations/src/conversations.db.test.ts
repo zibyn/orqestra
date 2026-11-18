@@ -3093,6 +3093,232 @@ describe.skipIf(!url)(
 			}
 		}, 15_000);
 
+		describe("a Run its start could not queue fails, onFailed told once", () => {
+			const told: string[] = [];
+			const queue = runs.runQueue(runs.AGENT_RUNS_QUEUE);
+			beforeEach(async () => {
+				told.length = 0;
+				await stopWorker();
+				stopWorker = await serve({
+					onFailed: async (id: string) => {
+						told.push(id);
+					},
+				});
+			});
+			afterEach(async () => {
+				vi.restoreAllMocks();
+				await stopWorker();
+				stopWorker = await serve();
+			});
+			/** The next job queued for a top-level Run cannot be added, as when its queue cannot be reached. */
+			const addFails = () => {
+				let failed = false;
+				vi.spyOn(queue, "add").mockImplementationOnce(() => {
+					failed = true;
+					return Promise.reject(new Error("queue down"));
+				});
+				return () => failed;
+			};
+			const failedOnce = async (id: string) => {
+				const view = await waitFor(
+					() => get(id),
+					(v) => v?.status === "failed",
+				);
+				// any second telling has had its time
+				await new Promise((r) => setTimeout(r, 300));
+				expect(told).toEqual([id]);
+				return view;
+			};
+
+			it("when a User's message starts it, its add or its read failing", async () => {
+				const failed = addFails();
+				await expect(send("a")).rejects.toThrow("queue down");
+				expect(failed()).toBe(true);
+				const [{ id }] = await db
+					.select({ id: schema.conversation.id })
+					.from(schema.conversation);
+				await failedOnce(id);
+
+				told.length = 0;
+				await db.execute(sql`truncate conversation cascade`);
+				const [{ id: read }] = await db
+					.insert(schema.conversation)
+					.values({ userId, agentId: "faux" })
+					.returning({ id: schema.conversation.id });
+				await db.insert(schema.inbox).values({
+					conversationId: read,
+					message: { role: "user", content: "hi", timestamp: Date.now() },
+					model: "faux/faux-1",
+					thinkingLevel: "off",
+					wake: true,
+				});
+				// ensureRun's own reads are in its transaction: the first outside it is enqueue's
+				vi.spyOn(db.query.conversation, "findFirst").mockImplementationOnce(
+					() => Promise.reject(new Error("connection lost")) as never,
+				);
+				await expect(runs.ensureRun(read)).rejects.toThrow("connection lost");
+				await failedOnce(read);
+			});
+
+			it("when a Stop starts it for a message sent before, and Retry answers that", async () => {
+				let replying = false;
+				script({
+					parent: [
+						(ctx) => {
+							replying = true;
+							return hang(ctx);
+						},
+						say("answered"),
+					],
+				});
+				const id = await send("a");
+				await waitFor(async () => replying, Boolean);
+				await send("b", id);
+				const failed = addFails();
+				await conversations.stop(userId, id);
+				const view = await failedOnce(id);
+				expect(failed()).toBe(true);
+				// the message waits for Retry
+				expect(view?.messages.map((m) => m.message.role)).toEqual([
+					"user",
+					"user",
+				]);
+				await conversations.retry(userId, id);
+				const answered = await waitFor(() => get(id), idle(3));
+				expect(answered?.messages.map((m) => m.message.role)).toEqual([
+					"user",
+					"user",
+					"assistant",
+				]);
+			}, 15_000);
+
+			it("when Retry starts it", async () => {
+				script({ parent: [fail] });
+				const id = await send("a");
+				await failedOnce(id);
+				told.length = 0;
+				const failed = addFails();
+				await expect(conversations.retry(userId, id)).rejects.toThrow(
+					"queue down",
+				);
+				expect(failed()).toBe(true);
+				await failedOnce(id);
+			});
+
+			it("when the 'failed' handler starts it for a message sent before a Stop whose job failed", async () => {
+				let replying = false;
+				const { gate: stopSent, release } = gate();
+				script({
+					parent: [
+						async ({ run }) => {
+							replying = true;
+							await untilAborted(run.signal);
+							await stopSent;
+							throw new Error("aborted");
+						},
+					],
+				});
+				const transaction = db.transaction.bind(db);
+				let id = "";
+				let armed = false;
+				let failed = () => false;
+				// the stopped Run's job fails before its next Run starts; the handler's start of that Run cannot queue it
+				vi.spyOn(db, "transaction").mockImplementation((async (
+					...args: Parameters<typeof transaction>
+				) => {
+					if (armed) {
+						const { rows } = await db.execute(
+							sql`select 1 from conversation where id = ${id} and status = 'idle'`,
+						);
+						if (rows.length) {
+							armed = false;
+							failed = addFails();
+							throw new Error("connection lost");
+						}
+					}
+					return transaction(...args);
+				}) as typeof transaction);
+				try {
+					id = await send("a");
+					await waitFor(async () => replying, Boolean);
+					await send("b", id);
+					await conversations.stop(userId, id);
+					armed = true;
+					release();
+					await failedOnce(id);
+					expect(failed()).toBe(true);
+				} finally {
+					release();
+				}
+			}, 15_000);
+		});
+
+		it("has the parent answer a Subagent's Notification though the Subagent's job failed after settling it, before waking the parent", async () => {
+			let id = "";
+			let armed = false;
+			let broke = false;
+			const findFirst = db.query.conversation.findFirst.bind(
+				db.query.conversation,
+			);
+			// the Subagent has settled; the first read of wakeAfter fails, as if its worker died there
+			const spy = vi
+				.spyOn(db.query.conversation, "findFirst")
+				.mockImplementation(((...args: Parameters<typeof findFirst>) => {
+					if (armed && args[0]?.columns?.rootId) {
+						armed = false;
+						broke = true;
+						return Promise.reject(new Error("connection lost"));
+					}
+					return findFirst(...args);
+				}) as typeof findFirst);
+			try {
+				script({
+					parent: [call(start("task")), say("started"), say("summed up")],
+					sub: [
+						async () => {
+							// the parent's Run is over, so only wakeAfter would start the one that answers
+							await waitFor(async () => (id ? get(id) : undefined), idle(4));
+							armed = true;
+							return "done";
+						},
+					],
+				});
+				id = await send("go");
+				const view = await waitFor(() => get(id), idle(6));
+				expect(broke).toBe(true);
+				expect(view?.messages.at(-1)?.message).toMatchObject({
+					role: "assistant",
+				});
+				expect(messageText(view?.messages.at(-1)?.message as Message)).toBe(
+					"summed up",
+				);
+			} finally {
+				spy.mockRestore();
+			}
+		}, 15_000);
+
+		it("queues again a Run left running without a job when the api starts, the worker already serving", async () => {
+			script({ parent: [say("back")] });
+			// as after the api crashed between saving a Run's start and queueing it
+			const [{ id }] = await db
+				.insert(schema.conversation)
+				.values({ userId, agentId: "faux", status: "running", jobId: "run-1" })
+				.returning({ id: schema.conversation.id });
+			await db.insert(schema.inbox).values({
+				conversationId: id,
+				message: { role: "user", content: "hi", timestamp: Date.now() },
+				model: "faux/faux-1",
+				thinkingLevel: "off",
+				wake: true,
+			});
+			await conversations.requeue();
+			const view = await waitFor(() => get(id), idle(2));
+			expect(view?.messages.map((m) => m.message.role)).toEqual([
+				"user",
+				"assistant",
+			]);
+		});
+
 		it("fails a run whose worker crashed, so it can be retried", async () => {
 			await stopWorker();
 			let picked = false;
