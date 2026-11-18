@@ -2,8 +2,11 @@ import {
 	type Fetch,
 	finishInstallation,
 	linearCallbackUrl,
+	linearConversationsInput,
 	linearInstallationInput,
 	linearInstallationStatus,
+	linearWebhookUrl,
+	saveLinearConversations,
 	startInstallation,
 } from "@orqestra/linear";
 import { Elysia } from "elysia";
@@ -22,7 +25,14 @@ export const linearRoutes = (
 		.get("/", async () => ({
 			installation: await linearInstallationStatus(),
 			callbackUrl: linearCallbackUrl(orqestraUrl),
+			webhookUrl: linearWebhookUrl(orqestraUrl),
 		}))
+		// the Agent and repositories of the Conversations Linear opens
+		.put(
+			"/conversations",
+			async ({ body }) => saved(await saveLinearConversations(body)),
+			{ body: linearConversationsInput },
+		)
 		// once the credentials are saved, the Linear URL to send the Admin to
 		.post(
 			"/",

@@ -450,5 +450,13 @@
   "linear_reinstall": "重新安装",
   "linear_state_invalid": "这次安装已失效，请重新安装。",
   "linear_denied": "授权被取消或拒绝，没有安装。",
-  "linear_failed": "安装没有完成，请检查 Client ID 和 Client Secret 后重试。"
+  "linear_failed": "安装没有完成，请检查 Client ID 和 Client Secret 后重试。",
+  "linear_webhook_url": "Webhook URL",
+  "linear_webhook_url_hint": "填到 Linear 应用的 webhook 设置里，并勾选 Agent session events。",
+  "linear_conversations_hint": "有人在 Linear 把 issue 指派给 Orqestra 或提及它时，会用这个 Agent 为同一邮箱的 User 开一个 Conversation。首条消息会写明这个 issue 所在团队对应的仓库。",
+  "linear_agent": "Agent",
+  "linear_team_repos": "各团队的仓库",
+  "linear_team_repos_hint": "每行一个：先写 Linear 团队的 key，再写 owner/repo。",
+  "linear_conversations_saved": "已保存。之后 Linear 开的 Conversation 都按这个来。",
+  "from_linear": "来自 Linear"
 }

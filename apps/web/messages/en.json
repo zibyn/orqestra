@@ -450,5 +450,13 @@
   "linear_reinstall": "Reinstall",
   "linear_state_invalid": "This installation expired. Install again.",
   "linear_denied": "Authorization was cancelled or refused; nothing was installed.",
-  "linear_failed": "The installation did not finish. Check the Client ID and Client Secret, then try again."
+  "linear_failed": "The installation did not finish. Check the Client ID and Client Secret, then try again.",
+  "linear_webhook_url": "Webhook URL",
+  "linear_webhook_url_hint": "Enter it in the Linear app's webhook settings and turn on Agent session events.",
+  "linear_conversations_hint": "When someone in Linear assigns an issue to Orqestra or mentions it, it opens a Conversation for the User with their email, with this Agent. Its first message names the repository the issue's team works in.",
+  "linear_agent": "Agent",
+  "linear_team_repos": "Repositories by team",
+  "linear_team_repos_hint": "One per line: the Linear team's key, then owner/repo.",
+  "linear_conversations_saved": "Saved. Conversations Linear opens from now on use this.",
+  "from_linear": "From Linear"
 }
