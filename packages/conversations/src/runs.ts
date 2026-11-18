@@ -208,9 +208,33 @@ const runOf = (job: string, unopened = false) =>
 			: undefined,
 	);
 
+/**
+ * Under the root's lock (which `tx` holds): whether the Conversation's Run is still job `job`'s (`runOf`), which then records the job opened it,
+ * so no start that could not queue it fails or settles it from then on.
+ */
+const claim = async (tx: Tx, conversationId: string, job: string) =>
+	(
+		await tx
+			.update(conversation)
+			.set({ openedJobId: job })
+			.where(and(eq(conversation.id, conversationId), runOf(job)))
+			.returning({ id: conversation.id })
+	).length > 0;
+
+/**
+ * Decides once, under the root's lock, that the Conversation's Run is still job `job`'s (see `claim`): a job that ends its Run otherwise
+ * than by its drain (serve.ts `stopped`, `failed`) acts on that Run's Subagents and Background Calls only when this is true,
+ * as another Run, which Retry, a new message or the parent continuing it started since, has its own.
+ */
+export const claimRun = (conversationId: string, job: string) =>
+	db.transaction(async (tx) => {
+		await lockRoot(tx, conversationId);
+		return claim(tx, conversationId, job);
+	});
+
 /** The `onFailed` of the Runs this process serves, which `serveRuns` sets: a process that serves none tells nobody. */
 let onFailed:
-	| ((conversationId: string, error: Error) => Promise<void>)
+	| ((conversationId: string, error: Error, job: string) => Promise<void>)
 	| undefined;
 /** Sets it, and returns what unsets it unless a later `serveRuns` set its own since. */
 export const tellFailedRuns = (told: typeof onFailed) => {
@@ -245,7 +269,7 @@ export async function failRun(
 	await alertRun(conversationId, paused ? "auto_paused" : "failed").catch((e) =>
 		console.error(`could not Alert of Run ${conversationId}'s failure`, e),
 	);
-	await onFailed?.(conversationId, error);
+	await onFailed?.(conversationId, error, job);
 	return true;
 }
 
@@ -818,25 +842,20 @@ export async function endSubagent(
  * A top-level Run ends completed, or `"partial"` at an Unattended Run's step cap; a Firing's Run records how (see `endFiring`).
  * A `"quiet"` finish, an Unattended Run with nothing to report, ends completed but leaves Unread as it was.
  * That is checked under the same lock a sender starts a Run under, so no input is left behind.
- * `opening`, the job of a Run that opens, delivers only while that is still the Run going, and records the job opened it; undefined when it is not.
+ * `job`, the job whose Run it is, delivers or ends only while that is still the Run going (see `claim`); undefined when it is not.
  */
 export async function drain(
 	conversationId: string,
 	finish: boolean | "question" | "partial" | "quiet" | (() => Ended) = false,
-	opening?: string,
+	job?: string,
 ) {
 	let parentId: string | undefined;
 	const delivered = await db.transaction(async (tx) => {
 		await lockRoot(tx, conversationId);
-		if (opening !== undefined) {
-			// a start that could not queue it may have failed it since execute's check; opened, it is this job's to end (see `failRun`)
-			const [own] = await tx
-				.update(conversation)
-				.set({ openedJobId: opening })
-				.where(and(eq(conversation.id, conversationId), runOf(opening)))
-				.returning({ id: conversation.id });
-			if (!own) return undefined;
-		}
+		// a start that could not queue it may have failed it since execute's check, and a stalled worker's job failed it since;
+		// opened, it is this job's to end (see `failRun`)
+		if (job !== undefined && !(await claim(tx, conversationId, job)))
+			return undefined;
 		// at the end, inputs that do not wake it wait for the next Run
 		const [wake] = finish
 			? await tx

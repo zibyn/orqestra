@@ -1,0 +1,1 @@
+ALTER TABLE "linear_session" ADD COLUMN "closed_job_id" text;

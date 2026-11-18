@@ -129,6 +129,7 @@ export function memoryRun({
 	let rings = timerRings;
 	const run: RunHandle = {
 		conversationId: "memory",
+		jobId: "memory",
 		userId: "memory-user",
 		rootConversationId: isSubagent ? "memory-root" : "memory",
 		scheduledTaskId,

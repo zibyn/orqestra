@@ -130,7 +130,10 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		expect(opened).toMatchObject({ agentId: "general", unattended: true });
 		expect(
 			await db
-				.select()
+				.select({
+					agentSessionId: linearSession.agentSessionId,
+					conversationId: linearSession.conversationId,
+				})
 				.from(linearSession)
 				.where(eq(linearSession.conversationId, opened.id)),
 		).toEqual([{ agentSessionId: "session-1", conversationId: opened.id }]);
@@ -251,7 +254,8 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 					await run.finish();
 				},
 				{ fetch: linear.fetch },
-			)(run, undefined as never);
+				// each its own Run, whose turn it closes
+			)({ ...run, jobId: `run-${long.length}` }, undefined as never);
 
 			const { type, body = "" } = linear.activities.at(-1)?.content ?? {};
 			expect(type).toBe("response");

@@ -63,7 +63,8 @@ export async function startAgentWorker(
 		),
 		{
 			...options,
-			onFailed: (id, error) => reportFailureToLinear(id, error, { fetch }),
+			onFailed: (id, error, jobId) =>
+				reportFailureToLinear(id, error, jobId, { fetch }),
 		},
 	);
 	const linear = await serveLinearEvents((event) =>

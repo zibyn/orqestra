@@ -830,4 +830,6 @@ export const linearSession = pgTable("linear_session", {
 		.notNull()
 		.unique()
 		.references(() => conversation.id, { onDelete: "cascade" }),
+	/** The job whose Run's turn was last closed in the session: by its reply, its failure or the stop Linear asked for, whichever came first. */
+	closedJobId: text("closed_job_id"),
 });
