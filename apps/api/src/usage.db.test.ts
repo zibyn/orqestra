@@ -64,22 +64,24 @@ const range = (from: string, to: string) =>
 	`from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
 const january = range("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z");
 
+// leaves only a default Agent, as the baseline does, also for the next package's tests
+const reset = async () => {
+	await db.execute(
+		sql`truncate usage, provider, enabled_model, agent, limits, "user" cascade`,
+	);
+	await config.agents.save({
+		id: "general",
+		create: true,
+		definition: {
+			name: "General",
+			description: "d",
+			instructions: "",
+			default: true,
+		},
+	});
+};
+
 describe.skipIf(!url)("/api/usage/mine", () => {
-	const reset = async () => {
-		await db.execute(
-			sql`truncate usage, provider, enabled_model, agent, limits, "user" cascade`,
-		);
-		await config.agents.save({
-			id: "general",
-			create: true,
-			definition: {
-				name: "General",
-				description: "d",
-				instructions: "",
-				default: true,
-			},
-		});
-	};
 	beforeEach(reset);
 	afterAll(reset);
 
@@ -248,12 +250,12 @@ describe.skipIf(!url)("/api/usage/mine", () => {
 });
 
 describe.skipIf(!url)("/api/usage", () => {
-	const reset = async () => {
+	// no Agent is configured, so Usage of "general" reads as a deleted Agent's
+	beforeEach(async () => {
 		await db.execute(
 			sql`truncate usage, provider, enabled_model, agent, "user" cascade`,
 		);
-	};
-	beforeEach(reset);
+	});
 	afterAll(reset);
 
 	it("sums every User's Usage, each by their current name", async () => {
