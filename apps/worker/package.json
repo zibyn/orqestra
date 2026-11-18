@@ -24,12 +24,12 @@
     "@orqestra/memory": "workspace:*",
     "@orqestra/models": "workspace:*",
     "@orqestra/skills": "workspace:*",
-    "@orqestra/tools": "workspace:*"
+    "@orqestra/tools": "workspace:*",
+    "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "bullmq": "^6.5.0",
-    "drizzle-orm": "^0.45.4",
     "typescript": "^6.0.2"
   }
 }
