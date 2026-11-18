@@ -86,6 +86,7 @@ const config = {
 	},
 	sandboxProvider: provider,
 	limits: { ...DEFAULT_LIMITS },
+	allMcpServers: {},
 } as unknown as Snapshots;
 /** Each Skill version's SKILL.md, as the test has it now. */
 const skillMds = new Map<number, string>();
@@ -494,6 +495,49 @@ describe.skipIf(!url)(
 			const id = await send("hi");
 			const view = await waitFor(() => get(id), idle(2));
 			expect(view?.compactedBefore).toEqual([view?.messages[0].id]);
+		});
+
+		it("shows a Conversation as of one moment, never a Background Call ended without its Notification", async () => {
+			script({ parent: [say("hi")] });
+			const id = await send("hi");
+			await waitFor(() => get(id), idle(2));
+			const {
+				rows: [call],
+			} = await db.execute<{ id: string }>(
+				sql`insert into background_call (conversation_id, tool_call_id, mcp_server_id, tool_name, reference, job_id, message_id)
+					select ${id}, 'c1', 'slow', 'crunch', '{}', 'j1', max(id) from message where conversation_id = ${id} returning id`,
+			);
+			// the call ends, its status and its Notification in one commit, while the view's read of the calls waits on it
+			const ending = await db.$client.connect();
+			await ending.query("begin");
+			await ending.query("lock table background_call in access exclusive mode");
+			const view = get(id);
+			await waitFor(
+				() =>
+					db.execute(
+						sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and query like '%"background_call"%'`,
+					),
+				(r) => r.rows.length > 0,
+			);
+			await ending.query(
+				"update background_call set status = 'completed' where id = $1",
+				[call.id],
+			);
+			await ending.query(
+				"insert into inbox (conversation_id, message, model, thinking_level, background_call_id, wake) values ($1, $2, 'faux/faux-1', 'off', $3, false)",
+				[id, { role: "user", content: "done", timestamp: 0 }, call.id],
+			);
+			await ending.query("commit");
+			ending.release();
+			const seen = await view;
+			// from before the call ended, or after
+			expect([
+				["running", 2],
+				["completed", 3],
+			]).toContainEqual([
+				seen?.backgroundCalls[0].status,
+				seen?.messages.length,
+			]);
 		});
 
 		it("wakes the parent with a Notification when a Subagent finishes after the parent's reply", async () => {
