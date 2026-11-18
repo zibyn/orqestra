@@ -59,7 +59,12 @@ export async function readySandbox(
 			throw error;
 		});
 		let state = sandbox?.state;
-		while (state === "pending" || state === "stopping" || state === "stopped") {
+		while (
+			state === "pending" ||
+			state === "provisioning" ||
+			state === "stopping" ||
+			state === "stopped"
+		) {
 			if (Date.now() > deadline)
 				throw new Error(
 					`The Sandbox is still ${state} after ${timeoutMs / 1000} s`,

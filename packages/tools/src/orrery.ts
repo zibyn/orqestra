@@ -29,6 +29,7 @@ export class OrreryError extends Error {
 
 export type SandboxState =
 	| "pending"
+	| "provisioning"
 	| "ready"
 	| "stopping"
 	| "stopped"
