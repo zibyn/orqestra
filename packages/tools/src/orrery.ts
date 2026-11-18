@@ -59,6 +59,8 @@ export interface ExecRequest {
 	/** Not run through a shell. */
 	argv: string[];
 	env?: Record<string, string>;
+	/** ENV_NAME to the name of a Secret of the Sandbox's owner; orrery resolves it, so the value is never sent here. */
+	secrets?: Record<string, string>;
 	/** Relative to /workspace. */
 	cwd?: string;
 	/** Seconds; omitted means no limit. */
@@ -179,6 +181,10 @@ export function orrery({
 		/** The User the API Token belongs to. */
 		me: (o: Opts = {}) =>
 			json<{ id: string; name: string }>("GET", "/users/me", o),
+		/** Creates or overwrites a Secret of the API Token's User; orrery never gives its value back. */
+		putSecret: async (name: string, value: string, o: Opts = {}) => {
+			await send("PUT", `/secrets/${id(name)}`, { json: { value }, ...o });
+		},
 
 		/** Returns it `pending`; with no `workspace` orrery makes a temporary one, deleted with it. */
 		createSandbox: (request: CreateSandbox, o: Opts = {}) =>

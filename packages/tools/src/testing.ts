@@ -67,6 +67,9 @@ export function memoryOrrery({
 			call("me");
 			return { id: "u1", name: "orqestra" };
 		},
+		putSecret: async (name) => {
+			call("putSecret", name);
+		},
 		createSandbox: async (request) => {
 			call("createSandbox", JSON.stringify(request));
 			const id = `sb${++n}`;

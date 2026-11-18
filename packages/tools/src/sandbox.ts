@@ -1,6 +1,7 @@
 // Using a Sandbox through the orrery client: getting one ready, and running a command to its end.
 import { posix } from "node:path";
 import {
+	type ExecRequest,
 	type Frame,
 	frameBytes,
 	frameEnd,
@@ -133,11 +134,19 @@ export async function runCommand(
 	client: Orrery,
 	sandbox: string,
 	command: string,
-	{ signal, pollMs = 100 }: { signal?: AbortSignal; pollMs?: number } = {},
+	{
+		signal,
+		pollMs = 100,
+		env,
+		secrets,
+	}: { signal?: AbortSignal; pollMs?: number } & Pick<
+		ExecRequest,
+		"env" | "secrets"
+	> = {},
 ): Promise<CommandResult> {
 	const exec = await client.createExec(
 		sandbox,
-		{ argv: ["bash", "-lc", command] },
+		{ argv: ["bash", "-lc", command], env, secrets },
 		{ signal },
 	);
 	const out = { stdout: [] as Buffer[], stderr: [] as Buffer[] };

@@ -126,6 +126,42 @@ describe("orrery client", () => {
 		);
 	});
 
+	it("writes a Secret, and an Exec names it without carrying its value", async () => {
+		const fake = fakeOrrery((s) =>
+			s.method === "PUT"
+				? Response.json({ name: "q1-tok", updated_at: "2026-11-18T00:00:00Z" })
+				: Response.json(
+						{ id: "ex1", state: "pending", result: null, log_truncated: false },
+						{ status: 201 },
+					),
+		);
+		const client = orrery({ url: "http://o", token: "t", fetch: fake.fetch });
+		await client.putSecret("q1-tok", "s3cret-value");
+		await client.createExec("sb1", {
+			argv: ["printenv", "TOK"],
+			env: { MODE: "x" },
+			secrets: { TOK: "q1-tok" },
+		});
+		expect(fake.sent).toEqual([
+			{
+				method: "PUT",
+				url: "http://o/api/v1/secrets/q1-tok",
+				auth: "Bearer t",
+				body: { value: "s3cret-value" },
+			},
+			{
+				method: "POST",
+				url: "http://o/api/v1/sandboxes/sb1/execs",
+				auth: "Bearer t",
+				body: {
+					argv: ["printenv", "TOK"],
+					env: { MODE: "x" },
+					secrets: { TOK: "q1-tok" },
+				},
+			},
+		]);
+	});
+
 	it("writes and reads Workspace files, and uploads a tar", async () => {
 		const fake = fakeOrrery((s) =>
 			s.method === "GET"
