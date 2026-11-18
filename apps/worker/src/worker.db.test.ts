@@ -23,6 +23,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/agents";
 import type { ConversationEvent } from "@orqestra/conversations";
+import { fakeLinear } from "@orqestra/linear/testing";
 import {
 	fakeAuthorizationServer,
 	fakeMcpServer,
@@ -51,9 +52,9 @@ mock.module(
 const url = process.env.TEST_DATABASE_URL;
 const { db } = await import("@orqestra/db");
 const { asc, eq, sql } = await import("drizzle-orm");
-const { limits, pushSubscription, usage, user } = await import(
-	"@orqestra/db/schema"
-);
+const { limits, linearInstallation, pushSubscription, usage, user } =
+	await import("@orqestra/db/schema");
+const { encryptSecret } = await import("@orqestra/db/secret");
 const { createConversations, DEFAULT_LIMITS, MAX_SUBAGENTS_PER_USER_MESSAGE } =
 	await import("@orqestra/conversations");
 const { createCapabilities } = await import("./capabilities.ts");
@@ -162,8 +163,11 @@ let slow = newSlow();
 /** Search answers with no results; the MCP Server `slow` is the fake one. */
 /** When set, `slow` is behind this authorization server, which answers at as.example.com. */
 let as: ReturnType<typeof fakeAuthorizationServer> | undefined;
+/** Linear, which the app posts its Agent Sessions' activities to. */
+let linear = fakeLinear();
 const fetchFake = (async (input: string | URL, init?: RequestInit) => {
 	const host = new URL(String(input)).hostname;
+	if (host === "api.linear.app") return linear.fetch(input, init);
 	if (host === "slow.example.com")
 		return as ? as.guard(slow.fetch)(input, init) : slow.fetch(input, init);
 	if (as && host === "as.example.com") return as.fetch(input, init);
@@ -369,7 +373,7 @@ describe.skipIf(!url)(
 			// a Run the last test left winding down would deadlock with the truncate: stopping the worker waits for it
 			await stopWorker?.();
 			await db.execute(
-				sql`truncate conversation, scheduled_task, usage, limits, push_subscription, "user" cascade`,
+				sql`truncate conversation, scheduled_task, usage, limits, push_subscription, "user", linear_installation cascade`,
 			);
 			spans.reset();
 			await start();
@@ -975,6 +979,167 @@ describe.skipIf(!url)(
 			expect(row.purpose).toBe("step");
 			expect(row.outputTokens).toBeGreaterThan(0);
 			expect(await usageOf(unreached)).toEqual([]);
+		});
+
+		describe("a Linear Agent Session's Conversation", () => {
+			beforeEach(async () => {
+				linear = fakeLinear();
+				linear.accessTokens.add("access-0");
+				await db.insert(linearInstallation).values({
+					clientId: "lin-client",
+					clientSecret: encryptSecret(linear.clientSecret),
+					webhookSecret: encryptSecret("hook-s3cret"),
+					tokens: encryptSecret(
+						JSON.stringify({
+							accessToken: "access-0",
+							refreshToken: "refresh-0",
+							expiresAt: Date.now() + 3_600_000,
+						}),
+					),
+					workspace: "Acme",
+					teamRepos: {},
+				});
+			});
+			/** Sends a message from the session, as the worker does for Linear's events: the first opens its Conversation. */
+			const fromLinear = (text: string, conversationId?: string) =>
+				conversations.send(userId, {
+					...(conversationId
+						? { conversationId }
+						: { agentId: "faux", linearSessionId: "session-1" }),
+					text,
+					origin: "linear",
+				});
+			const posted = (n: number) =>
+				waitFor(
+					async () => linear.activities,
+					(a) => a.length >= n,
+				);
+
+			it("posts each Run's last reply into the session as its response", async () => {
+				script({
+					parent: [
+						fauxAssistantMessage(
+							fauxToolCall("bash", { command: "make report" }),
+						),
+						fauxAssistantMessage(
+							"Opened https://github.com/acme/web/pull/1 with the fix.",
+						),
+						fauxAssistantMessage("Firefox works too."),
+					],
+				});
+				const id = await fromLinear("Fix the login button");
+				expect(await posted(1)).toEqual([
+					{
+						agentSessionId: "session-1",
+						content: {
+							type: "response",
+							body: "Opened https://github.com/acme/web/pull/1 with the fix.",
+						},
+					},
+				]);
+
+				await fromLinear("Also check Firefox.", id);
+				expect((await posted(2))[1].content).toEqual({
+					type: "response",
+					body: "Firefox works too.",
+				});
+			});
+
+			it("posts a Run that failed as an error", async () => {
+				faux.setResponses([
+					() => {
+						throw new Error("connection refused");
+					},
+				]);
+				await fromLinear("Fix the login button");
+				expect(await posted(1)).toEqual([
+					{
+						agentSessionId: "session-1",
+						content: {
+							type: "error",
+							body: "This reply failed. Retry it in Orqestra.",
+						},
+					},
+				]);
+			});
+
+			it("posts a Question the Run ended with as an elicitation", async () => {
+				script({
+					parent: [
+						fauxAssistantMessage([
+							fauxText("Two buttons say log in."),
+							fauxToolCall("ask_user", {
+								question: "Which one?",
+								suggestions: ["Header", "Footer"],
+							}),
+						]),
+					],
+				});
+				await fromLinear("Fix the login button");
+				expect(await posted(1)).toEqual([
+					{
+						agentSessionId: "session-1",
+						content: {
+							type: "elicitation",
+							body: "Two buttons say log in.\n\nWhich one?\n\n- Header\n- Footer",
+						},
+					},
+				]);
+			});
+
+			it("posts nothing for a Run the User stopped", async () => {
+				script({
+					parent: [
+						fauxAssistantMessage([
+							fauxText("Looking into it."),
+							fauxToolCall("bash", { command: "sleep 1000" }),
+						]),
+						fauxAssistantMessage("Picked up again."),
+					],
+				});
+				const earlier = orrery.calls.length;
+				const id = await fromLinear("Fix the login button");
+				await waitFor(
+					async () => orrery.calls.slice(earlier),
+					(c) => c.some((x) => x.endsWith(" sleep 1000")),
+				);
+				await conversations.stop(userId, id);
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "idle",
+				);
+				// Runs go one at a time: the next one's reply comes after the stopped one has posted whatever it would
+				await fromLinear("Go on.", id);
+				expect(await posted(1)).toEqual([
+					{
+						agentSessionId: "session-1",
+						content: { type: "response", body: "Picked up again." },
+					},
+				]);
+			});
+
+			it("posts nothing for a Conversation of no Agent Session", async () => {
+				script({ parent: [fauxAssistantMessage("Hello")] });
+				const id = await conversations.send(userId, {
+					agentId: "faux",
+					text: "hi",
+				});
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.title === "T",
+				);
+				faux.setResponses([
+					() => {
+						throw new Error("connection refused");
+					},
+				]);
+				await conversations.send(userId, { conversationId: id, text: "again" });
+				await waitFor(
+					() => conversations.get(userId, id),
+					(v) => v?.status === "failed",
+				);
+				expect(linear.activities).toEqual([]);
+			});
 		});
 
 		describe("Spending Limit", () => {

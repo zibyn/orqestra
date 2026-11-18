@@ -210,7 +210,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		]);
 	});
 
-	it("stops the session's Conversation on a stop request rather than sending it", async () => {
+	it("stops the session's Conversation on a stop request rather than sending it, and confirms it in the session", async () => {
 		await deliver(agentSessionEvent());
 		await deliver(agentSessionEvent({ prompt: "Stop", signal: "stop" }));
 
@@ -223,5 +223,9 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 			)
 			.then((r) => r.rows);
 		expect(Number(inputs)).toBe(1);
+		expect(linear.activities.at(-1)?.content).toEqual({
+			type: "response",
+			body: "Stopped.",
+		});
 	});
 });
