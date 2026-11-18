@@ -4,7 +4,7 @@ import {
 	resolveTurn,
 	turnSkills,
 } from "@orqestra/agents";
-import { db } from "@orqestra/db";
+import { db, type Tx } from "@orqestra/db";
 import {
 	attachment,
 	backgroundCall,
@@ -135,8 +135,8 @@ export { listUsers, rememberUser, setSpendingLimit } from "./users.ts";
 // The only module that reads and writes Conversations, their Inbox, messages, Subagents and compactions.
 // The User's side takes the signed-in user's id everywhere: nobody else, Admins included, can see a Conversation.
 
-const owned = (userId: string, id: string) =>
-	db.query.conversation.findFirst({
+const owned = (userId: string, id: string, q: Pick<Tx, "query"> = db) =>
+	q.query.conversation.findFirst({
 		where: and(eq(conversation.id, id), eq(conversation.userId, userId)),
 	});
 
@@ -304,11 +304,12 @@ export function createConversations({
 				.orderBy(desc(conversation.updatedAt)),
 
 		async get(userId: string, id: string) {
-			const conv = await owned(userId, id);
-			if (!conv) return undefined;
-			const [messages, pending, compactions, subagents, set, calls] =
-				await Promise.all([
-					db
+			// one snapshot, so a write across tables shows whole or not at all: a Background Call's end and its Notification, a drain
+			const read = await db.transaction(
+				async (tx) => {
+					const conv = await owned(userId, id, tx);
+					if (!conv) return undefined;
+					const messages = await tx
 						.select({
 							id: message.id,
 							message: message.message,
@@ -321,9 +322,9 @@ export function createConversations({
 						})
 						.from(message)
 						.where(eq(message.conversationId, id))
-						.orderBy(asc(message.id)),
+						.orderBy(asc(message.id));
 					// inputs the Run has yet to deliver show after what it has
-					db
+					const pending = await tx
 						.select({
 							id: inbox.id,
 							message: inbox.message,
@@ -337,13 +338,13 @@ export function createConversations({
 						})
 						.from(inbox)
 						.where(eq(inbox.conversationId, id))
-						.orderBy(asc(inbox.id)),
-					db
+						.orderBy(asc(inbox.id));
+					const compactions = await tx
 						.select({ firstKeptMessageId: compaction.firstKeptMessageId })
 						.from(compaction)
-						.where(eq(compaction.conversationId, id)),
+						.where(eq(compaction.conversationId, id));
 					// the whole tree's, so its panels drill down to Subagents of Subagents
-					db
+					const subagents = await tx
 						.select({
 							id: subagent.conversationId,
 							parentId: sql<string>`${conversation.parentId}`,
@@ -360,10 +361,12 @@ export function createConversations({
 							eq(conversation.id, subagent.conversationId),
 						)
 						.where(eq(conversation.rootId, id))
-						.orderBy(asc(conversation.depth), asc(subagent.number)),
-					db.query.timer.findFirst({ where: eq(timer.conversationId, id) }),
+						.orderBy(asc(conversation.depth), asc(subagent.number));
+					const set = await tx.query.timer.findFirst({
+						where: eq(timer.conversationId, id),
+					});
 					// the whole tree's, each shown at the Tool call that made it
-					db
+					const calls = await tx
 						.select({
 							id: backgroundCall.id,
 							conversationId: backgroundCall.conversationId,
@@ -378,8 +381,22 @@ export function createConversations({
 							eq(conversation.id, backgroundCall.conversationId),
 						)
 						.where(eq(conversation.rootId, id))
-						.orderBy(asc(backgroundCall.startedAt)),
-				]);
+						.orderBy(asc(backgroundCall.startedAt));
+					return {
+						conv,
+						messages,
+						pending,
+						compactions,
+						subagents,
+						set,
+						calls,
+					};
+				},
+				{ isolationLevel: "repeatable read", accessMode: "read only" },
+			);
+			if (!read) return undefined;
+			const { conv, messages, pending, compactions, subagents, set, calls } =
+				read;
 			const cfg = await config();
 			return {
 				id: conv.id,
