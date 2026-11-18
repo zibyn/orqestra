@@ -36,13 +36,8 @@ export function s3Store(
 				key,
 				new Response(body.pipeThrough(new TransformStream(), { signal })),
 			);
-			// Bun's client takes no signal, so storage that stops answering would keep it waiting however long
-			const aborted = new Promise<never>((_, reject) =>
-				signal?.addEventListener("abort", () => reject(signal.reason)),
-			);
-			aborted.catch(() => {});
 			try {
-				await Promise.race([written, aborted]);
+				await Promise.race([written, untilAborted(signal)]);
 			} catch (error) {
 				// a multipart upload that failed may have left an object. None is deleted while storage has not answered
 				// the write: the delete could land after a later put of the key
@@ -62,14 +57,28 @@ export function s3Store(
 			if (!(await file.exists())) return undefined;
 			return { body: file.stream(), size: (await file.stat()).size };
 		},
-		async deletePrefix(prefix) {
+		async deletePrefix(prefix, { signal } = {}) {
+			const aborted = untilAborted(signal);
 			for (;;) {
-				const page = await s3.list({ prefix });
-				await Promise.all(
-					(page.contents ?? []).map(({ key }) => s3.delete(key)),
-				);
+				const page = await Promise.race([s3.list({ prefix }), aborted]);
+				// none sent once it aborts, as a delete could land after a later put of the key
+				signal?.throwIfAborted();
+				await Promise.race([
+					Promise.all((page.contents ?? []).map(({ key }) => s3.delete(key))),
+					aborted,
+				]);
 				if (!page.isTruncated) return;
 			}
 		},
 	};
+}
+
+/** Rejects once `signal` aborts: Bun's client takes no signal, so storage that stops answering would keep it waiting however long. */
+function untilAborted(signal?: AbortSignal) {
+	const aborted = new Promise<never>((_, reject) => {
+		if (signal?.aborted) reject(signal.reason);
+		signal?.addEventListener("abort", () => reject(signal.reason));
+	});
+	aborted.catch(() => {});
+	return aborted;
 }
