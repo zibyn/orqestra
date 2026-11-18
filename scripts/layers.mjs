@@ -7,6 +7,7 @@ import { join } from "node:path";
 // dependencies fail, so a cycle (which needs one upward edge) fails too.
 const LAYERS = {
 	"@orqestra/db": 0,
+	"@orqestra/linear": 1,
 	"@orqestra/mcp": 1,
 	"@orqestra/memory": 1,
 	"@orqestra/models": 1,

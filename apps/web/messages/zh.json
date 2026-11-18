@@ -438,5 +438,17 @@
   "mcp_connected_user": "User",
   "mcp_connected_at": "连接时间",
   "mcp_connection_status": "状态",
-  "mcp_connected_users_hint": "看不到令牌，也不能替 User 断开。"
+  "mcp_connected_users_hint": "看不到令牌，也不能替 User 断开。",
+  "integrations": "集成",
+  "linear": "Linear",
+  "secret_required": "请先填写这个 Secret。",
+  "linear_hint": "把 Orqestra 作为智能体安装到一个 Linear workspace，之后就能在 Linear 里把 issue 指派给它。授权需要 Linear workspace 的管理员。",
+  "linear_connected": "已连接到 {workspace}",
+  "linear_webhook_secret": "Webhook Secret",
+  "linear_webhook_secret_hint": "Linear 应用设置里 webhook 的签名密钥，用来确认 webhook 来自 Linear。",
+  "linear_install": "安装到 Linear",
+  "linear_reinstall": "重新安装",
+  "linear_state_invalid": "这次安装已失效，请重新安装。",
+  "linear_denied": "授权被取消或拒绝，没有安装。",
+  "linear_failed": "安装没有完成，请检查 Client ID 和 Client Secret 后重试。"
 }
