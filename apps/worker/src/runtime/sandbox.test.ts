@@ -127,8 +127,7 @@ describe("bash signed in to a Git Host", () => {
 		expect(request.env).toEqual({
 			GIT_CONFIG_COUNT: "1",
 			GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
-			GIT_CONFIG_VALUE_0:
-				`!f(){ printf '%s\\n' username=x-access-token "password=$GH_TOKEN"; }; f`,
+			GIT_CONFIG_VALUE_0: `!f(){ printf '%s\\n' username=x-access-token "password=$GH_TOKEN"; }; f`,
 		});
 		expect(request.stdin).toBeUndefined();
 		expect(bash.description).toContain("/connections");
