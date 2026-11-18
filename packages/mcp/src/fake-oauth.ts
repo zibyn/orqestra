@@ -10,7 +10,8 @@
  * `expiresIn` is the access tokens' lifetime in seconds. `github` answers as GitHub's does for a GitHub App: `ghu_`/`ghr_` tokens,
  * a refresh ends the access token it replaces, a refused refresh token is `bad_refresh_token` with HTTP 200, and instead of a
  * revocation endpoint its REST API's `DELETE /applications/{client_id}/grant` takes a live access token as that Client with its
- * secret and ends it and its refresh token (`revocation` "fails": 422).
+ * secret and ends it and its refresh token (`revocation` "fails": 422); `clientSecret`, once set, is the only secret it takes
+ * there (another: 401).
  * `guard(fetch)` puts the MCP Server reached through `fetch` behind it: 401 without a live access token.
  */
 export function fakeAuthorizationServer({
@@ -60,6 +61,7 @@ export function fakeAuthorizationServer({
 		rejectClients: false,
 		expiresIn: 3600,
 		github: false,
+		clientSecret: undefined as string | undefined,
 		guard:
 			(mcp: (input: string | URL, init?: RequestInit) => Promise<Response>) =>
 			(input: string | URL, init?: RequestInit) => {
@@ -136,6 +138,8 @@ export function fakeAuthorizationServer({
 						?.replace(/^Basic /, "") ?? "",
 				).split(":");
 				const { access_token } = JSON.parse(String(init.body));
+				if (as.clientSecret !== undefined && secret !== as.clientSecret)
+					return Response.json({ message: "Bad credentials" }, { status: 401 });
 				if (
 					clientId !== grant[1] ||
 					!secret ||

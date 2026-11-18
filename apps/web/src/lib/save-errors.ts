@@ -20,6 +20,7 @@ const texts: {
 	header_twice: (e) => m.mcp_header_twice({ header: e.header }),
 	header_value_missing: (e) => m.mcp_header_value_missing({ header: e.header }),
 	header_reserved: (e) => m.mcp_header_reserved({ header: e.header }),
+	token_env_taken: (e) => m.mcp_token_env_taken({ server: e.server }),
 	skill_zip_invalid: () => m.skill_zip_invalid(),
 	skill_md_missing: () => m.skill_md_missing(),
 	skill_frontmatter_invalid: () => m.skill_frontmatter_invalid(),

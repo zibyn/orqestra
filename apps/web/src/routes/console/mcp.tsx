@@ -253,7 +253,8 @@ function McpServerForm({
 				git: gitSet ? git : null,
 			});
 			setErrors(saveErrorTexts(result.errors));
-			if (result.errors.id || result.errors.headers) setAdvancedOpen(true);
+			if (result.errors.id || result.errors.headers || result.errors.git)
+				setAdvancedOpen(true);
 			if (!Object.keys(result.errors).length) {
 				await router.invalidate();
 				onSaved(id, result.test);
@@ -437,6 +438,7 @@ function McpServerForm({
 									/>
 								</Field>
 							))}
+							<FieldError>{errors.git}</FieldError>
 						</FieldSet>
 						<FieldSet className="gap-3">
 							<FieldLegend variant="label">{m.mcp_headers()}</FieldLegend>

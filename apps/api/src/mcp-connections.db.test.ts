@@ -3,7 +3,7 @@ import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { user as userRecord } from "@orqestra/db/schema";
 import { memoryStore } from "@orqestra/db/store";
-import { connectionStore } from "@orqestra/mcp";
+import { connectionStore, connectionToken } from "@orqestra/mcp";
 import { fakeAuthorizationServer } from "@orqestra/mcp/testing";
 import { sql } from "drizzle-orm";
 import { createApp } from "./app.ts";
@@ -458,6 +458,82 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 			expect(as.refreshTokens.size).toBe(0);
 		});
 
+		/**
+		 * Ends u1's Connection by `end` while a Run refreshes its token: GitHub has issued the new tokens, the Run has not stored them
+		 * yet. GitHub's tokens of u1 are all ended after.
+		 */
+		const endDuringRefresh = async (end: () => Promise<unknown>) => {
+			await save(app);
+			await connect("u1");
+			let answered = () => {};
+			let store = () => {};
+			const refreshed = new Promise<void>((r) => {
+				answered = r;
+			});
+			const stored = new Promise<void>((r) => {
+				store = r;
+			});
+			const { fetch } = as;
+			const held: typeof fetch = async (input, init) => {
+				const response = await fetch(input, init);
+				if (String(init?.body).includes("grant_type=refresh_token")) {
+					answered();
+					await stored;
+				}
+				return response;
+			};
+			// an hour's margin over tokens that last one
+			const run = connectionToken(connectionStore, "u1", "github", {
+				server: {
+					url: as.resource,
+					headers: {},
+					oauthClient: { client_id: "orq-app", client_secret: "s3cret" },
+				},
+				fetch: held,
+				marginMs: 2 * 3600_000,
+			});
+			await refreshed;
+			const ending = end();
+			// on until `end` waits for the Run's lock; an end that takes none is over by then
+			const waiting = async () => {
+				for (let i = 0; i < 100; i++) {
+					const { rows } = await db.execute(
+						sql`select 1 from pg_locks where locktype = 'advisory' and not granted`,
+					);
+					if (rows.length) return;
+					await Bun.sleep(10);
+				}
+			};
+			await Promise.race([ending, waiting()]);
+			store();
+			expect(await run).toMatch(/^ghu_/);
+			await ending;
+			expect((await listed("u1"))[0].status).toBe("none");
+			expect(await revocations(1)).toHaveLength(1);
+			expect(as.accessTokens.size).toBe(0);
+			expect(as.refreshTokens.size).toBe(0);
+		};
+
+		it("revokes the tokens a Run was refreshing to when the User disconnects meanwhile", () =>
+			endDuringRefresh(() => disconnect("u1")));
+
+		it("revokes the tokens a Run was refreshing to when the Admin changes the server meanwhile", () =>
+			endDuringRefresh(() =>
+				save({ create: false, ...app, url: "https://mcp.example.com/mcp/v2" }),
+			));
+
+		it("revokes with the Client's new secret when the Admin changed it and GitHub refuses the old one", async () => {
+			await save(app);
+			await connect("u1");
+			// changed at GitHub first, then here
+			as.clientSecret = "n3w";
+			await save({ create: false, ...app, oauthClientSecret: "n3w" });
+			expect((await listed("u1"))[0].status).toBe("none");
+			expect(await revocations(1)).toHaveLength(1);
+			expect(as.accessTokens.size).toBe(0);
+			expect(as.refreshTokens.size).toBe(0);
+		});
+
 		it("disconnects all the same when GitHub refuses, and logs no token", async () => {
 			await save(app);
 			await connect("u1");
@@ -477,24 +553,38 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 		});
 	});
 
-	it("ends every Connection and pending authorization when the Admin changes the URL, makes it shared with an Authorization header, or changes the pre-registered Client, and revokes them", async () => {
+	it("ends every Connection and pending authorization when the Admin changes the URL, makes it shared with an Authorization header, or changes the pre-registered Client or the Git Host, and revokes them", async () => {
 		const client = { oauthClientId: "orq-app", oauthClientSecret: "s3cret" };
-		const changes = [
-			{ url: "https://mcp.example.com/mcp/v2" },
-			{
-				oauthClientId: "",
-				headers: [{ name: "Authorization", value: "Bearer k" }],
-			},
-			{ oauthClientId: "orq-app-2" },
-			{ oauthClientSecret: "other" },
+		const git = {
+			host: "github.com",
+			username: "x-access-token",
+			tokenEnv: "GH_TOKEN",
+		};
+		// the server as it was, and what the Admin changes
+		const changes: [Record<string, unknown>, Record<string, unknown>][] = [
+			[{}, { url: "https://mcp.example.com/mcp/v2" }],
+			[
+				{},
+				{
+					oauthClientId: "",
+					headers: [{ name: "Authorization", value: "Bearer k" }],
+				},
+			],
+			[{}, { oauthClientId: "orq-app-2" }],
+			[{}, { oauthClientSecret: "other" }],
+			// Users' tokens would go to a host they never connected to
+			[{}, { git }],
+			[{ git }, { git: { ...git, host: "git.example.net" } }],
+			[{ git }, { git: { ...git, username: "oauth2" } }],
+			[{ git }, { git: { ...git, tokenEnv: "GITHUB_TOKEN" } }],
 		];
-		for (const change of changes) {
+		for (const [before, change] of changes) {
 			await reset();
-			await save(client);
+			await save({ ...client, ...before });
 			await connect("u1");
 			await connect("u2");
 			const pending = as.authorize((await start("u3")).href);
-			await save({ create: false, ...client, ...change });
+			await save({ create: false, ...client, ...before, ...change });
 			if (change.headers) await save({ create: false, ...client });
 			expect((await listed("u1"))[0].status).toBe("none");
 			expect((await listed("u2"))[0].status).toBe("none");
@@ -505,8 +595,16 @@ describe.skipIf(!url)("a User's Connections through the api", () => {
 		}
 	});
 
-	it("keeps Connections when the Admin renames, disables or saves the same Client again", async () => {
-		const client = { oauthClientId: "orq-app", oauthClientSecret: "s3cret" };
+	it("keeps Connections when the Admin renames, disables or saves the same Client and Git Host again", async () => {
+		const client = {
+			oauthClientId: "orq-app",
+			oauthClientSecret: "s3cret",
+			git: {
+				host: "github.com",
+				username: "x-access-token",
+				tokenEnv: "GH_TOKEN",
+			},
+		};
 		await save(client);
 		await connect("u1");
 		await save({ create: false, ...client, name: "GitHub!" });

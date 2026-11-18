@@ -21,6 +21,7 @@ export type SaveError =
 	  }
 	| SkillError
 	| { code: "invalid" | "oauth_unavailable"; detail: string }
+	| { code: "token_env_taken"; server: string }
 	| {
 			code:
 				| "header_invalid"

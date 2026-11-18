@@ -634,16 +634,18 @@ const revokers: Record<
 /**
  * Revokes a deleted Connection at its authorization server (RFC 7009): its refresh token, else its access token, as the Client its
  * tokens were issued to, as a refresh picks it (one that is neither the pre-registered nor the registered one is a public Client, the
- * Client ID Metadata Document or one registered before). One with no `revocation_endpoint` revokes as `revokers` has it, or not at
- * all; throws when revoking fails, for the caller to log.
+ * Client ID Metadata Document or one registered before). Refused as the pre-registered Client, it tries once more with the secret an
+ * Admin just changed it to, for theirs may have replaced the old one already. One with no `revocation_endpoint` revokes as
+ * `revokers` has it, or not at all; throws when revoking fails, for the caller to log.
  */
 export async function revokeConnection(
 	{ tokens, issuer }: { tokens: ConnectionTokens; issuer: string },
 	{
-		oauthClient,
+		oauthClients = [],
 		registered,
 	}: {
-		oauthClient?: McpServer["oauthClient"];
+		/** The pre-registered Client as the Connection was made with it, then as an Admin changed it. */
+		oauthClients?: McpServer["oauthClient"][];
 		registered?: StoredOAuthClientInformation;
 	},
 	fetch: Fetch = globalThis.fetch,
@@ -657,31 +659,36 @@ export async function revokeConnection(
 	const endpoint = (metadata as { revocation_endpoint?: string } | undefined)
 		?.revocation_endpoint;
 	const { client_id } = tokens;
-	const client: Client | undefined = client_id
-		? ([oauthClient, registered].find((c) => c?.client_id === client_id) ?? {
-				client_id,
-			})
-		: undefined;
-	if (!endpoint)
-		return revokers[issuer]?.({
-			tokens,
-			issuer,
-			client,
-			metadata,
-			fetch: timed,
-		});
-	const body = new URLSearchParams(
-		tokens.refresh_token
-			? { token: tokens.refresh_token, token_type_hint: "refresh_token" }
-			: { token: tokens.access_token, token_type_hint: "access_token" },
-	);
-	const headers: Record<string, string> = {
-		"content-type": "application/x-www-form-urlencoded",
+	const known = client_id
+		? [...oauthClients, registered].filter((c) => c?.client_id === client_id)
+		: [];
+	const client: Client | undefined =
+		known[0] ?? (client_id ? { client_id } : undefined);
+	const rotated = known.find((c) => c?.client_secret !== client?.client_secret);
+	const revoke = async (as: Client | undefined) => {
+		if (!endpoint)
+			return revokers[issuer]?.({
+				tokens,
+				issuer,
+				client: as,
+				metadata,
+				fetch: timed,
+			});
+		const body = new URLSearchParams(
+			tokens.refresh_token
+				? { token: tokens.refresh_token, token_type_hint: "refresh_token" }
+				: { token: tokens.access_token, token_type_hint: "access_token" },
+		);
+		const headers: Record<string, string> = {
+			"content-type": "application/x-www-form-urlencoded",
+		};
+		// a confidential Client authenticates by HTTP Basic, a public one names itself
+		if (as?.client_secret) headers.authorization = basic(as);
+		else if (as) body.set("client_id", as.client_id);
+		const response = await timed(endpoint, { method: "POST", headers, body });
+		await response.body?.cancel();
+		if (!response.ok)
+			throw new Error(`${endpoint} answered ${response.status}`);
 	};
-	// a confidential Client authenticates by HTTP Basic, a public one names itself
-	if (client?.client_secret) headers.authorization = basic(client);
-	else if (client) body.set("client_id", client.client_id);
-	const response = await timed(endpoint, { method: "POST", headers, body });
-	await response.body?.cancel();
-	if (!response.ok) throw new Error(`${endpoint} answered ${response.status}`);
+	return rotated ? revoke(client).catch(() => revoke(rotated)) : revoke(client);
 }

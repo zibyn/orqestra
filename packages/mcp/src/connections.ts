@@ -34,6 +34,12 @@ const theirs = (userId: string, serverId: string) =>
 		eq(mcpConnection.mcpServerId, serverId),
 	);
 
+/** Holds the lock of the User's Connection until `tx` ends: refreshing it takes it, and so does deleting it, to revoke the latest tokens. */
+const lock = (tx: Tx, userId: string, serverId: string) =>
+	tx.execute(
+		sql`select pg_advisory_xact_lock(hashtext(${`mcp_connection:${userId}:${serverId}`}))`,
+	);
+
 export const connectionStore: ConnectionStore = {
 	async connection(userId, serverId) {
 		const row = await db.query.mcpConnection.findFirst({
@@ -44,9 +50,7 @@ export const connectionStore: ConnectionStore = {
 
 	lockConnection: (userId, serverId, fn) =>
 		db.transaction(async (tx) => {
-			await tx.execute(
-				sql`select pg_advisory_xact_lock(hashtext(${`mcp_connection:${userId}:${serverId}`}))`,
-			);
+			await lock(tx, userId, serverId);
 			// read committed: this sees what the lock's last holder wrote
 			const row = await tx.query.mcpConnection.findFirst({
 				where: theirs(userId, serverId),
@@ -196,7 +200,8 @@ export async function connectedUsers() {
 export interface DeletedConnection {
 	tokens: ConnectionTokens;
 	issuer: string;
-	oauthClient?: McpServer["oauthClient"];
+	/** The server's pre-registered Client as the Connection was made with it, then as an Admin changed it. */
+	oauthClients: McpServer["oauthClient"][];
 	registered?: Awaited<ReturnType<ConnectionStore["registeredClient"]>>;
 }
 
@@ -211,8 +216,8 @@ const deleted = (
 	});
 
 /**
- * Deletes the User's own Connection to the server, then revokes it as far as its authorization server lets it, as the server's
- * pre-registered or registered Client; false when there was none.
+ * Deletes the User's own Connection to the server once no Run is refreshing it, then revokes it as far as its authorization server
+ * lets it, as the server's pre-registered or registered Client; false when there was none.
  */
 export async function deleteConnection(
 	userId: string,
@@ -222,23 +227,35 @@ export async function deleteConnection(
 	const [server, registered, rows] = await Promise.all([
 		db.query.mcpServer.findFirst({ where: eq(mcpServer.id, serverId) }),
 		connectionStore.registeredClient(serverId),
-		db.delete(mcpConnection).where(theirs(userId, serverId)).returning(),
+		db.transaction(async (tx) => {
+			await lock(tx, userId, serverId);
+			return tx
+				.delete(mcpConnection)
+				.where(theirs(userId, serverId))
+				.returning();
+		}),
 	]);
 	if (!rows.length) return false;
-	const oauthClient = server && storedClient(server);
-	await revokeConnections(deleted(rows, { oauthClient, registered }), reach);
+	const oauthClients = [server && storedClient(server)];
+	await revokeConnections(deleted(rows, { oauthClients, registered }), reach);
 	return true;
 }
 
 /**
- * In `tx`, deletes every Connection to the server, its pending authorizations and its registered Client, the server's old
- * `oauthClient` being the one they were made as; what revoking them needs, after the commit.
+ * In `tx`, deletes every Connection to the server once no Run is refreshing it, its pending authorizations and its registered
+ * Client; `oauthClients` are the server's pre-registered Client as they were made with it, then as an Admin changed it. What
+ * revoking them needs, after the commit.
  */
 export async function clearConnections(
 	tx: Tx,
 	serverId: string,
-	oauthClient?: McpServer["oauthClient"],
+	...oauthClients: McpServer["oauthClient"][]
 ) {
+	const users = await tx
+		.select({ userId: mcpConnection.userId })
+		.from(mcpConnection)
+		.where(eq(mcpConnection.mcpServerId, serverId));
+	for (const { userId } of users) await lock(tx, userId, serverId);
 	const rows = await tx
 		.delete(mcpConnection)
 		.where(eq(mcpConnection.mcpServerId, serverId))
@@ -251,7 +268,7 @@ export async function clearConnections(
 		.where(eq(mcpRegisteredClient.mcpServerId, serverId))
 		.returning();
 	return deleted(rows, {
-		oauthClient,
+		oauthClients,
 		registered: client && opened(client.client),
 	});
 }
