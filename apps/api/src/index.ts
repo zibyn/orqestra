@@ -1,8 +1,8 @@
 import { createConversations } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
+import { s3Store } from "@orqestra/integrations/s3";
 import { connectionStore } from "@orqestra/mcp";
 import { backfillSkillFiles } from "@orqestra/skills";
-import { s3Store } from "@orqestra/tools/s3";
 import { z } from "zod";
 import { createApp } from "./app.ts";
 import { createCapabilities } from "./capabilities.ts";

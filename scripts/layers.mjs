@@ -7,16 +7,18 @@ import { join } from "node:path";
 // dependencies fail, so a cycle (which needs one upward edge) fails too.
 const LAYERS = {
 	"@orqestra/db": 0,
-	"@orqestra/linear": 1,
-	"@orqestra/mcp": 1,
-	"@orqestra/memory": 1,
-	"@orqestra/models": 1,
-	"@orqestra/skills": 1,
-	"@orqestra/tools": 1,
-	"@orqestra/agents": 2,
-	"@orqestra/conversations": 3,
-	"@orqestra/api": 4,
-	"@orqestra/worker": 4,
+	// the outside systems' clients, below every capability that uses them (ADR 0018)
+	"@orqestra/integrations": 1,
+	"@orqestra/linear": 2,
+	"@orqestra/mcp": 2,
+	"@orqestra/memory": 2,
+	"@orqestra/models": 2,
+	"@orqestra/skills": 2,
+	"@orqestra/tools": 2,
+	"@orqestra/agents": 3,
+	"@orqestra/conversations": 4,
+	"@orqestra/api": 5,
+	"@orqestra/worker": 5,
 };
 const WEB = "@orqestra/web";
 

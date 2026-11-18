@@ -40,7 +40,7 @@ const runs = await import("./runs.ts");
 const timers = await import("./timers.ts");
 const { memoryRun, noMcpServerDeletes } = await import("./testing.ts");
 const { memoryStore } = await import("@orqestra/db/store");
-const { memoryOrrery } = await import("@orqestra/tools/testing");
+const { memoryOrrery } = await import("@orqestra/integrations/testing");
 const { rememberUser, setSpendingLimit } = await import("./users.ts");
 const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 ** 31 };
 

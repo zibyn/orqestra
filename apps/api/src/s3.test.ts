@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { s3Store } from "@orqestra/tools/s3";
+import { s3Store } from "@orqestra/integrations/s3";
 
 // A stand-in S3 that takes single and multipart PUTs and records each request
 const requests: string[] = [];

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Turn } from "@orqestra/conversations";
 import { memoryRun } from "@orqestra/conversations/testing";
+import { memoryOrrery } from "@orqestra/integrations/testing";
 import {
 	finishConnection,
 	type McpServer,
@@ -15,7 +16,6 @@ import {
 	fakeAuthorizationServer,
 	memoryConnections,
 } from "@orqestra/mcp/testing";
-import { memoryOrrery } from "@orqestra/tools/testing";
 import { sandboxTools } from "./sandbox.ts";
 
 // bash in a Sandbox kept in memory, signed in to a Git Host whose authorization server answers as GitHub's does for a GitHub App

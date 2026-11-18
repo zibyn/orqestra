@@ -1,10 +1,7 @@
 import { db } from "@orqestra/db";
 import { conversation } from "@orqestra/db/schema";
-import {
-	type Orrery,
-	readySandbox,
-	type SandboxProvider,
-} from "@orqestra/tools";
+import type { SandboxClient } from "@orqestra/integrations";
+import { readySandbox, type SandboxProvider } from "@orqestra/tools";
 import { eq } from "drizzle-orm";
 
 /**
@@ -14,7 +11,7 @@ import { eq } from "drizzle-orm";
  */
 export const ensureSandbox = (
 	conversationId: string,
-	client: Orrery,
+	client: SandboxClient,
 	provider: SandboxProvider,
 	options: { signal?: AbortSignal } = {},
 ) =>

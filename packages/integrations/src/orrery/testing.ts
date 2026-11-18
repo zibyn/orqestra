@@ -1,13 +1,13 @@
 // An orrery client kept in memory, for testing what uses Sandboxes without an orrery.
 
-import {
-	type Exec,
-	type ExecRequest,
-	type Frame,
-	type Orrery,
-	OrreryError,
-	type SandboxState,
-} from "./orrery.ts";
+import type {
+	Exec,
+	ExecRequest,
+	Frame,
+	SandboxClient,
+	SandboxState,
+} from "../ports.ts";
+import { OrreryError } from "./index.ts";
 
 type Ran = {
 	stdout?: string;
@@ -69,7 +69,7 @@ export function memoryOrrery({
 			throw new TypeError("fetch failed", { cause: new Error("ECONNREFUSED") });
 	};
 
-	const client: Orrery = {
+	const client: SandboxClient = {
 		me: async () => {
 			call("me");
 			return { id: "u1", name: "orqestra" };

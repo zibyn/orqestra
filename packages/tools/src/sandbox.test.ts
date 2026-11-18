@@ -1,12 +1,12 @@
+import { orrery } from "@orqestra/integrations/orrery";
+import { memoryOrrery } from "@orqestra/integrations/testing";
 import { describe, expect, it } from "vitest";
-import { orrery } from "./orrery.ts";
 import {
 	type ClaimSandbox,
 	readySandbox,
 	runCommand,
 	workspacePath,
 } from "./sandbox.ts";
-import { memoryOrrery } from "./testing.ts";
 
 const provider = { url: "http://o", token: "t", cpu: 2, memory: 2 * 1024 ** 3 };
 

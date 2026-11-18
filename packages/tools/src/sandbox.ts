@@ -1,14 +1,22 @@
 // Using a Sandbox through the orrery client: getting one ready, and running a command to its end.
 import { posix } from "node:path";
+import type { ExecRequest, Frame, SandboxClient } from "@orqestra/integrations";
 import {
-	type ExecRequest,
-	type Frame,
 	frameBytes,
 	frameEnd,
-	type Orrery,
 	OrreryError,
-	type SandboxProvider,
-} from "./orrery.ts";
+} from "@orqestra/integrations/orrery";
+
+/** The configured Sandbox Provider: orrery's address and API Token, and what each Sandbox is created with. */
+export interface SandboxProvider {
+	url: string;
+	token: string;
+	/** A Snapshot name or SnapshotVersion id; undefined uses orrery's default Platform Snapshot. */
+	snapshot?: string;
+	cpu: number;
+	/** Bytes. */
+	memory: number;
+}
 
 /**
  * Where a Sandbox's id is kept. Under a lock: answers the stored id, unless there is none or it is `replacing`;
@@ -29,7 +37,7 @@ export const SANDBOX_READY_MS = 5 * 60_000;
  * Throws an OrreryError, a network error, or an Error saying why it never became ready.
  */
 export async function readySandbox(
-	client: Orrery,
+	client: SandboxClient,
 	provider: SandboxProvider,
 	claim: ClaimSandbox,
 	{
@@ -131,7 +139,7 @@ const MAX_STREAM_BYTES = 1024 * 1024;
  * output as orrery's SDKs do. Aborting `signal` cancels it.
  */
 export async function runCommand(
-	client: Orrery,
+	client: SandboxClient,
 	sandbox: string,
 	command: string,
 	{
