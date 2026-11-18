@@ -148,6 +148,7 @@ Admin 在 `/console/agents` 新建、编辑、删除 Agent，保存后 api 和 w
 - Tools 全选表示所有 Tool（包括以后新增的）。
 - 恰好一个默认 Agent，且必须是用户可选的；默认 Agent 不能删除。删除 Agent 后它的对话变为只读。
 - 关闭“用户可选”的 Agent 只作为子智能体（Subagent）模板。Agent 可通过 `subagent` Tool 把任务交给 Subagent，Subagent 从空白上下文开始，只把最终结果交回。
+- Orqestra 不内置 Skill。[docs/skills/git](docs/skills/git/SKILL.md) 是 Agent 在 Sandbox 里改代码、推送、开 PR 的 Git 约定示例：Admin 在 `/console/skills` 把这个目录打成 zip 上传（`cd docs/skills && zip -r git.zip git`），再在 Agent 的 Skills 里勾选。
 
 ### 输出 Run 追踪
 
