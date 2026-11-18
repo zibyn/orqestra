@@ -1,7 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { fauxProvider } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/agents";
-import { createConversations, type Snapshots } from "@orqestra/conversations";
+import {
+	createConversations,
+	type RunHandle,
+	type Snapshots,
+} from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import {
 	agent as agentRow,
@@ -20,7 +24,7 @@ import {
 } from "@orqestra/linear/testing";
 import { memoryStore } from "@orqestra/tools/testing";
 import { eq, sql } from "drizzle-orm";
-import { handleLinearEvent } from "./linear.ts";
+import { handleLinearEvent, reportingToLinear } from "./linear.ts";
 
 // Linear Agent Session events becoming Conversations, against a migrated, throwaway Postgres (TEST_DATABASE_URL, wiped before every
 // test) and the real @orqestra/conversations; Linear is a fake behind the injected fetch. No worker runs, so Runs stay queued.
@@ -227,5 +231,39 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 			type: "response",
 			body: "Stopped.",
 		});
+	});
+
+	it("cuts a reply longer than Linear takes to its 250,000 characters, saying so", async () => {
+		await deliver(agentSessionEvent());
+		const [opened] = await conversationsOf("u1");
+		// the Run's handle as far as the reply uses it
+		const run = {
+			conversationId: opened.id,
+			signal: new AbortController().signal,
+			save: async () => {},
+			finish: async () => [],
+		} as unknown as RunHandle;
+		// cut at either parity, so one of them between the halves of a surrogate pair
+		for (const long of ["😀".repeat(130_000), `x${"😀".repeat(130_000)}`]) {
+			await reportingToLinear(
+				async (run) => {
+					await run.save(fauxAssistantMessage(long));
+					await run.finish();
+				},
+				{ fetch: linear.fetch },
+			)(run, undefined as never);
+
+			const { type, body = "" } = linear.activities.at(-1)?.content ?? {};
+			expect(type).toBe("response");
+			expect(body.length).toBeLessThanOrEqual(250_000);
+			expect(body.length).toBeGreaterThan(249_000);
+			// a lone half of a surrogate pair throws
+			expect(() => encodeURIComponent(body)).not.toThrow();
+			const [kept, marker] = body.split("\n\n[Cut short");
+			expect(long.startsWith(kept)).toBe(true);
+			expect(marker).toBe(
+				": longer than Linear shows. The whole of it is in the Conversation in Orqestra.]",
+			);
+		}
 	});
 });
