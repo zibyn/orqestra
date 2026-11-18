@@ -5,6 +5,7 @@ import {
 	createConversations,
 	type RunHandle,
 	type Snapshots,
+	SpendingLimitReached,
 } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import {
@@ -24,7 +25,11 @@ import {
 	signed,
 } from "@orqestra/linear/testing";
 import { eq, sql } from "drizzle-orm";
-import { handleLinearEvent, reportingToLinear } from "./linear.ts";
+import {
+	handleLinearEvent,
+	reportFailureToLinear,
+	reportingToLinear,
+} from "./linear.ts";
 
 // Linear Agent Session events becoming Conversations, against a migrated, throwaway Postgres (TEST_DATABASE_URL, wiped before every
 // test) and the real @orqestra/conversations; Linear is a fake behind the injected fetch. No worker runs, so Runs stay queued.
@@ -233,6 +238,176 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		expect(linear.activities.at(-1)?.content).toEqual({
 			type: "response",
 			body: "Stopped.",
+		});
+	});
+
+	it("names the User by the most recently active of those with the creator's email, ignoring case", async () => {
+		await db.insert(user).values({
+			id: "u-old",
+			name: "Old Uma",
+			email: "UMA@example.com",
+			lastActiveAt: new Date("2020-01-01"),
+		});
+		await deliver(agentSessionEvent());
+		await db.insert(user).values({
+			id: "u-new",
+			name: "New Uma",
+			email: "uma@EXAMPLE.com",
+			lastActiveAt: new Date(Date.now() + 60_000),
+		});
+		await deliver(agentSessionEvent({ sessionId: "session-2" }));
+
+		expect(await conversationsOf("u1")).toHaveLength(1);
+		expect(await conversationsOf("u-new")).toHaveLength(1);
+		expect(await conversationsOf("u-old")).toEqual([]);
+	});
+
+	it("tells a session no person started to sign in first, opening nothing", async () => {
+		await handleLinearEvent(
+			{
+				id: "created-session-1",
+				agentSessionId: "session-1",
+				action: "created",
+				from: null,
+				issue: null,
+				text: null,
+				stop: false,
+			},
+			conversations,
+			{ fetch: linear.fetch },
+		);
+		expect(await db.select().from(conversation)).toEqual([]);
+		expect(linear.activities).toEqual([
+			{
+				agentSessionId: "session-1",
+				content: {
+					type: "error",
+					body: "Sign in to Orqestra first, then reply here.",
+				},
+			},
+		]);
+	});
+
+	it("tells the session why Orqestra refused to open its Conversation, and opens none", async () => {
+		// an Agent the installation picked that no Run can use
+		await db.insert(agentRow).values({ id: "coder", definition: coder });
+		await db.update(linearInstallation).set({ defaultAgentId: "coder" });
+		const offline = createConversations({
+			capabilities: {
+				current: async () =>
+					({
+						agents: [general],
+						defaultAgent: general,
+						models: faux.models,
+						skills: {},
+						tools: {},
+					}) as unknown as Snapshots,
+				skillFiles: async () => [],
+				mcpServers: { write: async () => [] as never },
+				agents: { forget: async () => {} },
+			},
+			store: memoryStore().store,
+		});
+		const { body, signature } = signed(agentSessionEvent(), secret);
+		const event = await linearWebhookEvent(body, signature);
+		if (!event) throw new Error("not an event Orqestra acts on");
+		await handleLinearEvent(event, offline, { fetch: linear.fetch });
+
+		expect(await db.select().from(conversation)).toEqual([]);
+		expect(linear.activities).toEqual([
+			{
+				agentSessionId: "session-1",
+				content: { type: "error", body: "This Agent is offline" },
+			},
+		]);
+	});
+
+	it("confirms a stop for a session with no Conversation", async () => {
+		await deliver(agentSessionEvent({ prompt: "Stop", signal: "stop" }));
+		expect(await db.select().from(conversation)).toEqual([]);
+		expect(linear.activities.map((a) => a.content)).toEqual([
+			{ type: "response", body: "Stopped." },
+		]);
+	});
+
+	it("posts nothing for a prompt it sends to the Conversation, and sends none with no text", async () => {
+		await deliver(agentSessionEvent());
+		await deliver(agentSessionEvent({ prompt: "Also check Firefox." }));
+		await deliver(agentSessionEvent({ prompt: "" }));
+
+		const [opened] = await conversationsOf("u1");
+		expect((await inputsOf(opened.id)).map((i) => i.text).slice(1)).toEqual([
+			"Also check Firefox.",
+		]);
+		expect(linear.activities.map((a) => a.content.type)).toEqual(["thought"]);
+	});
+
+	describe("closing a turn", () => {
+		/** The session's Conversation, opened, and the job its Run was queued as. */
+		const opened = async () => {
+			await deliver(agentSessionEvent());
+			const [conv] = await conversationsOf("u1");
+			if (!conv.jobId) throw new Error("no Run queued");
+			return { id: conv.id, jobId: conv.jobId };
+		};
+		const replied = (conversationId: string, jobId: string, text: string) =>
+			reportingToLinear(
+				async (run) => {
+					await run.save(fauxAssistantMessage(text));
+					await run.finish();
+				},
+				{ fetch: linear.fetch },
+			)(
+				{
+					conversationId,
+					jobId,
+					signal: new AbortController().signal,
+					save: async () => {},
+					finish: async () => [],
+				} as unknown as RunHandle,
+				undefined as never,
+			);
+
+		it("posts nothing for a stop once the Run's reply closed its turn", async () => {
+			const { id, jobId } = await opened();
+			await replied(id, jobId, "Done.");
+			await deliver(agentSessionEvent({ prompt: "Stop", signal: "stop" }));
+
+			expect(linear.activities.map((a) => a.content)).toEqual([
+				{ type: "thought", body: "Working on this in Orqestra." },
+				{ type: "response", body: "Done." },
+			]);
+		});
+
+		it("posts a failure once per Run, saying so when the Spending Limit refused it, and nothing after its reply", async () => {
+			const { id, jobId } = await opened();
+			await reportFailureToLinear(id, new SpendingLimitReached(), jobId, {
+				fetch: linear.fetch,
+			});
+			await reportFailureToLinear(id, new Error("again"), jobId, {
+				fetch: linear.fetch,
+			});
+			await replied(id, "job-2", "Done.");
+			await reportFailureToLinear(id, new Error("late"), "job-2", {
+				fetch: linear.fetch,
+			});
+
+			expect(linear.activities.map((a) => a.content).slice(1)).toEqual([
+				{
+					type: "error",
+					body: "This month's Spending Limit is used up, so the request was not sent.",
+				},
+				{ type: "response", body: "Done." },
+			]);
+		});
+
+		it("posts nothing for a Run of a Conversation of no session", async () => {
+			const id = await conversations.send("u1", { text: "Hi" });
+			await replied(id, "job-x", "Hello.");
+			await reportFailureToLinear(id, new Error("down"), "job-y", {
+				fetch: linear.fetch,
+			});
+			expect(linear.activities).toEqual([]);
 		});
 	});
 
