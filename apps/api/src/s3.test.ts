@@ -9,6 +9,12 @@ const server = Bun.serve({
 		const url = new URL(req.url);
 		await req.arrayBuffer();
 		requests.push(`${req.method} ${url.pathname}`);
+		// lists one object under mute/, and never answers its delete
+		if (url.searchParams.get("prefix") === "mute/")
+			return new Response(
+				"<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>mute/k</Key></Contents></ListBucketResult>",
+			);
+		if (url.pathname === "/b/mute/k") return new Promise<Response>(() => {});
 		if (url.searchParams.has("uploads"))
 			return new Response(
 				"<InitiateMultipartUploadResult><UploadId>u</UploadId></InitiateMultipartUploadResult>",
@@ -49,7 +55,14 @@ describe("s3Store", () => {
 		expect(requests.at(-1)).toBe("DELETE /b/k");
 	});
 
-	it("gives up once the signal aborts, though storage never answers", async () => {
+	it("gives up deleting once the signal aborts, though storage never answers a delete", async () => {
+		await expect(
+			store.deletePrefix("mute/", { signal: AbortSignal.timeout(100) }),
+		).rejects.toThrow(/timed out/);
+		expect(requests.at(-1)).toBe("DELETE /b/mute/k");
+	});
+
+	it("gives up putting or deleting once the signal aborts, though storage never answers", async () => {
 		const mute = Bun.listen({
 			hostname: "127.0.0.1",
 			port: 0,
@@ -66,6 +79,9 @@ describe("s3Store", () => {
 				silent.put("k", new Response("hi").body as ReadableStream<Uint8Array>, {
 					signal: AbortSignal.timeout(100),
 				}),
+			).rejects.toThrow(/timed out/);
+			await expect(
+				silent.deletePrefix("p/", { signal: AbortSignal.timeout(100) }),
 			).rejects.toThrow(/timed out/);
 		} finally {
 			mute.stop(true);

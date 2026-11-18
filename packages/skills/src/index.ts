@@ -69,8 +69,8 @@ const hash = (content: Uint8Array) =>
 const lockSkill = (tx: Tx, name: string) =>
 	tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`skill:${name}`}))`);
 
-/** How long a Skill's puts may hold its lock, and a database connection. */
-const PUT_TIMEOUT_MS = 60_000;
+/** How long a Skill's puts, or the deletion of its objects, may hold its lock and a database connection. */
+const STORAGE_TIMEOUT_MS = 60_000;
 
 /**
  * Puts the files the Skill's objects lack, with the Skill locked. One a file of the Skill already names is never put again,
@@ -91,8 +91,9 @@ async function putFiles(
 	const missing = new Map(
 		files.filter((f) => !known.has(f.sha256)).map((f) => [f.sha256, f]),
 	);
-	const signal = AbortSignal.timeout(PUT_TIMEOUT_MS);
-	await Promise.all(
+	const signal = AbortSignal.timeout(STORAGE_TIMEOUT_MS);
+	// every put ends before the lock is released: a failed one's delete could land after the next save's put of its key
+	const settled = await Promise.allSettled(
 		[...missing.values()].map((f) =>
 			store.put(
 				objectKey(name, f.sha256),
@@ -101,6 +102,8 @@ async function putFiles(
 			),
 		),
 	);
+	const failed = settled.find((r) => r.status === "rejected");
+	if (failed) throw failed.reason;
 }
 
 /** A version's files, paths relative to the Skill's folder, or only the one at `path`; for Runs, by the `versionId` of `current()`. */
@@ -439,7 +442,10 @@ export function createSkills(db: Db, store: ObjectStore) {
 						.select({ name: skill.name })
 						.from(skill)
 						.where(eq(skill.name, name));
-					if (!again) await store.deletePrefix(skillPrefix(name));
+					if (!again)
+						await store.deletePrefix(skillPrefix(name), {
+							signal: AbortSignal.timeout(STORAGE_TIMEOUT_MS),
+						});
 				})
 				.catch((error) =>
 					console.error(`Skill ${name}'s files are left in storage`, error),

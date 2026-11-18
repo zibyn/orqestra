@@ -16,8 +16,14 @@ export interface ObjectStore {
 	get(
 		key: string,
 	): Promise<{ body: ReadableStream<Uint8Array>; size: number } | undefined>;
-	/** Deletes every object whose key starts with `prefix`. */
-	deletePrefix(prefix: string): Promise<void>;
+	/**
+	 * Deletes every object whose key starts with `prefix`. Rejects once `signal` aborts, sending no more deletes: one
+	 * storage has not answered may still land.
+	 */
+	deletePrefix(
+		prefix: string,
+		options?: { signal?: AbortSignal },
+	): Promise<void>;
 }
 
 /** Object storage kept in memory, by key, for tests; `objects` shows what it holds. */

@@ -19,7 +19,8 @@ const db = drizzle(url ?? "", { schema });
 const { store: memory, objects } = memoryStore();
 /**
  * Puts wait for `puts.before`, then fail once `puts.left` reaches 0, deleting the key as s3Store does after a failed
- * multipart upload. With `deletes.fail`, deleting a prefix stops after its first object; `deletes.after` runs after one.
+ * multipart upload. Deleting a prefix waits for `deletes.before`; with `deletes.fail` it stops after its first object;
+ * `deletes.after` runs after one.
  */
 const puts = {
 	left: Number.POSITIVE_INFINITY,
@@ -28,6 +29,7 @@ const puts = {
 		| undefined,
 };
 const deletes = {
+	before: undefined as ((signal?: AbortSignal) => Promise<void>) | undefined,
 	fail: false,
 	after: undefined as (() => Promise<void>) | undefined,
 };
@@ -41,7 +43,8 @@ const store: ObjectStore = {
 		}
 		await memory.put(key, body);
 	},
-	deletePrefix: async (prefix) => {
+	deletePrefix: async (prefix, options) => {
+		await deletes.before?.(options?.signal);
 		if (deletes.fail) {
 			objects.delete(
 				[...objects.keys()].find((k) => k.startsWith(prefix)) ?? "",
@@ -64,6 +67,7 @@ describe.skipIf(!url)("@orqestra/skills writes (Postgres)", () => {
 		objects.clear();
 		puts.left = Number.POSITIVE_INFINITY;
 		puts.before = undefined;
+		deletes.before = undefined;
 		deletes.fail = false;
 		deletes.after = undefined;
 	});
@@ -474,6 +478,94 @@ describe.skipIf(!url)("@orqestra/skills writes (Postgres)", () => {
 			[1, "v1"],
 		]);
 		expect(await currentFiles("pdf")).toMatchObject({ "b.py": "saves" });
+	});
+
+	it("keeps every file of a save queued behind one that failed, though its other puts fail later", async () => {
+		await skills.upload(skillZip("pdf", "v1"), false);
+		let release = () => {};
+		const held = new Promise<void>((r) => {
+			release = r;
+		});
+		let xFailed = () => {};
+		const xGone = new Promise<void>((r) => {
+			xFailed = r;
+		});
+		let first = true;
+		puts.before = async (key) => {
+			if (key.endsWith(sha256("fails"))) {
+				await held;
+				objects.delete(key);
+				throw new Error("object storage is down");
+			}
+			if (!key.endsWith(sha256("x")) || !first) return;
+			first = false;
+			await held;
+			await new Promise((r) => setTimeout(r, 300));
+			objects.delete(key);
+			xFailed();
+			throw new Error("object storage is down");
+		};
+		const a = skills.upload(
+			skillZip("pdf", "a", { "x.py": "x", "y.py": "fails" }),
+			true,
+		);
+		await new Promise((r) => setTimeout(r, 100));
+		const b = skills.upload(skillZip("pdf", "b", { "x.py": "x" }), true);
+		await new Promise((r) => setTimeout(r, 200));
+		release();
+		const settled = await Promise.allSettled([a, b]);
+		await xGone;
+		expect(settled.map((s) => s.status)).toEqual(["rejected", "fulfilled"]);
+		expect(await currentFiles("pdf")).toMatchObject({ "x.py": "x" });
+	});
+
+	it("holds the name while a deleted Skill's files go, so an upload under it meanwhile keeps its own", async () => {
+		await skills.upload(skillZip("pdf", "old", { "a.py": "old" }), false);
+		let upload: Promise<unknown> | undefined;
+		deletes.before = async () => {
+			deletes.before = undefined;
+			upload = skills.upload(skillZip("pdf", "new", { "a.py": "new" }), false);
+			// long enough for it to save, were the name not held
+			await Promise.race([upload, new Promise((r) => setTimeout(r, 200))]);
+		};
+		await skills.delete("pdf");
+		expect(await upload).toEqual({ errors: {}, name: "pdf" });
+		expect(await currentFiles("pdf")).toEqual({
+			"SKILL.md": "---\nname: pdf\ndescription: new\n---\nBody\n",
+			"a.py": "new",
+		});
+	});
+
+	it("deletes a Skill whose object storage stops answering once its time is up, freeing the name", async () => {
+		await skills.upload(skillZip("pdf", "d", { "a.py": "print(1)" }), false);
+		deletes.before = (signal) =>
+			new Promise<void>((_, reject) => {
+				deletes.before = undefined;
+				if (!signal) return;
+				signal.addEventListener("abort", () => reject(signal.reason));
+				if (signal.aborted) reject(signal.reason);
+			});
+		const timeout = vi
+			.spyOn(AbortSignal, "timeout")
+			.mockImplementation(() =>
+				AbortSignal.abort(new DOMException("timed out", "TimeoutError")),
+			);
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			await skills.delete("pdf");
+			expect(logged).toHaveBeenCalledWith(
+				"Skill pdf's files are left in storage",
+				expect.objectContaining({ name: "TimeoutError" }),
+			);
+		} finally {
+			timeout.mockRestore();
+			logged.mockRestore();
+		}
+		expect(await skills.list()).toEqual([]);
+		expect(await skills.upload(skillZip("pdf", "d"), false)).toEqual({
+			errors: {},
+			name: "pdf",
+		});
 	});
 
 	it("ends a save whose object storage stops answering once its time is up, freeing the Skill", async () => {
