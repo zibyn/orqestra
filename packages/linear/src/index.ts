@@ -47,7 +47,7 @@ export const linearConversationsInput = z.object({
 		z
 			.string()
 			.trim()
-			.regex(/^[\w.-]+\/[\w.-]+$/, "owner/repo"),
+			.regex(/^[\w.-]+\/[\w.-]+$/, "must be owner/repo"),
 	),
 });
 

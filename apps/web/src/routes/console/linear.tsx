@@ -266,9 +266,13 @@ function LinearConversations() {
 		}
 	}
 
-	const reposError = Object.entries(errors).find(([field]) =>
-		field.startsWith("teamRepos"),
-	)?.[1];
+	// "teamRepos.OPS": the team whose line it refused
+	const reposError = Object.entries(errors)
+		.filter(([field]) => field.startsWith("teamRepos"))
+		.map(([field, text]) =>
+			`${field.replace(/^teamRepos\.?/, "")} ${text}`.trim(),
+		)
+		.join("; ");
 
 	return (
 		<Card>
