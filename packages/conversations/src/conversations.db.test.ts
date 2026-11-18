@@ -2901,6 +2901,43 @@ describe.skipIf(!url)(
 			expect((await get(id))?.status).toBe("idle");
 		});
 
+		it("runs no ghost of a finished Run that the worker's startup requeue queued again", async () => {
+			let ran = false;
+			script({
+				parent: [
+					() => {
+						ran = true;
+						return "ghost";
+					},
+				],
+			});
+			// Run "run-1" has ended and its job is gone; a wake input waits for the next Run's start
+			const [{ id }] = await db
+				.insert(schema.conversation)
+				.values({ userId, agentId: "faux", status: "idle", jobId: "run-1" })
+				.returning({ id: schema.conversation.id });
+			await db.insert(schema.inbox).values({
+				conversationId: id,
+				message: { role: "user", content: "hi", timestamp: Date.now() },
+				model: "faux/faux-1",
+				thinkingLevel: "off",
+				wake: true,
+			});
+			// the requeue read "run-1" while the Run was still going, and adds it after it finished
+			const queue = runs.runQueue(runs.AGENT_RUNS_QUEUE);
+			await queue.add(
+				"run",
+				{ conversationId: id },
+				{ jobId: "run-1", removeOnComplete: true },
+			);
+			await waitFor(async () => !(await queue.getJob("run-1")), Boolean);
+			const view = await get(id);
+			expect(ran).toBe(false);
+			expect(view?.status).toBe("idle");
+			// the input still waits, unanswered, for a Run that starts it
+			expect(view?.messages.map((m) => m.message.role)).toEqual(["user"]);
+		});
+
 		it("fails a run whose worker crashed, so it can be retried", async () => {
 			await stopWorker();
 			let picked = false;

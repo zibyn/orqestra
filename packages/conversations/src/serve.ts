@@ -290,6 +290,7 @@ async function stopped(
 /** A failed or crashed Run: a top-level Conversation is marked failed; a Subagent fails, and its Notification wakes the parent. */
 async function failed(
 	conversationId: string,
+	jobId: string | undefined,
 	error: Error,
 	config: () => Promise<Snapshots>,
 	mcp?: McpAccess,
@@ -297,7 +298,8 @@ async function failed(
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
-	if (!conv) return;
+	// a job requeued after its Run ended failed: the Run it would end is another's
+	if (!conv || (conv.jobId && conv.jobId !== jobId)) return;
 	if (!conv.parentId) {
 		// one Alert: a failure that auto-paused the Firing's task says so
 		const paused = await endRun(
@@ -328,13 +330,21 @@ async function execute(
 	const { config, mcp } = deps;
 	// listening for a Stop before reading the row, which holds one sent before this listened
 	const stop = new AbortController();
+	const prev = active.get(conversationId);
 	active.set(conversationId, stop);
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
-	if (!conv) {
-		active.delete(conversationId);
-		return; // deleted while queued
+	// deleted while queued, or a job the startup requeue added again after its Run ended: not this Conversation's Run
+	if (
+		!conv ||
+		conv.status !== "running" ||
+		(conv.jobId && conv.jobId !== jobId)
+	) {
+		// the real Run, if this process runs it, keeps listening for its Stop
+		if (prev) active.set(conversationId, prev);
+		else active.delete(conversationId);
+		return;
 	}
 	if (jobId && conv.stoppedJobId === jobId) stop.abort();
 	const sub = conv.parentId ? conversationId : undefined;
@@ -840,8 +850,9 @@ export async function serveRuns(
 		worker.on("failed", (job, err) => {
 			console.error(`job ${job?.id} failed`, err);
 			if (job)
-				void failed(job.data.conversationId, err, config, mcp).catch((error) =>
-					console.error(`could not mark job ${job.id}'s Run failed`, error),
+				void failed(job.data.conversationId, job.id, err, config, mcp).catch(
+					(error) =>
+						console.error(`could not mark job ${job.id}'s Run failed`, error),
 				);
 		});
 		worker.on("error", (err) => console.error("worker error", err));
