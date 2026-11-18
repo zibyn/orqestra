@@ -12,7 +12,6 @@ import { createPostgresBackend, Worker } from "bullmq";
 import {
 	afterAll,
 	afterEach,
-	beforeAll,
 	beforeEach,
 	describe,
 	expect,
@@ -331,10 +330,6 @@ describe.skipIf(!url)(
 		const serve = (options = {}) =>
 			conversations.serveRuns(scripted, { concurrency: 1, ...options });
 
-		beforeAll(async () => {
-			// the script is one shared queue, so Runs go one at a time; "works on several Runs at once" lifts that
-			stopWorker = await serve();
-		});
 		afterAll(() => stopWorker?.());
 
 		beforeEach(async () => {
@@ -344,7 +339,11 @@ describe.skipIf(!url)(
 			await db.execute(
 				sql`select pg_notify(${runs.STOP_CHANNEL}, id::text) from conversation where status = 'running'`,
 			);
+			// a Run the last test left winding down would deadlock with the truncate: stopping the worker waits for it
+			await stopWorker?.();
 			await db.execute(sql`truncate conversation, memory_setting cascade`);
+			// the script is one shared queue, so Runs go one at a time; "works on several Runs at once" lifts that
+			stopWorker = await serve();
 		});
 
 		it("streams a Run's events to whoever subscribes", async () => {
@@ -2179,6 +2178,7 @@ describe.skipIf(!url)(
 				expect(origins).toEqual([null, "timer", null, null]);
 			});
 
+			// 3.5 s of real time by design: two Runs each run out the 1-second limit, then an attended one outlasts it
 			it("are aborted past the wall-clock limit, as a stop that is no User's, and end partial; attended Runs are not", async () => {
 				config.limits = { ...DEFAULT_LIMITS, unattendedMaxDuration: 1 };
 				let reason: unknown;
@@ -2229,7 +2229,7 @@ describe.skipIf(!url)(
 				expect(messageText(attended?.messages[9].message as Message)).toBe(
 					"slow but whole",
 				);
-			});
+			}, 15_000);
 		});
 
 		describe("Timer", () => {
@@ -2383,12 +2383,14 @@ describe.skipIf(!url)(
 
 			it("delivers its note at the next step boundary of a Run under way", async () => {
 				const { gate: rung, release } = gate();
+				const { gate: searching, release: search } = gate();
 				let delivered: Message[] = [];
 				script({
 					parent: [
 						call(setTimer(600, "check")),
 						call(
 							tool(async () => {
+								search();
 								await rung;
 								return "found";
 							}),
@@ -2400,7 +2402,8 @@ describe.skipIf(!url)(
 					],
 				});
 				const id = await send("hi");
-				await waitFor(timerOf.bind(null, id), (t) => !!t);
+				// past the boundary after set_timer, so only the next one can deliver it
+				await searching;
 				await ring(id);
 				release();
 				await waitFor(() => get(id), idle(7));
