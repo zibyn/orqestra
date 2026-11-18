@@ -1223,6 +1223,11 @@ describe.skipIf(!url)(
 				expect(waiting?.messages.some((m) => m.subagentId === lead.id)).toBe(
 					false,
 				);
+				// the lead goes idle inside its drain, before its job returns and the helper's Run can start
+				await waitFor(
+					async () => deepest,
+					(d) => d !== null,
+				);
 				expect(deepest).toBeUndefined();
 
 				release();
