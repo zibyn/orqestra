@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ObjectStore } from "@orqestra/db/store";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SkillFile } from "./shared.ts";
 
 // Writes through the interface against a migrated, throwaway Postgres: TEST_DATABASE_URL is wiped before every test
@@ -17,16 +17,39 @@ const {
 const { zip } = await import("./test-zip.ts");
 const db = drizzle(url ?? "", { schema });
 const { store: memory, objects } = memoryStore();
-/** Puts fail once `puts.left` reaches 0, deleting the key as s3Store does after a failed multipart upload. */
-const puts = { left: Number.POSITIVE_INFINITY };
+/**
+ * Puts wait for `puts.before`, then fail once `puts.left` reaches 0, deleting the key as s3Store does after a failed
+ * multipart upload. With `deletes.fail`, deleting a prefix stops after its first object; `deletes.after` runs after one.
+ */
+const puts = {
+	left: Number.POSITIVE_INFINITY,
+	before: undefined as
+		| ((key: string, signal?: AbortSignal) => Promise<void>)
+		| undefined,
+};
+const deletes = {
+	fail: false,
+	after: undefined as (() => Promise<void>) | undefined,
+};
 const store: ObjectStore = {
 	...memory,
-	put: async (key, body) => {
+	put: async (key, body, options) => {
+		await puts.before?.(key, options?.signal);
 		if (puts.left-- <= 0) {
 			objects.delete(key);
 			throw new Error("object storage is down");
 		}
 		await memory.put(key, body);
+	},
+	deletePrefix: async (prefix) => {
+		if (deletes.fail) {
+			objects.delete(
+				[...objects.keys()].find((k) => k.startsWith(prefix)) ?? "",
+			);
+			throw new Error("object storage is down");
+		}
+		await memory.deletePrefix(prefix);
+		await deletes.after?.();
 	},
 };
 const skills = createSkills(db, store);
@@ -40,6 +63,9 @@ describe.skipIf(!url)("@orqestra/skills writes (Postgres)", () => {
 		await reset();
 		objects.clear();
 		puts.left = Number.POSITIVE_INFINITY;
+		puts.before = undefined;
+		deletes.fail = false;
+		deletes.after = undefined;
 	});
 	afterAll(async () => {
 		await reset();
@@ -349,6 +375,135 @@ describe.skipIf(!url)("@orqestra/skills writes (Postgres)", () => {
 		expect(objects.size).toBe(2);
 	});
 
+	it("deletes a Skill though object storage fails partway, and its name takes every file of a new upload", async () => {
+		const files = { "a.py": "print(1)" };
+		await skills.upload(skillZip("pdf", "d", files), false);
+		deletes.fail = true;
+		const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+		await skills.delete("pdf");
+		logged.mockRestore();
+		expect(await skills.list()).toEqual([]);
+		// the file left is named by nothing
+		expect(objects.size).toBe(1);
+		deletes.fail = false;
+		await skills.upload(skillZip("pdf", "d", files), false);
+		expect(await currentFiles("pdf")).toEqual({
+			"SKILL.md": "---\nname: pdf\ndescription: d\n---\nBody\n",
+			"a.py": "print(1)",
+		});
+		await skills.delete("pdf");
+		expect(objects.size).toBe(0);
+	});
+
+	it("lets a Run reading a Skill being deleted find all its files, or no version", async () => {
+		await skills.upload(skillZip("pdf", "d", { "a.py": "print(1)" }), false);
+		const { versionId } = (await skills.current()).pdf;
+		let read: unknown;
+		deletes.after = async () => {
+			read = await skillFiles(versionId).catch((error) => error);
+		};
+		await skills.delete("pdf");
+		expect(read).toEqual([]);
+	});
+
+	it("keeps the files of a Skill uploaded under the name while the deleted one's go", async () => {
+		await skills.upload(skillZip("pdf", "old", { "a.py": "old" }), false);
+		// the upload lands after the delete's rows are gone, before its objects go
+		let transactions = 0;
+		const racing = createSkills(
+			Object.assign(Object.create(db), {
+				transaction: async (fn: Parameters<typeof db.transaction>[0]) => {
+					if (++transactions === 2)
+						await skills.upload(
+							skillZip("pdf", "new", { "a.py": "new" }),
+							false,
+						);
+					return db.transaction(fn);
+				},
+			}),
+			store,
+		);
+		await racing.delete("pdf");
+		expect(transactions).toBe(2);
+		expect(await currentFiles("pdf")).toEqual({
+			"SKILL.md": "---\nname: pdf\ndescription: new\n---\nBody\n",
+			"a.py": "new",
+		});
+	});
+
+	it("saves two versions of a Skill at once one after the other, so neither takes the other's number or files", async () => {
+		await skills.upload(skillZip("pdf", "v1"), false);
+		/** Saves two with the same b.py at once, the first's put of it held until the second has had time to run, then ending as `first`. */
+		async function race(first: "fails" | "saves") {
+			let release = () => {};
+			const held = new Promise<void>((r) => {
+				release = r;
+			});
+			let reached = () => {};
+			const putting = new Promise<void>((r) => {
+				reached = r;
+			});
+			puts.before = async (key) => {
+				if (!key.endsWith(sha256(first))) return;
+				puts.before = undefined;
+				reached();
+				await held;
+				if (first === "fails") {
+					objects.delete(key);
+					throw new Error("object storage is down");
+				}
+			};
+			const a = skills.upload(skillZip("pdf", "a", { "b.py": first }), true);
+			await putting;
+			const b = skills.upload(skillZip("pdf", "b", { "b.py": first }), true);
+			await new Promise((r) => setTimeout(r, 200));
+			release();
+			const [saved, other] = await Promise.allSettled([a, b]);
+			return [saved.status, other.status];
+		}
+		// the first's failed put deletes its object, which the second would have put meanwhile without the lock
+		expect(await race("fails")).toEqual(["rejected", "fulfilled"]);
+		expect(await currentFiles("pdf")).toMatchObject({ "b.py": "fails" });
+		// the second would have landed first without the lock
+		expect(await race("saves")).toEqual(["fulfilled", "fulfilled"]);
+		const [{ versions }] = await skills.list();
+		expect(versions.map((v) => [v.number, v.description])).toEqual([
+			[4, "b"],
+			[3, "a"],
+			[2, "b"],
+			[1, "v1"],
+		]);
+		expect(await currentFiles("pdf")).toMatchObject({ "b.py": "saves" });
+	});
+
+	it("ends a save whose object storage stops answering once its time is up, freeing the Skill", async () => {
+		await skills.upload(skillZip("pdf", "v1"), false);
+		puts.before = (_, signal) =>
+			new Promise<void>((_, reject) => {
+				puts.before = undefined;
+				if (!signal) return;
+				signal.addEventListener("abort", () => reject(signal.reason));
+				if (signal.aborted) reject(signal.reason);
+			});
+		// the time is up as soon as it starts
+		const timeout = vi
+			.spyOn(AbortSignal, "timeout")
+			.mockImplementation(() =>
+				AbortSignal.abort(new DOMException("timed out", "TimeoutError")),
+			);
+		try {
+			await expect(
+				skills.upload(skillZip("pdf", "v2", { "a.py": "1" }), true),
+			).rejects.toThrow(/timed out/);
+		} finally {
+			timeout.mockRestore();
+		}
+		expect(await skills.upload(skillZip("pdf", "v3"), true)).toEqual({
+			errors: {},
+			name: "pdf",
+		});
+	});
+
 	describe("the backfill of files from before object storage", () => {
 		/** A Skill as saved before: its files' bytes in Postgres, without sha256 or size; resolves to its version ids. */
 		async function saved(name: string, versions: Record<string, string>[]) {
@@ -419,6 +574,23 @@ describe.skipIf(!url)("@orqestra/skills writes (Postgres)", () => {
 			expect(size).toBe(8);
 			puts.left = 0;
 			expect(await backfillSkillFiles(db, store)).toBe(0);
+		});
+
+		it("reads a file not moved yet from Postgres, and a moved one only from object storage", async () => {
+			const md = "---\nname: pdf\ndescription: d\n---\n";
+			// as an api of the release before saves one while this one starts
+			const [v1] = await saved("pdf", [{ "SKILL.md": md, "a.py": "print(1)" }]);
+			expect(text(await skillFiles(v1))).toEqual({
+				"SKILL.md": md,
+				"a.py": "print(1)",
+			});
+			expect(text(await filesOf(db, store, v1, "SKILL.md"))).toEqual({
+				"SKILL.md": md,
+			});
+			await backfillSkillFiles(db, store);
+			// Postgres still has its bytes, until the migration that drops them
+			objects.clear();
+			await expect(skillFiles(v1)).rejects.toThrow(/not in object storage/);
 		});
 
 		it("moves what is left after an interruption, losing nothing already moved", async () => {

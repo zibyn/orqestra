@@ -48,4 +48,27 @@ describe("s3Store", () => {
 		expect(sent).toBeLessThan(128);
 		expect(requests.at(-1)).toBe("DELETE /b/k");
 	});
+
+	it("gives up once the signal aborts, though storage never answers", async () => {
+		const mute = Bun.listen({
+			hostname: "127.0.0.1",
+			port: 0,
+			socket: { data() {} },
+		});
+		const silent = s3Store({
+			S3_ENDPOINT: `http://127.0.0.1:${mute.port}`,
+			S3_BUCKET: "b",
+			S3_ACCESS_KEY_ID: "a",
+			S3_SECRET_ACCESS_KEY: "s",
+		});
+		try {
+			await expect(
+				silent.put("k", new Response("hi").body as ReadableStream<Uint8Array>, {
+					signal: AbortSignal.timeout(100),
+				}),
+			).rejects.toThrow(/timed out/);
+		} finally {
+			mute.stop(true);
+		}
+	});
 });

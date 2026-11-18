@@ -3,7 +3,10 @@
 
 /** S3-compatible object storage; `s3Store` (in @orqestra/tools/s3) speaks to the real one, `memoryStore` keeps objects in memory. */
 export interface ObjectStore {
-	/** Writes `body` at `key`; one that fails midway leaves nothing. */
+	/**
+	 * Writes `body` at `key`; one that fails midway leaves nothing. Rejects once `signal` aborts, though storage has not
+	 * answered: a write it has not answered may still land.
+	 */
 	put(
 		key: string,
 		body: ReadableStream<Uint8Array>,

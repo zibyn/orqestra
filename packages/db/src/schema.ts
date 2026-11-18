@@ -749,7 +749,7 @@ export const skillFile = pgTable(
 		// Null only for a file from before, until backfillSkillFiles has moved its content there.
 		sha256: text("sha256"),
 		size: integer("size"),
-		// shortcut: files from before ADR 0017 keep their bytes here, read only by backfillSkillFiles; a later migration drops it
+		// shortcut: files from before ADR 0017 keep their bytes here, read only while sha256 is null; a later migration drops it
 		content: bytea("content"),
 	},
 	(table) => [primaryKey({ columns: [table.versionId, table.path] })],
