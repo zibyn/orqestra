@@ -1,7 +1,6 @@
 import {
 	afterAll,
 	afterEach,
-	beforeAll,
 	beforeEach,
 	describe,
 	expect,
@@ -79,7 +78,7 @@ const connections = memoryConnections();
 const conversations = createConversations({
 	store,
 	capabilities: {
-		current: config.current,
+		current,
 		skillFiles: config.skillFiles,
 		// the fake MCP Servers are only in the snapshot, so deleting one writes nothing
 		mcpServers: { write: async () => [] as never },
@@ -266,9 +265,21 @@ const priced = (u: {
 		u.cacheWriteTokens * 4) /
 	1e6;
 
-/** Adds the test's faux Provider, Agents, Sandbox and Tools to the loaded config; again after each reload replaces it. */
-async function patch() {
+/**
+ * The loaded config with the test's faux Provider, Agents, Sandbox and Tools added, again to each snapshot a reload makes:
+ * a write's own NOTIFY may reload it once more after the write has returned.
+ */
+type Loaded = Awaited<ReturnType<typeof config.current>>;
+const patched = new WeakSet<Loaded>();
+async function current(): Promise<Loaded> {
 	const loaded = await config.current();
+	if (!patched.has(loaded)) {
+		patched.add(loaded);
+		patch(loaded);
+	}
+	return loaded;
+}
+function patch(loaded: Loaded) {
 	// with a baseUrl, so faux is in the Catalog and a test can configure it as a Provider
 	loaded.registry.registerProvider({
 		...faux.provider,
@@ -285,12 +296,11 @@ async function patch() {
 				!loaded.models.some((l) => l.provider === m.provider && l.id === m.id),
 		),
 	);
+	// a reload of another capability keeps the Agents
 	loaded.agents.push(
-		fauxAgent,
-		skilledAgent,
-		smallAgent,
-		mcpAgent,
-		mcpSubAgent,
+		...[fauxAgent, skilledAgent, smallAgent, mcpAgent, mcpSubAgent].filter(
+			(a) => !loaded.agents.some((l) => l.id === a.id),
+		),
 	);
 	loaded.mcpServers.slow = {
 		name: "Slow",
@@ -331,22 +341,21 @@ describe.skipIf(!url)(
 		let stopWorker: () => Promise<void>;
 		const start = async () => {
 			// faux replies are one shared queue, so runs go one at a time
-			stopWorker = await startAgentWorker(config, {
-				concurrency: 1,
-				orrery: () => orrery.client,
-				store,
-				toolbox: (services, allowed, options) =>
-					openToolbox(services, allowed, { ...options, fetch: fetchFake }),
-				fetch: fetchFake,
-				connections,
-				telemetry,
-			});
+			stopWorker = await startAgentWorker(
+				{ ...config, current },
+				{
+					concurrency: 1,
+					orrery: () => orrery.client,
+					store,
+					toolbox: (services, allowed, options) =>
+						openToolbox(services, allowed, { ...options, fetch: fetchFake }),
+					fetch: fetchFake,
+					connections,
+					telemetry,
+				},
+			);
 		};
 
-		beforeAll(async () => {
-			await patch();
-			await start();
-		});
 		afterAll(async () => {
 			await stopWorker?.();
 			await config.close();
@@ -357,10 +366,13 @@ describe.skipIf(!url)(
 			await db.execute(
 				sql`select pg_notify('conversation_stop', id::text) from conversation where status = 'running'`,
 			);
+			// a Run the last test left winding down would deadlock with the truncate: stopping the worker waits for it
+			await stopWorker?.();
 			await db.execute(
 				sql`truncate conversation, scheduled_task, usage, limits, push_subscription, "user" cascade`,
 			);
 			spans.reset();
+			await start();
 		});
 
 		it("streams a reply over SSE, then saves it and a title", async () => {
@@ -760,7 +772,6 @@ describe.skipIf(!url)(
 				modelId: "faux-1",
 				enabled: true,
 			});
-			await patch();
 			const turn = async () => {
 				script({ parent: [fauxAssistantMessage("Hello")] });
 				const id = await conversations.send(userId, {
@@ -778,7 +789,6 @@ describe.skipIf(!url)(
 					modelId: "faux-1",
 					cost,
 				});
-				await patch();
 			};
 			try {
 				const before = await turn();
@@ -796,7 +806,6 @@ describe.skipIf(!url)(
 				expect(await usageOf(before[0].conversationId)).toEqual(before);
 			} finally {
 				await config.models.providers.delete("faux");
-				await patch();
 			}
 		});
 
@@ -809,7 +818,7 @@ describe.skipIf(!url)(
 				fauxAssistantMessage("ok again"),
 			]);
 			// small budgets on faux-small's tiny context window, so the second Turn compacts
-			const loaded = await config.current();
+			const loaded = await current();
 			const saved = loaded.limits;
 			loaded.limits = {
 				...saved,
@@ -2268,7 +2277,7 @@ describe.skipIf(!url)(
 				});
 
 				it("as failed, cancelling it, once tracked longer than the Limits allow", async () => {
-					const loaded = await config.current();
+					const loaded = await current();
 					const saved = loaded.limits;
 					loaded.limits = { ...saved, backgroundCallMaxDuration: 1 };
 					try {
@@ -2281,7 +2290,7 @@ describe.skipIf(!url)(
 				});
 
 				it("as failed when its MCP Server is disabled", async () => {
-					const loaded = await config.current();
+					const loaded = await current();
 					const saved = loaded.mcpServers.slow;
 					const id = await backgrounded();
 					delete loaded.mcpServers.slow;
@@ -2300,7 +2309,7 @@ describe.skipIf(!url)(
 				});
 
 				it("as failed, cancelling it, when an Admin deletes its MCP Server after disabling it", async () => {
-					const loaded = await config.current();
+					const loaded = await current();
 					const saved = loaded.mcpServers.slow;
 					const id = await backgrounded();
 					// the next poll far off, so the delete comes before it
@@ -2331,7 +2340,7 @@ describe.skipIf(!url)(
 						ReturnType<typeof config.current>
 					>["mcpServers"][string];
 					beforeEach(async () => {
-						const loaded = await config.current();
+						const loaded = await current();
 						shared = loaded.mcpServers.slow;
 						loaded.mcpServers.slow = { ...shared, auth: "oauth" };
 						// u1 connected through it as the public Client "orqestra"
@@ -2351,7 +2360,7 @@ describe.skipIf(!url)(
 					});
 					afterEach(async () => {
 						as = undefined;
-						(await config.current()).mcpServers.slow = shared;
+						(await current()).mcpServers.slow = shared;
 					});
 					/** Starts a Background Call and waits until its server has been polled with the User's token. */
 					const polledAsUser = async () => {
@@ -2439,7 +2448,7 @@ describe.skipIf(!url)(
 				});
 
 				it("keeps tracking with the new request headers when an Admin edits its MCP Server", async () => {
-					const loaded = await config.current();
+					const loaded = await current();
 					const saved = loaded.mcpServers.slow;
 					const id = await backgrounded();
 					loaded.mcpServers.slow = { ...saved, headers: { "x-key": "new" } };
