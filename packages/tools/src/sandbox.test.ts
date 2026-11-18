@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { orrery } from "./orrery.ts";
 import {
 	type ClaimSandbox,
 	readySandbox,
@@ -17,6 +18,25 @@ function stored() {
 		return kept.id;
 	};
 	return { kept, claim };
+}
+
+/**
+ * An orrery answering each Sandbox request with the next of `states` (`state` or `state:cause`), the last one
+ * from then on; a `wait_for` takes a moment, as orrery's long poll does. `sent` lists the requests.
+ */
+function scripted(...states: string[]) {
+	const sent: string[] = [];
+	const fetch = async (input: string | URL, init?: RequestInit) => {
+		const url = new URL(String(input));
+		sent.push(`${init?.method ?? "GET"} ${url.pathname}${url.search}`);
+		if (url.searchParams.has("wait_for"))
+			await new Promise((resolve) => setTimeout(resolve, 1));
+		const [state, cause = null] = (
+			(states.length > 1 ? states.shift() : states[0]) as string
+		).split(":");
+		return Response.json({ id: "sb1", state, cause });
+	};
+	return { client: orrery({ url: "http://o", token: "t", fetch }), sent };
 }
 
 describe("readySandbox", () => {
@@ -71,6 +91,50 @@ describe("readySandbox", () => {
 		expect(kept.id).toBe("sb2");
 		// a failed one holds its Workspace until deleted
 		expect(o.calls).toContain("deleteSandbox sb1");
+	});
+
+	it("waits through provisioning, past a wait_for that ends before it is ready", async () => {
+		// created, then provisioning when first read and still when the 60-second wait_for gives up
+		const o = scripted("pending", "provisioning", "provisioning", "ready");
+		expect(await readySandbox(o.client, provider, stored().claim)).toEqual({
+			id: "sb1",
+			woke: true,
+		});
+		expect(o.sent).toEqual([
+			"POST /api/v1/sandboxes",
+			"GET /api/v1/sandboxes/sb1",
+			"GET /api/v1/sandboxes/sb1?wait_for=ready",
+			"GET /api/v1/sandboxes/sb1?wait_for=ready",
+		]);
+	});
+
+	it("keeps a stored Sandbox that is provisioning instead of replacing it", async () => {
+		const o = scripted("provisioning", "ready");
+		const { kept, claim } = stored();
+		kept.id = "sb1";
+		expect(await readySandbox(o.client, provider, claim)).toEqual({
+			id: "sb1",
+			woke: false,
+		});
+		expect(o.sent).toEqual([
+			"GET /api/v1/sandboxes/sb1",
+			"GET /api/v1/sandboxes/sb1?wait_for=ready",
+		]);
+	});
+
+	it("fails at once when the new Sandbox fails while provisioning", async () => {
+		const o = scripted("pending", "provisioning", "failed:image_pull_failed");
+		await expect(
+			readySandbox(o.client, provider, stored().claim),
+		).rejects.toThrow("The Sandbox failed to start: image_pull_failed");
+		expect(o.sent).toHaveLength(3);
+	});
+
+	it("gives up on a Sandbox still provisioning past the timeout", async () => {
+		const o = scripted("pending", "provisioning");
+		await expect(
+			readySandbox(o.client, provider, stored().claim, { timeoutMs: 20 }),
+		).rejects.toThrow("The Sandbox is still provisioning after 0.02 s");
 	});
 
 	it("fails with orrery's error when orrery cannot be reached", async () => {
