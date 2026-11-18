@@ -245,6 +245,8 @@ export type ServeOptions = {
 	providerConcurrency?: number;
 	/** How soon a crashed worker's Run is noticed; tests shorten it. */
 	stalledInterval?: number;
+	/** Told of a top-level Run once it is marked failed, one that failed before its handler or on a crashed worker included. */
+	onFailed?: (conversationId: string, error: Error) => Promise<void>;
 };
 
 /** What Runs are served with, given once to `createConversations`. */
@@ -287,19 +289,28 @@ async function stopped(
 	if (timedOut) await alertRun(conv.id, "partial");
 }
 
-/** A failed or crashed Run: a top-level Conversation is marked failed; a Subagent fails, and its Notification wakes the parent. */
+/**
+ * A failed or crashed Run: a top-level Conversation is marked failed, and `onFailed` told; a Subagent fails, and its Notification wakes the parent.
+ * A Run that had already ended, such as one whose Tools then failed to close, keeps how it ended.
+ */
 async function failed(
 	conversationId: string,
 	jobId: string | undefined,
 	error: Error,
 	config: () => Promise<Snapshots>,
 	mcp?: McpAccess,
+	onFailed?: ServeOptions["onFailed"],
 ) {
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
-	// a job requeued after its Run ended failed: the Run it would end is another's
-	if (!conv || (conv.jobId && conv.jobId !== jobId)) return;
+	// its Run over, or a job requeued after its Run ended: the Run it would end is another's
+	if (
+		!conv ||
+		conv.status !== "running" ||
+		(conv.jobId && conv.jobId !== jobId)
+	)
+		return;
 	if (!conv.parentId) {
 		// one Alert: a failure that auto-paused the Firing's task says so
 		const paused = await endRun(
@@ -307,7 +318,8 @@ async function failed(
 			"failed",
 			error instanceof SpendingLimitReached ? "spending_limit" : "error",
 		);
-		return alertRun(conversationId, paused ? "auto_paused" : "failed");
+		await alertRun(conversationId, paused ? "auto_paused" : "failed");
+		return onFailed?.(conversationId, error);
 	}
 	// the Subagents under it would report to nobody
 	await stopSubagents(conversationId, cancelStopped(config, mcp));
@@ -816,6 +828,7 @@ export async function serveRuns(
 		subagentConcurrency = 8,
 		providerConcurrency = 8,
 		stalledInterval = 30_000,
+		onFailed,
 	}: ServeOptions = {},
 ) {
 	const { config, store, mcp } = deps;
@@ -850,9 +863,15 @@ export async function serveRuns(
 		worker.on("failed", (job, err) => {
 			console.error(`job ${job?.id} failed`, err);
 			if (job)
-				void failed(job.data.conversationId, job.id, err, config, mcp).catch(
-					(error) =>
-						console.error(`could not mark job ${job.id}'s Run failed`, error),
+				void failed(
+					job.data.conversationId,
+					job.id,
+					err,
+					config,
+					mcp,
+					onFailed,
+				).catch((error) =>
+					console.error(`could not mark job ${job.id}'s Run failed`, error),
 				);
 		});
 		worker.on("error", (err) => console.error("worker error", err));

@@ -30,6 +30,7 @@ import {
 	memoryConnections,
 } from "@orqestra/mcp/testing";
 import { memoryOrrery, memoryStore } from "@orqestra/tools/testing";
+import { createPostgresBackend, Worker } from "bullmq";
 import { openToolbox } from "./runtime/toolbox.ts";
 
 // the push service, as web-push reaches it from @orqestra/conversations: each Alert recorded
@@ -345,12 +346,17 @@ describe.skipIf(!url)(
 	"Runs replied by the runtime (Postgres + faux provider)",
 	() => {
 		let stopWorker: () => Promise<void>;
-		const start = async () => {
+		const start = async ({
+			stalledInterval,
+		}: {
+			stalledInterval?: number;
+		} = {}) => {
 			// faux replies are one shared queue, so runs go one at a time
 			stopWorker = await startAgentWorker(
 				{ ...config, current },
 				{
 					concurrency: 1,
+					stalledInterval,
 					orrery: () => orrery.client,
 					store,
 					toolbox: async (services, allowed, options) => {
@@ -1147,6 +1153,94 @@ describe.skipIf(!url)(
 				]);
 			});
 
+			it("posts only the reply of a Run whose Tools failed to close after it ended, which leaves the Conversation as it ended", async () => {
+				closeFails = true;
+				try {
+					script({ parent: [fauxAssistantMessage("Done.")] });
+					const id = await fromLinear("Fix the login button");
+					await waitFor(
+						() => conversations.get(userId, id),
+						(v) => v?.title === "T",
+					);
+					expect(await posted(1)).toEqual([
+						{
+							agentSessionId: "session-1",
+							content: { type: "response", body: "Done." },
+						},
+					]);
+					expect((await conversations.get(userId, id))?.status).toBe("idle");
+				} finally {
+					closeFails = false;
+				}
+			});
+
+			it("posts a Run that failed before its reply began, its Agent removed, as one error", async () => {
+				await stopWorker();
+				const loaded = await config.current();
+				const agents = loaded.agents;
+				try {
+					const id = await fromLinear("Fix the login button");
+					loaded.agents = agents.filter((a) => a.id !== "faux");
+					await start();
+					await waitFor(
+						() => conversations.get(userId, id),
+						(v) => v?.status === "failed",
+					);
+					expect(await posted(1)).toEqual([
+						{
+							agentSessionId: "session-1",
+							content: {
+								type: "error",
+								body: "This reply failed. Retry it in Orqestra.",
+							},
+						},
+					]);
+				} finally {
+					loaded.agents = agents;
+				}
+			}, 15_000);
+
+			it("posts a Run whose worker was killed as one error once another worker notices", async () => {
+				await stopWorker();
+				let picked = false;
+				// a worker that takes the Run and dies without finishing it
+				const killed = new Worker(
+					"agent-runs",
+					() => {
+						picked = true;
+						return new Promise(() => {});
+					},
+					{
+						connection: { connectionString: url as string },
+						lockDuration: 300,
+					},
+					createPostgresBackend,
+				);
+				const id = await fromLinear("Fix the login button");
+				await waitFor(async () => picked, Boolean);
+				await killed.close(true);
+				// the startup requeue finds it running and queues no second job for it
+				await start({ stalledInterval: 200 });
+				try {
+					await waitFor(
+						() => conversations.get(userId, id),
+						(v) => v?.status === "failed",
+					);
+					expect(await posted(1)).toEqual([
+						{
+							agentSessionId: "session-1",
+							content: {
+								type: "error",
+								body: "This reply failed. Retry it in Orqestra.",
+							},
+						},
+					]);
+				} finally {
+					await stopWorker();
+					await start();
+				}
+			}, 15_000);
+
 			it("posts a Question the Run ended with as an elicitation", async () => {
 				script({
 					parent: [
@@ -1344,7 +1438,6 @@ describe.skipIf(!url)(
 							},
 						]);
 						const id = await fromLinear("Fix the login button");
-						// its Tools fail to close once it is titled, after its end, which fails nothing
 						await waitFor(
 							() => conversations.get(userId, id),
 							(v) => v?.title === "T",
@@ -1355,6 +1448,7 @@ describe.skipIf(!url)(
 								content: { type: "response", body: "Done." },
 							},
 						]);
+						expect((await conversations.get(userId, id))?.status).toBe("idle");
 					} finally {
 						closeFails = false;
 					}

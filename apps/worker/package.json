@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "bullmq": "^6.5.0",
     "drizzle-orm": "^0.45.4",
     "typescript": "^6.0.2"
   }

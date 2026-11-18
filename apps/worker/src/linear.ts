@@ -144,12 +144,42 @@ export async function handleLinearEvent(
 }
 
 /**
+ * Closes the turn of a Linear Agent Session's Conversation whose Run was marked failed (`onFailed`), however it failed: in `reply`, before
+ * it (its Agent removed), or on a worker that crashed or was killed. A Run is marked failed only while it has not ended, so this posts
+ * no second activity after `reportingToLinear`'s.
+ * shortcut: a worker dying between a Run's end and its post leaves the turn open; record each post on the session if that bites.
+ */
+export async function reportFailureToLinear(
+	conversationId: string,
+	error: Error,
+	{ fetch }: { fetch?: Fetch } = {},
+) {
+	const [session] = await db
+		.select({ id: linearSession.agentSessionId })
+		.from(linearSession)
+		.where(eq(linearSession.conversationId, conversationId));
+	if (!session) return;
+	await postActivity(
+		session.id,
+		{
+			type: "error",
+			body:
+				error instanceof SpendingLimitReached
+					? "This month's Spending Limit is used up, so the request was not sent."
+					: "This reply failed. Retry it in Orqestra.",
+		},
+		fetch,
+	).catch((e) =>
+		console.error(`could not post to Linear Agent Session ${session.id}`, e),
+	);
+}
+
+/**
  * Replies to a Run with `reply`, and, for a Linear Agent Session's Conversation, posts one activity into the session that closes its turn,
  * the moment the Run is over and before the Conversation is titled: what it said last, as an elicitation when it ended asking the User a
  * question, else as the response, which says there was nothing to report when it said nothing; a Run cut off by the unattended time limit,
- * as an error with what it had written; a failure before then, as an error. A Run the User stopped posts nothing (the stop request
- * confirms it in Linear).
- * shortcut: a Run that fails before `reply` (its Agent removed) or on a crashed worker posts no error; report from serve.ts's `failed` if that bites.
+ * as an error with what it had written. A Run the User stopped posts nothing (the stop request confirms it in Linear); one that failed
+ * is posted by `reportFailureToLinear`.
  */
 export const reportingToLinear =
 	(reply: RunHandler, { fetch }: { fetch?: Fetch } = {}): RunHandler =>
@@ -159,7 +189,7 @@ export const reportingToLinear =
 			.from(linearSession)
 			.where(eq(linearSession.conversationId, run.conversationId));
 		if (!session) return reply(run, config);
-		// the Run's end or its failure, whichever comes first, closes the turn: what fails after the end posts nothing more
+		// the Run's end, or its being cut off, closes the turn once
 		let closed = false;
 		const close = async (content?: Activity) => {
 			if (closed) return;
@@ -252,14 +282,6 @@ export const reportingToLinear =
 			);
 		} catch (error) {
 			if (run.signal.reason instanceof RunTimedOut) await close(cutOff());
-			else if (!run.signal.aborted)
-				await close({
-					type: "error",
-					body:
-						error instanceof SpendingLimitReached
-							? "This month's Spending Limit is used up, so the request was not sent."
-							: "This reply failed. Retry it in Orqestra.",
-				});
 			throw error;
 		}
 	};
