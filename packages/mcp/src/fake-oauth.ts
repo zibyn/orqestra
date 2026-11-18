@@ -2,13 +2,15 @@
 
 /**
  * `resource`'s origin serves its Protected Resource Metadata naming `issuer` as its authorization server; every other origin is an
- * authorization server whose issuer is that origin, so moving `issuer` moves the server. `cimd` and `registration` say whether it
- * supports Client ID Metadata Documents and dynamic registration; `revocation` whether it has a revocation endpoint (RFC 7009) and
- * whether that fails. `authorize` plays the User approving an authorization URL. `registered` lists the client_ids it handed out,
- * `revoked` the revocation requests it received. Refresh tokens rotate, each used once; `accessTokens` and `refreshTokens` hold the
+ * authorization server whose issuer is that origin (`issuer` itself at its origin, path and all), so moving `issuer` moves the server.
+ * `cimd` and `registration` say whether it supports Client ID Metadata Documents and dynamic registration; `revocation` whether it
+ * has a revocation endpoint (RFC 7009) and whether that fails. `authorize` plays the User approving an authorization URL.
+ * `registered` lists the client_ids it handed out, `revoked` the revocation requests it received. Refresh tokens rotate, each used once; `accessTokens` and `refreshTokens` hold the
  * live ones (clear them to expire or revoke), `refreshed` counts refreshes, and `rejectClients` answers them `invalid_client`.
  * `expiresIn` is the access tokens' lifetime in seconds. `github` answers as GitHub's does for a GitHub App: `ghu_`/`ghr_` tokens,
- * a refresh ends the access token it replaces, and a refused refresh token is `bad_refresh_token` with HTTP 200.
+ * a refresh ends the access token it replaces, a refused refresh token is `bad_refresh_token` with HTTP 200, and instead of a
+ * revocation endpoint its REST API's `DELETE /applications/{client_id}/grant` takes a live access token as that Client with its
+ * secret and ends it and its refresh token (`revocation` "fails": 422).
  * `guard(fetch)` puts the MCP Server reached through `fetch` behind it: 401 without a live access token.
  */
 export function fakeAuthorizationServer({
@@ -25,6 +27,8 @@ export function fakeAuthorizationServer({
 	let n = 0;
 	// the access token each refresh token came with
 	const accessOf = new Map<string, string>();
+	const issuerAt = (origin: string) =>
+		new URL(as.issuer).origin === origin ? as.issuer : origin;
 	const issue = (clientId: string) => {
 		const [access, refresh] = as.github
 			? ["ghu_", "ghr_"]
@@ -78,7 +82,7 @@ export function fakeAuthorizationServer({
 			return new URLSearchParams({
 				code,
 				state: q.get("state") ?? "",
-				iss: new URL(url).origin,
+				iss: issuerAt(new URL(url).origin),
 			});
 		},
 		async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
@@ -98,9 +102,13 @@ export function fakeAuthorizationServer({
 					},
 				});
 			}
-			if (pathname === "/.well-known/oauth-authorization-server")
+			const issuer = issuerAt(origin);
+			if (
+				pathname ===
+				`/.well-known/oauth-authorization-server${new URL(issuer).pathname.replace(/\/$/, "")}`
+			)
 				return Response.json({
-					issuer: origin,
+					issuer,
 					authorization_endpoint: `${origin}/authorize`,
 					token_endpoint: `${origin}/token`,
 					...(as.registration && {
@@ -110,10 +118,35 @@ export function fakeAuthorizationServer({
 					code_challenge_methods_supported: ["S256"],
 					authorization_response_iss_parameter_supported: true,
 					client_id_metadata_document_supported: as.cimd,
-					...(as.revocation && {
-						revocation_endpoint: `${origin}/revoke`,
-					}),
+					...(as.revocation &&
+						!as.github && {
+							revocation_endpoint: `${origin}/revoke`,
+						}),
 				});
+			const grant = pathname.match(/^\/applications\/([^/]+)\/grant$/);
+			if (grant && init?.method === "DELETE" && as.github) {
+				if (as.revocation === "fails")
+					return Response.json(
+						{ message: "Validation Failed" },
+						{ status: 422 },
+					);
+				const [clientId, secret] = atob(
+					new Headers(init.headers)
+						.get("authorization")
+						?.replace(/^Basic /, "") ?? "",
+				).split(":");
+				const { access_token } = JSON.parse(String(init.body));
+				if (
+					clientId !== grant[1] ||
+					!secret ||
+					!as.accessTokens.delete(access_token)
+				)
+					return new Response(null, { status: 404 });
+				as.revoked.push({ token: access_token, hint: null, clientId });
+				for (const [refresh, access] of accessOf)
+					if (access === access_token) as.refreshTokens.delete(refresh);
+				return new Response(null, { status: 204 });
+			}
 			if (pathname === "/revoke" && as.revocation) {
 				if (as.revocation === "fails")
 					return Response.json({ error: "server_error" }, { status: 503 });

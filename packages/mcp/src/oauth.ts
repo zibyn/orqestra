@@ -1,6 +1,7 @@
 // A User's Connection to a per-User OAuth MCP Server: finding its authorization server, and the authorization that makes the Connection.
 // The SDK does discovery, PKCE, the authorization URL, the code exchange and the `iss` check; Orqestra keeps the state.
 import {
+	type AuthorizationServerMetadata,
 	type AuthProvider,
 	auth,
 	discoverAuthorizationServerMetadata,
@@ -561,11 +562,71 @@ export async function finishConnection(
 /** How long revoking one Connection may take in all, discovery included. */
 export const REVOKE_TIMEOUT_MS = 5_000;
 
+type Client = { client_id: string; client_secret?: string };
+
+/** HTTP Basic as a confidential Client (RFC 6749 §2.3.1). */
+const basic = ({ client_id, client_secret = "" }: Client) =>
+	`Basic ${btoa(`${encodeURIComponent(client_id)}:${encodeURIComponent(client_secret)}`)}`;
+
+/** How authorization servers that list no `revocation_endpoint` revoke a Connection, by issuer. */
+const revokers: Record<
+	string,
+	(connection: {
+		tokens: ConnectionTokens;
+		issuer: string;
+		client?: Client;
+		metadata?: AuthorizationServerMetadata;
+		fetch: Fetch;
+	}) => Promise<void>
+> = {
+	// docs.github.com/rest/apps/oauth-applications: deleting the User's grant of the App deletes all its tokens, the refresh token
+	// too, which deleting the access token alone is not documented to do. It takes a live access token: one about to expire is
+	// refreshed first
+	"https://github.com/login/oauth": async ({
+		tokens,
+		issuer,
+		client,
+		metadata,
+		fetch,
+	}) => {
+		if (!client?.client_secret)
+			throw new Error("GitHub revokes only as a Client with a secret");
+		let { access_token } = tokens;
+		const { refresh_token, expires_at } = tokens;
+		if (
+			refresh_token &&
+			expires_at !== undefined &&
+			expires_at < Date.now() + 60_000
+		)
+			({ access_token } = await refreshAuthorization(issuer, {
+				metadata,
+				clientInformation: client,
+				refreshToken: refresh_token,
+				fetchFn: fetch,
+			}));
+		const response = await fetch(
+			`https://api.github.com/applications/${encodeURIComponent(client.client_id)}/grant`,
+			{
+				method: "DELETE",
+				headers: {
+					authorization: basic(client),
+					accept: "application/vnd.github+json",
+					"x-github-api-version": "2022-11-28",
+					"content-type": "application/json",
+				},
+				body: JSON.stringify({ access_token }),
+			},
+		);
+		await response.body?.cancel();
+		if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
+	},
+};
+
 /**
  * Revokes a deleted Connection at its authorization server (RFC 7009): its refresh token, else its access token, as the Client its
  * tokens were issued to, as a refresh picks it (one that is neither the pre-registered nor the registered one is a public Client, the
- * Client ID Metadata Document or one registered before). Nothing when the authorization server has no `revocation_endpoint`; throws
- * when revoking fails, for the caller to log.
+ * Client ID Metadata Document or one registered before). One with no `revocation_endpoint` revokes as `revokers` has it, or not at
+ * all; throws when revoking fails, for the caller to log.
  */
 export async function revokeConnection(
 	{ tokens, issuer }: { tokens: ConnectionTokens; issuer: string },
@@ -586,13 +647,20 @@ export async function revokeConnection(
 	// RFC 8414 lists it; the SDK's OpenID Connect type does not, though such metadata may carry it too
 	const endpoint = (metadata as { revocation_endpoint?: string } | undefined)
 		?.revocation_endpoint;
-	if (!endpoint) return;
 	const { client_id } = tokens;
-	const client = client_id
+	const client: Client | undefined = client_id
 		? ([oauthClient, registered].find((c) => c?.client_id === client_id) ?? {
 				client_id,
 			})
 		: undefined;
+	if (!endpoint)
+		return revokers[issuer]?.({
+			tokens,
+			issuer,
+			client,
+			metadata,
+			fetch: timed,
+		});
 	const body = new URLSearchParams(
 		tokens.refresh_token
 			? { token: tokens.refresh_token, token_type_hint: "refresh_token" }
@@ -601,9 +669,8 @@ export async function revokeConnection(
 	const headers: Record<string, string> = {
 		"content-type": "application/x-www-form-urlencoded",
 	};
-	// a confidential Client authenticates by HTTP Basic (RFC 6749 §2.3.1), a public one names itself
-	if (client?.client_secret)
-		headers.authorization = `Basic ${btoa(`${encodeURIComponent(client.client_id)}:${encodeURIComponent(client.client_secret)}`)}`;
+	// a confidential Client authenticates by HTTP Basic, a public one names itself
+	if (client?.client_secret) headers.authorization = basic(client);
 	else if (client) body.set("client_id", client.client_id);
 	const response = await timed(endpoint, { method: "POST", headers, body });
 	await response.body?.cancel();
