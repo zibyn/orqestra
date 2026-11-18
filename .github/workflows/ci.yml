@@ -55,5 +55,11 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           target: ${{ matrix.target }}
+          load: true
+          tags: orqestra-${{ matrix.target }}:ci
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+      # bundling resolves every import from what the image holds, so a runtime dependency it lacks fails here instead of at start;
+      # next/* is @zibyn/polaris' Next.js adapter, which Orqestra never loads
+      - if: matrix.target != 'web'
+        run: docker run --rm --entrypoint bun orqestra-${{ matrix.target }}:ci build src/index.ts --target=bun --outdir=/tmp/b --external 'next/*'
