@@ -48,6 +48,7 @@ import {
 	enqueue,
 	ensureRun,
 	FIRINGS_QUEUE,
+	failRun,
 	lastModel,
 	lockRoot,
 	notify,
@@ -57,10 +58,12 @@ import {
 	spend,
 	stopSubagents,
 	subagentOf,
+	tellFailedRuns,
+	wakeAfter,
 } from "./runs.ts";
 import { ensureSandbox } from "./sandbox.ts";
 import type { Snapshots } from "./snapshots.ts";
-import { SpendingLimitReached, spendingLimitStatus } from "./spending.ts";
+import { spendingLimitStatus } from "./spending.ts";
 import { fire } from "./tasks.ts";
 import { cancelTimer, ring, setTimer, TIMERS_QUEUE } from "./timers.ts";
 import { storeAttachment, sweepUnsentAttachments } from "./uploads.ts";
@@ -245,7 +248,10 @@ export type ServeOptions = {
 	providerConcurrency?: number;
 	/** How soon a crashed worker's Run is noticed; tests shorten it. */
 	stalledInterval?: number;
-	/** Told of a top-level Run once it is marked failed, one that failed before its handler or on a crashed worker included. */
+	/**
+	 * Told of a top-level Run once it is marked failed: one that failed before its handler, on a crashed worker,
+	 * or that could not be queued (by any caller of `ensureRun` in this process) included.
+	 */
 	onFailed?: (conversationId: string, error: Error) => Promise<void>;
 };
 
@@ -290,7 +296,7 @@ async function stopped(
 }
 
 /**
- * A failed or crashed Run: a top-level Conversation is marked failed, and `onFailed` told; a Subagent fails, and its Notification wakes the parent.
+ * A failed or crashed Run: a top-level Conversation is failed (`failRun`); a Subagent fails, and its Notification wakes the parent.
  * A Run that had already ended, such as one whose Tools then failed to close, keeps how it ended.
  */
 async function failed(
@@ -299,26 +305,20 @@ async function failed(
 	error: Error,
 	config: () => Promise<Snapshots>,
 	mcp?: McpAccess,
-	onFailed?: ServeOptions["onFailed"],
 ) {
 	const conv = await db.query.conversation.findFirst({
 		where: eq(conversation.id, conversationId),
 	});
 	// a job requeued after its Run ended: the Run it would end is another's
 	if (!conv || (conv.jobId && conv.jobId !== jobId)) return;
-	// its Run had ended: a stopped one's job may have failed before starting the Run a message sent meanwhile waits for
-	if (conv.status === "idle") return void (await ensureRun(conversationId));
+	// its Run had ended, and its worker may have died before what follows the end: a stopped one's ensureRun, which starts
+	// the Run a message sent meanwhile waits for, or a Subagent's wakeAfter, which has the parent answer its Notification
+	if (conv.status === "idle")
+		return void (await (conv.parentId
+			? wakeAfter(conv.parentId)
+			: ensureRun(conversationId)));
 	if (conv.status !== "running") return;
-	if (!conv.parentId) {
-		// one Alert: a failure that auto-paused the Firing's task says so
-		const paused = await endRun(
-			conversationId,
-			"failed",
-			error instanceof SpendingLimitReached ? "spending_limit" : "error",
-		);
-		await alertRun(conversationId, paused ? "auto_paused" : "failed");
-		return onFailed?.(conversationId, error);
-	}
+	if (!conv.parentId) return failRun(conversationId, error);
 	// the Subagents under it would report to nobody
 	await stopSubagents(conversationId, cancelStopped(config, mcp));
 	await endSubagent(conversationId, {
@@ -830,6 +830,8 @@ export async function serveRuns(
 	}: ServeOptions = {},
 ) {
 	const { config, store, mcp } = deps;
+	// so failRun tells it of a Run that some start in this process could not queue
+	tellFailedRuns(onFailed);
 	// one Provider's limit holds across this worker's Runs and configs
 	const limited = { ...deps, limit: providerLimiter(providerConcurrency) };
 	const databaseUrl = process.env.DATABASE_URL as string;
@@ -861,15 +863,9 @@ export async function serveRuns(
 		worker.on("failed", (job, err) => {
 			console.error(`job ${job?.id} failed`, err);
 			if (job)
-				void failed(
-					job.data.conversationId,
-					job.id,
-					err,
-					config,
-					mcp,
-					onFailed,
-				).catch((error) =>
-					console.error(`could not handle job ${job.id}'s failure`, error),
+				void failed(job.data.conversationId, job.id, err, config, mcp).catch(
+					(error) =>
+						console.error(`could not handle job ${job.id}'s failure`, error),
 				);
 		});
 		worker.on("error", (err) => console.error("worker error", err));
@@ -934,14 +930,16 @@ export async function serveRuns(
 		clearInterval(sweep);
 		await Promise.all(workers.map((w) => w.close()));
 		listener.release(true); // destroy rather than return a LISTENing connection to the pool
+		tellFailedRuns(undefined);
 	};
 }
 
 /**
- * Queues again the Runs left running without a job, lost to a crash between saving a Run's start and queueing it.
+ * Queues again the Runs left running without a job, lost to a crash between saving a Run's start and queueing it:
+ * each process that starts Runs (a worker, the api) does this as it starts, so whichever crashed there queues them on its restart.
  * Each is queued as the job its start saved, so a Run that has its job, or that its start is queueing right now, gets no second one.
  */
-async function requeue() {
+export async function requeue() {
 	const running = await db
 		.select({ id: conversation.id })
 		.from(conversation)
