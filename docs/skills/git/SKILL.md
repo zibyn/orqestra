@@ -25,4 +25,4 @@ description: The Git conventions for changing code in a repository from your san
 
 ## As a subagent
 
-Work in the worktree and on the branch your brief names, as your bash description says. Commit there, push nothing, and name the branch in your final answer.
+Add a worktree of your own, as your bash description says, on the branch your brief names. Commit there, push nothing, and name the branch in your final answer.
