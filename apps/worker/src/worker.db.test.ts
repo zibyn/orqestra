@@ -12,6 +12,7 @@ import {
 	type Api,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
+	type Context,
 	calculateCost,
 	type FauxResponseStep,
 	fauxAssistantMessage,
@@ -414,6 +415,97 @@ describe.skipIf(!url)(
 				{ type: "thinking", thinking: "let me think" },
 				{ type: "text", text: "Hello there" },
 			]);
+		});
+
+		it("ends a Run without waiting for its title: the worker's one slot takes the next Run while the title is slow, and the title comes once it answers, metered", async () => {
+			let release!: () => void;
+			const slow = new Promise<void>((r) => {
+				release = r;
+			});
+			faux.setResponses(
+				Array.from({ length: 4 }, () => async (context: Context) => {
+					const asked = JSON.stringify(context.messages);
+					if (!asked.includes("Write a title"))
+						return fauxAssistantMessage(
+							asked.includes("second") ? "Reply two" : "Reply one",
+						);
+					if (!asked.includes("User: first"))
+						return fauxAssistantMessage("Second title");
+					await slow;
+					return fauxAssistantMessage("First title");
+				}),
+			);
+			try {
+				const first = await conversations.send(userId, {
+					agentId: "faux",
+					text: "first",
+				});
+				await waitFor(
+					() => conversations.get(userId, first),
+					(v) => v?.status === "idle",
+				);
+				// concurrency 1: this Run starts only once the first Run's job has completed
+				const second = await conversations.send(userId, {
+					agentId: "faux",
+					text: "second",
+				});
+				await waitFor(
+					() => conversations.get(userId, second),
+					(v) => v?.title === "Second title",
+				);
+				expect((await conversations.get(userId, first))?.title).toBeNull();
+
+				release();
+				await waitFor(
+					() => conversations.get(userId, first),
+					(v) => v?.title === "First title",
+				);
+				const rows = await waitFor(
+					() => usageOf(first),
+					(r) => r.length === 2,
+				);
+				expect(rows.map((r) => r.purpose).sort()).toEqual(["step", "title"]);
+			} finally {
+				release();
+			}
+		});
+
+		it("leaves a Run completed when its title fails, and titles the Conversation on its next Turn", async () => {
+			let titles = 0;
+			faux.setResponses(
+				Array.from({ length: 4 }, () => async (context: Context) => {
+					if (!JSON.stringify(context.messages[0]).includes("Write a title"))
+						return fauxAssistantMessage("Hello");
+					if (++titles === 1) throw new Error("connection refused");
+					return fauxAssistantMessage("Greetings");
+				}),
+			);
+			const id = await conversations.send(userId, {
+				agentId: "faux",
+				text: "hi",
+			});
+			await waitFor(
+				async () => titles,
+				(n) => n === 1,
+			);
+			const view = await waitFor(
+				() => conversations.get(userId, id),
+				(v) => v?.status === "idle",
+			);
+			expect(view?.failure).toBeNull();
+			expect(view?.title).toBeNull();
+			expect(view?.messages.map((m) => m.message.role)).toEqual([
+				"user",
+				"assistant",
+			]);
+
+			await conversations.send(userId, { conversationId: id, text: "again" });
+			const titled = await waitFor(
+				() => conversations.get(userId, id),
+				(v) => !!v?.title,
+			);
+			expect(titled?.title).toBe("Greetings");
+			expect(titled?.status).toBe("idle");
 		});
 
 		it("gives a Subagent at its step limit one last request without Tools for its answer", async () => {
