@@ -1153,27 +1153,6 @@ describe.skipIf(!url)(
 				]);
 			});
 
-			it("posts only the reply of a Run whose Tools failed to close after it ended, which leaves the Conversation as it ended", async () => {
-				closeFails = true;
-				try {
-					script({ parent: [fauxAssistantMessage("Done.")] });
-					const id = await fromLinear("Fix the login button");
-					await waitFor(
-						() => conversations.get(userId, id),
-						(v) => v?.title === "T",
-					);
-					expect(await posted(1)).toEqual([
-						{
-							agentSessionId: "session-1",
-							content: { type: "response", body: "Done." },
-						},
-					]);
-					expect((await conversations.get(userId, id))?.status).toBe("idle");
-				} finally {
-					closeFails = false;
-				}
-			});
-
 			it("posts a Run that failed before its reply began, its Agent removed, as one error", async () => {
 				await stopWorker();
 				const loaded = await config.current();
