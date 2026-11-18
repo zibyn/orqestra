@@ -274,6 +274,38 @@ describe.skipIf(!url)("Alerts (Postgres)", { timeout: 20_000 }, () => {
 		}
 	});
 
+	it("sends no Alert for a Firing whose Run a worker's startup requeue queued, and a worker opened, before its start's own add failed", async () => {
+		end = "hold";
+		let threw = false;
+		const add = vi
+			.spyOn(runQueue(AGENT_RUNS_QUEUE), "add")
+			.mockImplementationOnce(async (_name, data) => {
+				// a worker starting queues the Run its start saved, and a worker opens it, before the start's own add fails
+				await conversations.requeue();
+				await waitFor(
+					() => conversations.get(ada, data.conversationId),
+					(c) => c?.messages.at(-1)?.message.role === "assistant",
+				);
+				threw = true;
+				throw new Error("queue down");
+			});
+		const taskId = await tasks.create(ada, input());
+		try {
+			await waitFor(async () => threw, Boolean);
+			// a once task's last Firing says it finished, as ever
+			expect((await settled()).filter((a) => a.status !== "finished")).toEqual(
+				[],
+			);
+			const [firing] = (await tasks.get(ada, taskId))?.firings ?? [];
+			expect(firing?.outcome).toBe("running");
+		} finally {
+			add.mockRestore();
+			const [firing] = (await tasks.get(ada, taskId))?.firings ?? [];
+			if (firing?.conversationId)
+				await conversations.stop(ada, firing.conversationId);
+		}
+	});
+
 	it("keeps quiet about completed and partial Runs of a task that has Alerts off, but not about its Questions or its end", async () => {
 		const quiet = () => input({ alertOnComplete: false });
 		await firingOf(await tasks.create(ada, quiet()));
