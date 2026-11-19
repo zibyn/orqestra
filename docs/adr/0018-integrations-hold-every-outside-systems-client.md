@@ -46,4 +46,4 @@ All three keep a vendor's client in one place sorted by vendor, and keep the rul
 
 - This supersedes ADR 0010's placement of the Search, Sandbox and Parse adapters and of `packages/linear`. ADR 0010's rule that each capability owns its configuration stands, and this decision applies it to the Integration Installation. ADR 0015 still holds for Linear, which is now a `WorkSource` of kind `linear`.
 - Migration 0038 copies `linear_installation` and `linear_session` with their rows into `integration_installation` and `integration_session` (kind `linear`), then drops the old tables.
-- A new WorkSource is a directory implementing `WorkSource`, a `kind`, an entry in conversations' `SOURCES`, and the api's and worker's assembly. Its queues, tokens and turns come with it.
+- A new WorkSource is a directory implementing `WorkSource`, a `kind`, an entry in `sources` (`packages/integrations/src/sources.ts`), and the api's and worker's assembly. Its queues, tokens and turns come with it.
