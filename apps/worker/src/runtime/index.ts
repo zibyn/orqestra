@@ -25,7 +25,6 @@ import type { openToolbox } from "./toolbox.ts";
 import {
 	backgrounded,
 	draftTool,
-	MAX_SUBAGENT_STEPS,
 	previousReportPrompt,
 	questionTool,
 	quietTool,
@@ -337,13 +336,11 @@ async function reply(
 				compaction.firstKeptId,
 				compaction.tokensBefore,
 			);
-		// a Subagent at the deepest level gets no Subagent Tools; every Subagent and an Unattended Run get a step limit
-		// whose last request goes without Tools, so they answer with what they have rather than stopping mid-search
-		const maxSteps = sub
-			? MAX_SUBAGENT_STEPS
-			: run.unattended
-				? config.limits.unattendedMaxSteps
-				: Number.POSITIVE_INFINITY;
+		// a Subagent at the deepest level gets no Subagent Tools; an Unattended Run, a Subagent's of an Unattended tree included,
+		// gets a step limit whose last request goes without Tools, so it answers with what it has rather than stopping mid-search
+		const maxSteps = run.unattended
+			? config.limits.unattendedMaxSteps
+			: Number.POSITIVE_INFINITY;
 		// what a step's request threw, such as SpendingLimitReached, which pi turns into a failed reply
 		const step = streamSimple("step");
 		let refused: unknown;

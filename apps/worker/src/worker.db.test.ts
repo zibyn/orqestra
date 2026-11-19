@@ -85,7 +85,6 @@ const telemetry = otelTelemetry(
 		spanProcessors: [new SimpleSpanProcessor({ exporter: spans })],
 	}).getTracer("test"),
 );
-const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
 /** The Users' Connections to per-User OAuth MCP Servers, as the worker reads them. */
 const connections = memoryConnections();
@@ -594,7 +593,7 @@ describe.skipIf(!url)(
 			);
 		});
 
-		it("gives a Subagent at its step limit one last request without Tools for its answer", async () => {
+		it("runs a Subagent of a User's Conversation for as many steps as it takes", async () => {
 			let first: { messages: { toolsAdded?: unknown }[] } | undefined;
 			let last: unknown;
 			script({
@@ -613,7 +612,8 @@ describe.skipIf(!url)(
 							fauxToolCall("search", { query: "more" }),
 						]);
 					},
-					...Array.from({ length: MAX_SUBAGENT_STEPS - 2 }, (_, i) =>
+					// more than the 20 steps Subagents were once held to
+					...Array.from({ length: 23 }, (_, i) =>
 						fauxAssistantMessage([
 							fauxText(`step ${i + 2}`),
 							fauxToolCall("search", { query: "more" }),
@@ -637,11 +637,11 @@ describe.skipIf(!url)(
 			expect(JSON.stringify(first?.messages[0].toolsAdded)).toContain(
 				"subagent_message",
 			);
-			expect(JSON.stringify(last)).toContain("step limit");
+			expect(JSON.stringify(last)).not.toContain("step limit");
 			const notified = JSON.stringify(view?.messages[4].message.content);
-			expect(notified).toContain('status=\\"partial\\"');
+			expect(notified).toContain('status=\\"completed\\"');
 			expect(notified).toContain("what I found");
-			expect(view?.subagents[0].outcome).toBe("partial");
+			expect(view?.subagents[0].outcome).toBe("completed");
 		});
 
 		it("traces a Subagent's first Run under the Tool call that started it, and the Run its Notification wakes as a root linked back to it", async () => {

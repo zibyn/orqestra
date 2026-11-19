@@ -31,7 +31,6 @@ import { zip } from "@orqestra/skills/test-zip";
 import { otelTelemetry, tracing } from "../tracing.ts";
 import { runAgent, titlesSettled } from "./index.ts";
 import { openToolbox } from "./toolbox.ts";
-import { MAX_SUBAGENT_STEPS } from "./tools.ts";
 
 // The runtime replying to a Run kept in memory, against pi's faux provider: no Postgres, no BullMQ
 const faux = fauxProvider({
@@ -255,7 +254,7 @@ describe("runAgent", () => {
 		expect(JSON.stringify(result.content)).toContain("https://pi.dev");
 	});
 
-	it("gives a Subagent at its step limit one last request without Tools for its answer", async () => {
+	it("runs a Subagent of a User's Conversation for as many steps as it takes, offering only its own Tools at the deepest level", async () => {
 		let first: Context | undefined;
 		let last: Context | undefined;
 		script([
@@ -266,7 +265,8 @@ describe("runAgent", () => {
 					fauxToolCall("search", { query: "more" }),
 				]);
 			},
-			...Array.from({ length: MAX_SUBAGENT_STEPS - 2 }, (_, i) =>
+			// more than the 20 steps Subagents were once held to
+			...Array.from({ length: 23 }, (_, i) =>
 				fauxAssistantMessage([
 					fauxText(`step ${i + 2}`),
 					fauxToolCall("search", { query: "more" }),
@@ -296,9 +296,9 @@ describe("runAgent", () => {
 		expect(offered).not.toContain("_timer");
 		// nor draft a Scheduled Task
 		expect(offered).not.toContain("draft_scheduled_task");
-		expect(JSON.stringify(last?.messages)).toContain("step limit");
+		expect(JSON.stringify(last?.messages)).not.toContain("step limit");
 		expect(m.outcomes).toEqual([
-			{ outcome: "partial", result: "what I found" },
+			{ outcome: "completed", result: "what I found" },
 		]);
 		expect(m.titles).toEqual([]);
 	});

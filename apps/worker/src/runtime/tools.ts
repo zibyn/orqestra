@@ -15,9 +15,6 @@ import {
 	type TraceCarrier,
 } from "@orqestra/conversations";
 
-/** Model requests a Subagent may make; the last one, without Tools, is for its final answer. */
-export const MAX_SUBAGENT_STEPS = 20;
-
 const text = (t: string) => [{ type: "text" as const, text: t }];
 
 // infers `execute`'s params from `parameters`, then fits the Agent's untyped Tool list
@@ -224,7 +221,7 @@ export const backgrounded = (id: string) => ({
 	details: { backgroundCall: id },
 });
 
-/** Told to a Subagent whose next request is its last, made without Tools. */
+/** Told to an Unattended Run whose next request is its last, made without Tools. */
 export const STEP_LIMIT =
 	"You have reached your step limit and can no longer use tools. Reply now with your final answer from what you have so far, saying what is left undone.";
 

@@ -77,7 +77,7 @@ What an input does when it arrives in the Inbox of a Conversation that has no Ru
 _Avoid_: Trigger, resume
 
 **Outcome**:
-How a Subagent's work stands: queued while it waits for a free slot, running, or how its latest Run ended: completed, partial (cut off at its step limit), failed or stopped. Its Notification carries it. A Conversation's own state is its status instead: idle, running or failed.
+How a Subagent's work stands: queued while it waits for a free slot, running, or how its latest Run ended: completed, partial (cut off at an Unattended Run's step or time limit), failed or stopped. Its Notification carries it. A Conversation's own state is its status instead: idle, running or failed.
 _Avoid_: Status (of a Subagent), state, result
 
 **Tool**:
