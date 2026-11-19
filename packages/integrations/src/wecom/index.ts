@@ -25,9 +25,6 @@ const TRUNCATED =
 /** WeCom ends a streamed reply by itself 10 minutes after it began; past this, the answer is pushed instead. */
 const STREAM_MS = 9 * 60_000;
 
-/** How long a connection another one kicked waits before taking the bot back (the SDK itself stops). */
-const KICKED_RETRY_MS = 60_000;
-
 /** How long proving the credentials waits for WeCom to answer the subscribe. */
 const PROVE_MS = 15_000;
 
@@ -160,6 +157,16 @@ const refused = (botId: string, last: Error | undefined) =>
 		`WeCom refused AI bot ${botId}'s id and secret${last ? `: ${last.message}` : ""}`,
 	);
 
+/** `connect`'s end when another connection took the bot from it: WeCom keeps one per bot. */
+export class ConnectedElsewhere extends Error {
+	override name = "ConnectedElsewhere";
+	constructor(botId: string) {
+		super(
+			`WeCom AI bot ${botId} is connected elsewhere: a newer connection took it over`,
+		);
+	}
+}
+
 /** The incoming frame a session was last written to through, and the reply streamed on it since its `thought`. */
 type Held = {
 	client: WSClient;
@@ -189,10 +196,8 @@ export function wecomSource(
 		const connection: Held = { client, frames: new Map() };
 		await new Promise<void>((resolve, reject) => {
 			let last: Error | undefined;
-			let retry: ReturnType<typeof setTimeout> | undefined;
 			let chain = Promise.resolve();
 			const end = (error?: unknown) => {
-				clearTimeout(retry);
 				signal.removeEventListener("abort", stop);
 				client.removeAllListeners();
 				client.disconnect();
@@ -203,18 +208,20 @@ export function wecomSource(
 			const stop = () => end();
 			if (signal.aborted) return end();
 			signal.addEventListener("abort", stop, { once: true });
+			// posts only once WeCom acked the subscribe, again after each reconnect, not while the SDK reconnects a dropped connection
 			client.on("authenticated", () => live.set(botId, connection));
+			client.on("disconnected", () => {
+				if (live.get(botId) === connection) live.delete(botId);
+			});
 			client.on("error", (error) => {
 				if (error instanceof WSAuthFailureError) end(refused(botId, last));
 				else last = error;
 			});
-			// the SDK reconnects a dropped connection itself but not one a newer connection kicked; its `connect` does nothing while it
-			// is reconnecting, so this takes the bot back only after a kick
-			// shortcut: two processes holding the same bot take it from each other every KICKED_RETRY_MS; hold one per bot across workers
-			client.on("disconnected", () => {
-				clearTimeout(retry);
-				retry = setTimeout(() => client.connect(), KICKED_RETRY_MS);
-			});
+			// a newer connection took the bot, and the SDK does not reconnect: taking it back would kick that one, and two holders would
+			// kick each other forever, so this ends and the core backs off before connecting again
+			client.on("event.disconnected_event", () =>
+				end(new ConnectedElsewhere(botId)),
+			);
 			client.on("message", (frame) => {
 				const event = sessionEvent(frame);
 				if (!event) return;
@@ -238,7 +245,7 @@ export function wecomSource(
 				{ name: "secret", secret: true },
 			],
 			// an authenticated subscribe, then closed; the subscribe's answer names nothing, so the bot is named by its id
-			// shortcut: WeCom keeps one connection per bot, so proving them kicks a worker's, which takes it back after KICKED_RETRY_MS
+			// WeCom keeps one connection per bot, so proving them kicks a worker's, which the core connects again after its back-off
 			async workspace({ credentials }) {
 				const client = create(options(credentials));
 				try {

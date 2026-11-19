@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionEvent, StreamIngress } from "../ports.ts";
-import { sessionEvent, wecomSource } from "./index.ts";
+import { ConnectedElsewhere, sessionEvent, wecomSource } from "./index.ts";
 import { fakeWecom, messageFrame } from "./testing.ts";
 
 const credentials = { botId: "bot-1", secret: "bot-s3cret" };
@@ -182,18 +182,38 @@ describe("connect", () => {
 		await expect(done).rejects.toThrow("queue down");
 	});
 
-	it("takes the bot back a minute after another connection kicked it", async () => {
-		const { wecom, source, stop, done } = await connected();
-		vi.useFakeTimers();
-		const worker = wecom.holder();
+	it("ends saying the bot is connected elsewhere once another connection takes it, never taking it back", async () => {
+		const { wecom, source, done } = await connected();
 		// proving the credentials is a second connection
-		const proving =
-			source.install.mode === "credentials" &&
-			source.install.workspace(auth, noFetch);
-		await vi.waitFor(() => expect(wecom.holder()).not.toBe(worker));
-		await proving;
-		await vi.advanceTimersByTimeAsync(60_000);
-		expect(wecom.holder()).toBe(worker);
+		if (source.install.mode !== "credentials")
+			throw new Error("not a credentials install");
+		await source.install.workspace(auth, noFetch);
+		await expect(done).rejects.toBeInstanceOf(ConnectedElsewhere);
+		await expect(done).rejects.toThrow(
+			"WeCom AI bot bot-1 is connected elsewhere",
+		);
+		expect(wecom.holder()).toBeUndefined();
+		await expect(
+			source.post(
+				auth,
+				"single:zhangsan",
+				{ type: "response", body: "Done." },
+				noFetch,
+			),
+		).rejects.toThrow(/holds no connection/);
+	});
+
+	it("posts only while WeCom has acked its subscribe, again once the SDK reconnects a dropped connection", async () => {
+		const { wecom, source, stop, done } = await connected();
+		const response = { type: "response" as const, body: "Done." };
+		const client = wecom.drop();
+		await expect(
+			source.post(auth, "single:zhangsan", response, noFetch),
+		).rejects.toThrow(/holds no connection/);
+		client.connect();
+		await vi.waitFor(() => expect(wecom.holder()).toBe(client));
+		await source.post(auth, "single:zhangsan", response, noFetch);
+		expect(wecom.pushed.map((p) => p.chatid)).toEqual(["zhangsan"]);
 		stop();
 		await done;
 	});

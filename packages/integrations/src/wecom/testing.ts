@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import {
 	type BaseMessage,
+	EventType,
 	type SendMsgBody,
 	WSAuthFailureError,
 	WSClient,
@@ -31,10 +32,22 @@ class FakeClient extends WSClient {
 				this.emit("error", new WSAuthFailureError(0));
 				return;
 			}
-			// one connection per bot: the newest kicks the one before
+			// one connection per bot: the newest kicks the one before, which WeCom tells first and the SDK does not reconnect
 			for (const other of this.wecom.clients)
 				if (other !== this && other.connected) {
 					other.connected = false;
+					other.emit("event.disconnected_event", {
+						cmd: "aibot_event_callback",
+						headers: { req_id: randomUUID() },
+						body: {
+							msgid: randomUUID(),
+							create_time: Date.now(),
+							aibotid: other.given.botId,
+							from: { userid: "" },
+							msgtype: "event",
+							event: { eventtype: EventType.Disconnected },
+						},
+					});
 					other.emit("disconnected", "New connection established");
 				}
 			this.connected = true;
@@ -106,6 +119,14 @@ export function fakeWecom({ secret = "bot-s3cret" }: { secret?: string } = {}) {
 			const holder = wecom.holder();
 			if (!holder) throw new Error("no client holds the bot's connection");
 			holder.emit("message", frame);
+		},
+		/** Drops the holder's connection as a network failure does; its `connect` is the SDK reconnecting it. */
+		drop() {
+			const holder = wecom.holder();
+			if (!holder) throw new Error("no client holds the bot's connection");
+			holder.connected = false;
+			holder.emit("disconnected", "Connection closed");
+			return holder;
 		},
 	};
 	return wecom;
