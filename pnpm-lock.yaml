@@ -455,6 +455,9 @@ importers:
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(bun-types@1.4.4)(kysely@0.29.7)(pg@8.23.1)
+      email-reply-parser:
+        specifier: 2.3.9
+        version: 2.3.9
       imapflow:
         specifier: 2.10.2
         version: 2.10.2
@@ -3740,6 +3743,15 @@ packages:
       '@types/bun':
         optional: true
       typescript:
+        optional: true
+
+  email-reply-parser@2.3.9:
+    resolution: {integrity: sha512-k5w4cjqLSZABTyxkFHQLnMKJgrK2l6mPptmOnQHlwIosw86S05Xnupy4PPdw8XdXv/kXzn2PAnLfFMNFVUH4YQ==}
+    engines: {node: '>= 22.0.0'}
+    peerDependencies:
+      re2: 1.x
+    peerDependenciesMeta:
+      re2:
         optional: true
 
   emoji-regex@10.6.0:
@@ -8955,6 +8967,8 @@ snapshots:
     optionalDependencies:
       '@types/bun': 1.4.4
       typescript: 6.0.3
+
+  email-reply-parser@2.3.9: {}
 
   emoji-regex@10.6.0: {}
 
