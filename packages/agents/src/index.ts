@@ -1,4 +1,6 @@
 // No database at import: what resolves Agent Definitions and Turns, for any process (createAgents is in ./live)
+
+import type { McpServices } from "@orqestra/mcp";
 import {
 	defaultModelOf,
 	type Models,
@@ -7,7 +9,12 @@ import {
 	type ThinkingLevel,
 } from "@orqestra/models";
 import type { SkillInfo } from "@orqestra/skills";
-import { searchToolNames, type ToolRef } from "@orqestra/tools/shared";
+import { availableBuiltinTools, type ToolServices } from "@orqestra/tools";
+import {
+	mcpToolRef,
+	searchToolNames,
+	type ToolRef,
+} from "@orqestra/tools/shared";
 import type { z } from "zod";
 import { agentDefinition, definitionIssues } from "./shared.ts";
 
@@ -125,6 +132,14 @@ export function resolveTurn(
 			: levels.default;
 	return { agent, model, defaultModel, thinking };
 }
+
+/** The Tool entries that can be offered in a Run now: the available built-in Tools, then every MCP Server's Tools. */
+export const availableTools = (
+	services: ToolServices & McpServices,
+): ToolRef[] => [
+	...availableBuiltinTools(services),
+	...Object.keys(services.mcpServers).map(mcpToolRef),
+];
 
 /** The Skills a Run of `agent` offers: those it allows that are enabled, none without a Sandbox Provider. */
 export const turnSkills = (

@@ -5,12 +5,11 @@ const url = process.env.TEST_DATABASE_URL;
 if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const { sql } = await import("drizzle-orm");
-const { availableTools } = await import("./index.ts");
+const { availableBuiltinTools } = await import("./index.ts");
 const { createTools } = await import("./live.ts");
 const tools = createTools(db);
-/** The Tools the Agent form offers, without MCP Servers. */
-const offered = async () =>
-	availableTools({ ...(await tools.current()), mcpServers: {} });
+/** The built-in Tools the Agent form offers. */
+const offered = async () => availableBuiltinTools(await tools.current());
 
 describe.skipIf(!url)("@orqestra/tools writes (Postgres)", () => {
 	const reset = () =>

@@ -1,6 +1,7 @@
 import { type ModelSettings, resolveModels } from "@orqestra/models";
 import { describe, expect, it } from "vitest";
 import {
+	availableTools,
 	GENERAL_WORKER,
 	resolveAgents,
 	resolveTurn,
@@ -288,5 +289,27 @@ describe("resolveTurn", () => {
 		expect(
 			resolveTurn(await loadConfig(deepseek([])), "general"),
 		).toBeUndefined();
+	});
+});
+
+describe("availableTools", () => {
+	const tavily = {
+		provider: "tavily",
+		apiKey: "k",
+		baseUrl: "https://x",
+	} as const;
+	const server = (name: string) => ({
+		name,
+		url: "https://x/mcp",
+		headers: {},
+	});
+
+	it("lists the built-in Tools with a Search Provider, then every MCP Server's Tools", () => {
+		expect(
+			availableTools({
+				tools: { scrape: tavily },
+				mcpServers: { github: server("GitHub"), wiki: server("Wiki") },
+			}),
+		).toEqual(["scrape", "mcp:github", "mcp:wiki"]);
 	});
 });
