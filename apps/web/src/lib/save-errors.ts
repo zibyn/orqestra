@@ -40,6 +40,9 @@ const texts: {
 	connection_exists: () => m.connections_exists(),
 	oauth_client_required: () => m.connections_client_required(),
 	oauth_unavailable: (e) => m.connections_unavailable({ detail: e.detail }),
+	required: () => m.save_required(),
+	credentials_refused: (e) => m.credentials_refused({ detail: e.detail }),
+	link_invalid: () => m.link_invalid(),
 };
 
 /** A field error of a /console save, in the User's language. */

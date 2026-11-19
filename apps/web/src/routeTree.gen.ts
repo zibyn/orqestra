@@ -17,6 +17,7 @@ import { Route as AppMemoryRouteImport } from './routes/_app/memory'
 import { Route as AppTasksRouteImport } from './routes/_app/tasks'
 import { Route as AppUsageRouteImport } from './routes/_app/usage'
 import { Route as ConsoleIndexRouteImport } from './routes/console/index'
+import { Route as ConsoleKindRouteImport } from './routes/console/$kind'
 import { Route as ConsoleAgentsRouteImport } from './routes/console/agents'
 import { Route as ConsoleLimitsRouteImport } from './routes/console/limits'
 import { Route as ConsoleLinearRouteImport } from './routes/console/linear'
@@ -67,6 +68,11 @@ const AppUsageRoute = AppUsageRouteImport.update({
 const ConsoleIndexRoute = ConsoleIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => ConsoleRoute,
+} as any)
+const ConsoleKindRoute = ConsoleKindRouteImport.update({
+  id: '/$kind',
+  path: '/$kind',
   getParentRoute: () => ConsoleRoute,
 } as any)
 const ConsoleAgentsRoute = ConsoleAgentsRouteImport.update({
@@ -137,6 +143,7 @@ export interface FileRoutesByFullPath {
   '/memory': typeof AppMemoryRoute
   '/tasks': typeof AppTasksRoute
   '/usage': typeof AppUsageRoute
+  '/console/$kind': typeof ConsoleKindRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
   '/console/linear': typeof ConsoleLinearRoute
@@ -156,6 +163,7 @@ export interface FileRoutesByTo {
   '/memory': typeof AppMemoryRoute
   '/tasks': typeof AppTasksRoute
   '/usage': typeof AppUsageRoute
+  '/console/$kind': typeof ConsoleKindRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
   '/console/linear': typeof ConsoleLinearRoute
@@ -179,6 +187,7 @@ export interface FileRoutesById {
   '/_app/memory': typeof AppMemoryRoute
   '/_app/tasks': typeof AppTasksRoute
   '/_app/usage': typeof AppUsageRoute
+  '/console/$kind': typeof ConsoleKindRoute
   '/console/agents': typeof ConsoleAgentsRoute
   '/console/limits': typeof ConsoleLimitsRoute
   '/console/linear': typeof ConsoleLinearRoute
@@ -203,6 +212,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/tasks'
     | '/usage'
+    | '/console/$kind'
     | '/console/agents'
     | '/console/limits'
     | '/console/linear'
@@ -222,6 +232,7 @@ export interface FileRouteTypes {
     | '/memory'
     | '/tasks'
     | '/usage'
+    | '/console/$kind'
     | '/console/agents'
     | '/console/limits'
     | '/console/linear'
@@ -244,6 +255,7 @@ export interface FileRouteTypes {
     | '/_app/memory'
     | '/_app/tasks'
     | '/_app/usage'
+    | '/console/$kind'
     | '/console/agents'
     | '/console/limits'
     | '/console/linear'
@@ -321,6 +333,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/console/'
       preLoaderRoute: typeof ConsoleIndexRouteImport
+      parentRoute: typeof ConsoleRoute
+    }
+    '/console/$kind': {
+      id: '/console/$kind'
+      path: '/$kind'
+      fullPath: '/console/$kind'
+      preLoaderRoute: typeof ConsoleKindRouteImport
       parentRoute: typeof ConsoleRoute
     }
     '/console/agents': {
@@ -431,6 +450,7 @@ const AppRouteChildren: AppRouteChildren = {
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface ConsoleRouteChildren {
+  ConsoleKindRoute: typeof ConsoleKindRoute
   ConsoleAgentsRoute: typeof ConsoleAgentsRoute
   ConsoleLimitsRoute: typeof ConsoleLimitsRoute
   ConsoleLinearRoute: typeof ConsoleLinearRoute
@@ -446,6 +466,7 @@ interface ConsoleRouteChildren {
 }
 
 const ConsoleRouteChildren: ConsoleRouteChildren = {
+  ConsoleKindRoute: ConsoleKindRoute,
   ConsoleAgentsRoute: ConsoleAgentsRoute,
   ConsoleLimitsRoute: ConsoleLimitsRoute,
   ConsoleLinearRoute: ConsoleLinearRoute,

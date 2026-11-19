@@ -3,6 +3,7 @@ import {
 	CheckCircle2Icon,
 	CircleDashedIcon,
 	ExternalLinkIcon,
+	LinkIcon,
 	PlugIcon,
 	TriangleAlertIcon,
 } from "lucide-react";
@@ -16,15 +17,32 @@ import { errorText } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
 
-const getConnections = async () => {
-	const [rows, linear] = await Promise.all([
-		ok(api().api.connections.get()),
-		ok(api().api.linear.account.get()),
-	]);
-	return { rows, linear };
+/** Whom a private link the app sent links, as the User confirms it; `invalid` once it is expired or forged. */
+const linkInfo = async (link: string) => {
+	const { data } = await api().api.integrations.link.get({ query: { link } });
+	return data ?? { invalid: true as const };
 };
 
-type Search = { connected?: string; linked?: string; error?: string };
+const getConnections = async (link?: string) => {
+	const [rows, integrations, pending] = await Promise.all([
+		ok(api().api.connections.get()),
+		ok(api().api.integrations.get()),
+		link ? linkInfo(link) : undefined,
+	]);
+	return {
+		rows,
+		integrations: integrations.filter((i) => i.workspace),
+		pending,
+	};
+};
+
+type Search = {
+	connected?: string;
+	linked?: string;
+	error?: string;
+	/** A private link the app sent, opened here: linked only once the User confirms it, since a mail's link scanner opens it first. */
+	link?: string;
+};
 
 export const Route = createFileRoute("/_app/connections")({
 	// where the authorization popup lands, from the api's callback
@@ -34,8 +52,10 @@ export const Route = createFileRoute("/_app/connections")({
 		}),
 		...(typeof search.linked === "string" && { linked: search.linked }),
 		...(typeof search.error === "string" && { error: search.error }),
+		...(typeof search.link === "string" && { link: search.link }),
 	}),
-	loader: getConnections,
+	loaderDeps: ({ search }) => ({ link: search.link }),
+	loader: ({ deps }) => getConnections(deps.link),
 	component: ConnectionsPage,
 });
 
@@ -51,17 +71,39 @@ const callbackErrors: Record<string, () => string> = {
 const callbackText = (error: string) =>
 	(callbackErrors[error] ?? callbackErrors.failed)();
 
-/** The Linear row's key in `busy`, apart from any MCP Server's id. */
-const LINEAR = "\0linear";
+/** An Integration's key in `busy`, apart from any MCP Server's id. */
+const integrationKey = (kind: string) => `\0${kind}`;
+const kindOf = (key: string) =>
+	key.startsWith("\0") ? key.slice(1) : undefined;
 
-/** 「连接」: every per-User OAuth MCP Server, with the signed-in User's own Connection to it; and their Linear account, once the app is installed. */
+/**
+ * 「连接」: every per-User OAuth MCP Server, with the signed-in User's own Connection to it; and their account in each Integration
+ * whose app is installed, linked by authorizing as themselves or by a link the app sends them, which is confirmed here.
+ */
 function ConnectionsPage() {
-	const { rows, linear } = Route.useLoaderData();
+	const { rows, integrations, pending } = Route.useLoaderData();
 	const search = Route.useSearch();
 	const navigate = Route.useNavigate();
 	const router = useRouter();
 	const [busy, setBusy] = useState<string>();
 	const [error, setError] = useState("");
+
+	const [linking, setLinking] = useState(false);
+	const [linkedTo, setLinkedTo] = useState("");
+
+	async function confirmLink(link: string, integration: string) {
+		setLinking(true);
+		try {
+			await ok(api().api.integrations.link.post({ link }));
+			setError("");
+			setLinkedTo(integration);
+			await navigate({ search: {}, replace: true });
+		} catch (e) {
+			setError(errorText(e));
+		} finally {
+			setLinking(false);
+		}
+	}
 
 	useEffect(() => {
 		if (!search.connected && !search.linked && !search.error) return;
@@ -100,10 +142,10 @@ function ConnectionsPage() {
 		const popup = window.open("", MESSAGE, "popup,width=600,height=720");
 		setBusy(serverId);
 		try {
-			const { url } =
-				serverId === LINEAR
-					? await ok(api().api.linear.account.post())
-					: await ok(api().api.connections({ serverId }).post());
+			const kind = kindOf(serverId);
+			const { url } = kind
+				? await ok(api().api({ kind }).account.post())
+				: await ok(api().api.connections({ serverId }).post());
 			setError("");
 			if (popup) popup.location.href = url;
 			else location.href = url;
@@ -118,11 +160,9 @@ function ConnectionsPage() {
 	async function disconnect(serverId: string) {
 		setBusy(serverId);
 		try {
-			await ok(
-				serverId === LINEAR
-					? api().api.linear.account.delete()
-					: api().api.connections({ serverId }).delete(),
-			);
+			const kind = kindOf(serverId);
+			if (kind) await ok(api().api({ kind }).account.delete());
+			else await ok(api().api.connections({ serverId }).delete());
 			setError("");
 			await router.invalidate();
 		} catch (e) {
@@ -148,6 +188,51 @@ function ConnectionsPage() {
 						<AlertDescription>{error}</AlertDescription>
 					</Alert>
 				)}
+				{linkedTo && (
+					<Alert>
+						<CheckCircle2Icon />
+						<AlertDescription>
+							{m.connections_link_done({ integration: linkedTo })}
+						</AlertDescription>
+					</Alert>
+				)}
+				{search.link &&
+					pending &&
+					("invalid" in pending ? (
+						<Alert variant="destructive">
+							<TriangleAlertIcon />
+							<AlertDescription>{m.link_invalid()}</AlertDescription>
+						</Alert>
+					) : (
+						<Alert>
+							<LinkIcon />
+							<AlertDescription className="flex flex-col gap-3">
+								{m.connections_link_confirm({
+									integration: pending.integration,
+									name: pending.name,
+								})}
+								<span className="flex gap-2">
+									<Button
+										size="sm"
+										disabled={linking}
+										onClick={() =>
+											void confirmLink(search.link ?? "", pending.integration)
+										}
+									>
+										{m.connections_link_button()}
+									</Button>
+									<Button
+										size="sm"
+										variant="ghost"
+										disabled={linking}
+										onClick={() => void navigate({ search: {}, replace: true })}
+									>
+										{m.cancel()}
+									</Button>
+								</span>
+							</AlertDescription>
+						</Alert>
+					))}
 				<ItemList
 					empty={{
 						icon: PlugIcon,
@@ -155,13 +240,13 @@ function ConnectionsPage() {
 						hint: m.connections_empty_hint(),
 					}}
 				>
-					{linear.installed && (
+					{integrations.map((i) => (
 						<Item
-							key={LINEAR}
+							key={integrationKey(i.kind)}
 							title={
 								<>
-									Linear
-									{linear.account ? (
+									{i.name}
+									{i.account ? (
 										<Badge variant="outline">
 											<CheckCircle2Icon />
 											{m.connection_connected()}
@@ -175,39 +260,51 @@ function ConnectionsPage() {
 								</>
 							}
 							description={
-								linear.account
-									? m.connections_linear_as({ name: linear.account.name }) +
+								i.account
+									? m.connections_integration_as({ name: i.account.name }) +
 										m.connections_since({
-											date: date(linear.account.createdAt),
+											date: date(i.account.createdAt),
 										})
-									: m.connections_linear_hint()
+									: i.proof === "private-link"
+										? m.connections_private_link_hint({
+												workspace: i.workspace ?? i.name,
+											})
+										: m.connections_integration_hint({ name: i.name })
 							}
 							actions={
-								linear.account ? (
+								i.account ? (
 									<Button
 										size="sm"
 										variant="ghost"
 										disabled={!!busy}
 										onClick={() => {
-											if (confirm(m.connections_linear_unlink_confirm()))
-												void disconnect(LINEAR);
+											if (
+												confirm(
+													m.connections_integration_unlink_confirm({
+														name: i.name,
+													}),
+												)
+											)
+												void disconnect(integrationKey(i.kind));
 										}}
 									>
 										{m.connections_disconnect()}
 									</Button>
 								) : (
-									<Button
-										size="sm"
-										disabled={!!busy}
-										onClick={() => void connect(LINEAR)}
-									>
-										<ExternalLinkIcon data-icon="inline-start" />
-										{m.connections_connect()}
-									</Button>
+									i.proof === "oauth" && (
+										<Button
+											size="sm"
+											disabled={!!busy}
+											onClick={() => void connect(integrationKey(i.kind))}
+										>
+											<ExternalLinkIcon data-icon="inline-start" />
+											{m.connections_connect()}
+										</Button>
+									)
 								)
 							}
 						/>
-					)}
+					))}
 					{rows.map((r) => (
 						<Item
 							key={r.id}
