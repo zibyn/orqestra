@@ -7,7 +7,7 @@ describe("subagentTools", () => {
 		const refuse = async () => {
 			throw error;
 		};
-		return subagentTools({ agents: [] } as never, {
+		return subagentTools({ agents: [], models: [] } as never, {
 			start: refuse,
 			message: refuse,
 			stop: refuse,
@@ -23,8 +23,10 @@ describe("subagentTools", () => {
 
 	it("promises shared files under /workspace only when there is a Sandbox", () => {
 		const described = (sandboxProvider: unknown) =>
-			subagentTools({ agents: [], sandboxProvider } as never, {} as never)[0]
-				.description;
+			subagentTools(
+				{ agents: [], models: [], sandboxProvider } as never,
+				{} as never,
+			)[0].description;
 		expect(described({ kind: "orrery" })).toContain("/workspace");
 		expect(described(undefined)).not.toContain("/workspace");
 	});

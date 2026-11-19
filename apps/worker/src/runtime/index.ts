@@ -37,10 +37,16 @@ import {
 
 /** What the runtime has besides its RunHandle, which it reaches Models, the Sandbox, Skill files, Attachments and Connections through. */
 export type RuntimeDeps = {
-	/** Subagent templates, the services for the Tools, and the Skills with the Sandbox Provider. */
+	/** Subagent templates and the Models they may run on, the services for the Tools, and the Skills with the Sandbox Provider. */
 	config: Pick<
 		RunConfig,
-		"agents" | "tools" | "mcpServers" | "skills" | "sandboxProvider" | "limits"
+		| "agents"
+		| "models"
+		| "tools"
+		| "mcpServers"
+		| "skills"
+		| "sandboxProvider"
+		| "limits"
 	>;
 	openToolbox: typeof openToolbox;
 	/** Where the Run's spans go; nowhere by default. */

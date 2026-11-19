@@ -223,7 +223,14 @@ export type RunHandle = {
 		 */
 		start(
 			toolCallId: string,
-			tasks: { brief: string; title: string; template?: string }[],
+			tasks: {
+				brief: string;
+				title: string;
+				template?: string;
+				/** `<provider>/<id>`; one not enabled falls back to the template's, then to the parent's. */
+				model?: string;
+				thinking?: ThinkingLevel;
+			}[],
 			trace?: TraceCarrier,
 		): Promise<number[]>;
 		/** Gives a Subagent more instructions, or continues it once finished; throws NoSuchSubagent or BudgetExceeded. `trace`: the Tool call's, as for `start`. */
@@ -750,13 +757,16 @@ function subagentsOf(
 			const picked = tasks.map((t) => {
 				const template = cfg.agents.find((a) => a.id === t.template);
 				if (t.template && !template) throw new NoSuchTemplate(t.template);
-				// a Subagent runs on its parent's Model and thinking level
+				// the Model named for the task, else its template's, else its parent's: the first enabled; a level the Model
+				// does not offer becomes its default once the Subagent's Turn is resolved
+				const enabled = (ref?: string) =>
+					cfg.models.find((m) => modelRef(m) === ref);
 				return {
 					brief: t.brief,
 					title: t.title,
 					template,
-					model: parent.model,
-					thinking: parent.thinking,
+					model: enabled(t.model) ?? enabled(template?.model) ?? parent.model,
+					thinking: t.thinking ?? template?.thinking ?? parent.thinking,
 				};
 			});
 			const { first, children } = await db.transaction(async (tx) => {

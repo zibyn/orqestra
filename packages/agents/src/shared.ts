@@ -24,7 +24,8 @@ export const toolRef = z.union([
 	z.templateLiteral(["mcp:", agentId]),
 ]);
 
-// strict: an Agent Definition only says who the Agent is (ADR 0012); the Model, thinking level and memory are the User's to pick
+// strict: an Agent Definition only says who the Agent is (ADR 0012); the Model, thinking level and memory are the User's to pick,
+// though it may name the Model and level it runs on as a Subagent
 /** An Agent Definition as stored in the database (and edited in /console/agents), without its id. */
 export const agentDefinition = z.strictObject({
 	name: z.string().trim().min(1),
@@ -35,6 +36,10 @@ export const agentDefinition = z.strictObject({
 	tools: z.array(toolRef).optional(),
 	/** Allowed Skills by name; omitted means none. */
 	skills: z.array(z.string()).optional(),
+	/** The Model it runs on as a Subagent, `<provider>/<id>`; omitted, its parent's. Users still pick their own when they talk to it. */
+	model: z.string().optional(),
+	/** The thinking level it runs at as a Subagent; omitted, its parent's. */
+	thinking: thinkingLevel.optional(),
 	/** Users can start Conversations with it; otherwise it only serves as a Subagent template. */
 	pickable: z.boolean().default(true),
 	default: z.boolean().default(false),
