@@ -822,6 +822,8 @@ export const integrationInstallation = pgTable("integration_installation", {
 		.notNull(),
 	// the scopes (group chats) a shared session reaches the Agent in, for a kind whose shared sessions answer only where the Admin opened
 	openScopes: jsonb("open_scopes").$type<string[]>().default([]).notNull(),
+	// what the held connection last got to (an IMAP cursor), as its adapter writes it; cleared when the credentials change
+	streamState: text("stream_state"),
 	// the authorization an Admin started, sent as its `state`, and when; its callback takes it, so it is used once
 	pendingState: text("pending_state"),
 	pendingAt: timestamp("pending_at", { withTimezone: true }),
@@ -850,6 +852,18 @@ export const integrationAccount = pgTable(
 		primaryKey({ columns: [table.kind, table.externalId] }),
 		unique().on(table.kind, table.userId),
 	],
+);
+
+// When the app last sent a person of an Integration a private link to link their account (ADR 0020), by the Integration's own id: it
+// sends one at most every 10 minutes, the time a link lasts, however many workers are asked
+export const integrationLinkSent = pgTable(
+	"integration_link_sent",
+	{
+		kind: text("kind").$type<IntegrationKind>().notNull(),
+		externalId: text("external_id").notNull(),
+		sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.kind, table.externalId] })],
 );
 
 // The Conversation an Integration Session (a Linear Agent Session) opened (ADR 0018): the session's later prompts go to it; gone with it

@@ -35,11 +35,18 @@ const REFRESH_MARGIN_MS = 60_000;
  */
 const TOKEN_CHECK_EVERY_MS = 24 * 3_600_000;
 
-/** How often a held connection looks for the Admin saving other credentials, or for the app being installed. */
-const STREAM_CHECK_EVERY_MS = 10_000;
+/** How often a held connection looks for the Admin saving other credentials, the app being installed, or its lock coming free. */
+const STREAM_CHECK_EVERY_MS = 15_000;
 
-/** After a held connection throws, it connects again after a second, then twice as long each time it throws again, up to this. */
-const STREAM_BACKOFF_MAX_MS = 5 * 60_000;
+/**
+ * After a held connection throws (its credentials refused, or the bot taken over by another connection), it connects again after a
+ * minute, then twice as long each time it throws again, up to STREAM_BACKOFF_MAX_MS.
+ */
+const STREAM_BACKOFF_MS = 60_000;
+const STREAM_BACKOFF_MAX_MS = 15 * 60_000;
+
+/** How long a message to a person alone waits for the worker holding its source's one connection to send it. */
+const TELL_WAIT_MS = 30_000;
 
 export const installationInput = z.object({
 	clientId: z.string().trim().min(1),
@@ -164,9 +171,10 @@ export async function credentialsStatus(source: WorkSource) {
 	});
 	const stored = opened<Credentials>(row?.credentials);
 	return {
-		fields: fields.map(({ name, secret }) => ({
+		fields: fields.map(({ name, secret, optional = false }) => ({
 			name,
 			secret,
+			optional,
 			value: (!secret && stored?.[name]) || "",
 			readable: !!stored?.[name],
 		})),
@@ -179,6 +187,16 @@ export async function credentialsStatus(source: WorkSource) {
 				}
 			: null,
 	};
+}
+
+/** The name of the workspace the app is installed in; null until it is, or once what it stored no longer decrypts. */
+export async function installedIn(source: WorkSource) {
+	const row = await db.query.integrationInstallation.findFirst({
+		where: ofKind(source),
+		columns: { tokens: true, credentials: true, workspace: true },
+	});
+	const kept = source.install.mode === "oauth" ? row?.tokens : row?.credentials;
+	return row && readable(kept ?? null) ? row.workspace : null;
 }
 
 /** The Agent, the repository of each scope and the scopes opened to shared sessions, for the Conversations the app opens. */
@@ -201,7 +219,7 @@ export async function saveCredentials(
 	source: WorkSource,
 	input: Credentials,
 	{ fetch = globalThis.fetch }: { fetch?: Fetch } = {},
-): Promise<{ errors: Partial<Record<string, CredentialsError>> }> {
+): Promise<{ errors: Record<string, CredentialsError> }> {
 	const install = credentialsOf(source);
 	const row = await db.query.integrationInstallation.findFirst({
 		where: ofKind(source),
@@ -210,10 +228,11 @@ export async function saveCredentials(
 	const stored = opened<Credentials>(row?.credentials) ?? {};
 	const credentials: Credentials = {};
 	const errors: Record<string, CredentialsError> = {};
-	for (const { name, secret } of install.fields) {
+	for (const { name, secret, optional } of install.fields) {
 		const value = input[name] || (secret ? stored[name] : undefined);
 		if (value) credentials[name] = value;
-		else errors[name] = { code: secret ? "secret_required" : "required" };
+		else if (!optional)
+			errors[name] = { code: secret ? "secret_required" : "required" };
 	}
 	if (Object.keys(errors).length) return { errors };
 	let token: TradedToken | undefined;
@@ -239,6 +258,10 @@ export async function saveCredentials(
 		tokens: token ? sealed(token) : null,
 		workspace,
 		needsReinstall: false,
+		// where a connection got to means nothing for another mailbox or app; both are built in the fields' order
+		...(JSON.stringify(credentials) !== JSON.stringify(stored) && {
+			streamState: null,
+		}),
 	};
 	await db
 		.insert(installation)
@@ -497,16 +520,74 @@ export async function tokenGrant(
 	return response.json();
 }
 
-/** Posts an activity into a session as the app. */
+/** What the app sends a person alone, or into a session; for a source that answers only down its one connection, queued for its holder. */
+type Outgoing =
+	| { post: { sessionId: string; activity: Activity } }
+	| { tell: { person: { id: string; name: string }; body: string } };
+
+/** The Integration takes the app's messages only down the one connection a worker holds (WeCom). */
+const heldOnly = (source: WorkSource) =>
+	source.ingress.mode === "stream" && source.ingress.exclusive;
+
+/** Sends one outgoing message as the app, with what it acts as now. */
+async function send(source: WorkSource, out: Outgoing, fetch: Fetch) {
+	const as = await auth(source, { fetch });
+	if (!as) throw new Error(`The ${source.name} app is not installed`);
+	if ("post" in out)
+		return source.post(as, out.post.sessionId, out.post.activity, fetch);
+	if (source.proof.mode !== "private-link")
+		throw new Error(`${source.name} sends no one a message alone`);
+	await source.proof.tell(as, out.tell.person, out.tell.body, fetch);
+}
+
+/** Posts an activity into a session as the app: for a source that answers only down its held connection, once its holder takes it. */
 export async function postActivity(
 	source: WorkSource,
 	sessionId: string,
 	activity: Activity,
 	{ fetch = globalThis.fetch }: { fetch?: Fetch } = {},
 ) {
-	const as = await auth(source, { fetch });
-	if (!as) throw new Error(`The ${source.name} app is not installed`);
-	await source.post(as, sessionId, activity, fetch);
+	const out: Outgoing = { post: { sessionId, activity } };
+	if (!heldOnly(source)) return send(source, out, fetch);
+	// a session's posts go out in order, but for one retried
+	await queueOf(`${source.kind}-posts`).add("post", out, {
+		removeOnComplete: true,
+		removeOnFail: 1000,
+		attempts: 5,
+		backoff: { type: "exponential", delay: 2000 },
+	});
+}
+
+/**
+ * Sends `body` to a person alone as the app, for a source whose people prove themselves by a private link; for one that sends only
+ * down its held connection, through its holder, waiting up to TELL_WAIT_MS for it. Throws when it was not sent.
+ */
+export async function tellPerson(
+	source: WorkSource,
+	person: { id: string; name: string },
+	body: string,
+	{ fetch = globalThis.fetch }: { fetch?: Fetch } = {},
+) {
+	const out: Outgoing = { tell: { person, body } };
+	if (!heldOnly(source)) return send(source, out, fetch);
+	const queue = queueOf(`${source.kind}-posts`);
+	// kept a while once done, so its state can be read
+	const job = await queue.add("tell", out, {
+		removeOnComplete: { age: 3600 },
+		removeOnFail: { age: 3600 },
+	});
+	for (const until = Date.now() + TELL_WAIT_MS; Date.now() < until; ) {
+		const state = await job.getState();
+		if (state === "completed") return;
+		if (state === "failed")
+			throw new Error(
+				`${source.name} could not send it: ${(await queue.getJob(job.id ?? ""))?.failedReason}`,
+			);
+		await sleep(200);
+	}
+	// sent later, it would come after the session was told it was not
+	await job.remove().catch(() => {});
+	throw new Error(`No worker holds ${source.name}'s connection to send it`);
 }
 
 /**
@@ -540,12 +621,14 @@ const connection = () => ({
 const newQueue = (name: string) =>
 	new Queue(name, { connection: connection() }, createPostgresBackend);
 const queues = new Map<string, ReturnType<typeof newQueue>>();
-/** Queues an event for the worker; one already queued in the last day, or that failed, is not queued again. */
-export async function queueEvent(source: WorkSource, event: SessionEvent) {
-	const name = `${source.kind}-events`;
+const queueOf = (name: string) => {
 	const queue = queues.get(name) ?? newQueue(name);
 	queues.set(name, queue);
-	await queue.add("event", event, {
+	return queue;
+};
+/** Queues an event for the worker; one already queued in the last day, or that failed, is not queued again. */
+export async function queueEvent(source: WorkSource, event: SessionEvent) {
+	await queueOf(`${source.kind}-events`).add("event", event, {
 		// BullMQ refuses a job id that holds a colon (a Message-ID's) or is an integer; Linear's ids are left as they are, and no
 		// encoded id holds a "#"
 		jobId: /^\d+$/.test(event.id)
@@ -631,15 +714,19 @@ export async function serveTokenRefresh(
 /**
  * Holds the app's connection for a source that pushes its events down one, handing each to `onEvent`: connects once the app is
  * installed, again with the new credentials as soon as the Admin saves them (looking every `every` ms), and again after the connection
- * throws, waiting out a backoff that new credentials cut short. Until the returned function is called, which resolves once it is closed.
+ * throws, waiting out a backoff from `backoff` ms that new credentials cut short. An exclusive source connects only while this worker
+ * holds its lock, a Postgres session's, which a worker that dies or loses its database gives up, the others trying for it every `every`
+ * ms; while connected it also sends what the app posts or tells there. Until the returned function is called, which resolves once it is
+ * closed.
  */
 export function serveStream(
 	source: WorkSource,
 	onEvent: (event: SessionEvent) => Promise<void>,
 	{
 		every = STREAM_CHECK_EVERY_MS,
+		backoff: firstBackoff = STREAM_BACKOFF_MS,
 		fetch = globalThis.fetch,
-	}: { every?: number; fetch?: Fetch } = {},
+	}: { every?: number; backoff?: number; fetch?: Fetch } = {},
 ) {
 	const { ingress } = source;
 	if (ingress.mode !== "stream")
@@ -660,7 +747,62 @@ export function serveStream(
 		if (!found) throw new Error(`The ${source.name} app is not installed`);
 		return found;
 	};
+	const state = {
+		load: async () =>
+			(
+				await db.query.integrationInstallation.findFirst({
+					where: ofKind(source),
+					columns: { streamState: true },
+				})
+			)?.streamState ?? null,
+		async save(value: string) {
+			await db
+				.update(installation)
+				.set({ streamState: value })
+				.where(ofKind(source));
+		},
+	};
+	/** The installation's lock, on a connection of its own: undefined while another worker holds it. */
+	const lock = async () => {
+		const client = await db.$client.connect();
+		const { rows } = await client
+			.query<{ held: boolean }>(
+				"select pg_try_advisory_lock(hashtext($1)) as held",
+				[`integration-stream:${source.kind}`],
+			)
+			.catch(() => ({ rows: [] }));
+		if (rows[0]?.held) return client;
+		client.release();
+		return undefined;
+	};
+	/** What the app posts and tells, sent down this worker's connection, in the order it was queued. */
+	const sending = async () => {
+		const worker = new Worker(
+			`${source.kind}-posts`,
+			// returns nothing: BullMQ would store it
+			async (job) => {
+				await send(source, job.data as Outgoing, fetch);
+			},
+			{ connection: connection(), concurrency: 1 },
+			createPostgresBackend,
+		);
+		worker.on("failed", (job, err) =>
+			console.error(`Sending ${source.name} message ${job?.id} failed`, err),
+		);
+		worker.on("error", (err) => console.error("worker error", err));
+		await worker.waitUntilReady();
+		return worker;
+	};
 	const held = (async () => {
+		let lease: Awaited<ReturnType<typeof lock>>;
+		// a lost session has let the lock go
+		let lost = false;
+		let connection: AbortController | undefined;
+		const letGo = () => {
+			lease?.release(true);
+			lease = undefined;
+			lost = false;
+		};
 		let backoff = 0;
 		let threwWith: string | null = null;
 		while (!closed.signal.aborted) {
@@ -671,36 +813,67 @@ export function serveStream(
 				);
 				return null;
 			});
+			if (lost) letGo();
 			if (!credentials || opened(credentials) === undefined) {
+				letGo();
 				await wait(every);
 				continue;
 			}
 			if (credentials !== threwWith) backoff = 0;
-			const connection = new AbortController();
-			const close = () => connection.abort();
+			if (ingress.exclusive && !lease) {
+				lease = await lock().catch(() => undefined);
+				if (!lease) {
+					await wait(every);
+					continue;
+				}
+				lease.on("error", () => {
+					lost = true;
+					connection?.abort();
+				});
+			}
+			const current = new AbortController();
+			connection = current;
+			const close = () => current.abort();
 			closed.signal.addEventListener("abort", close);
+			const leased = lease;
 			const watch = setInterval(async () => {
-				if (await changed(credentials)) connection.abort();
+				if (await changed(credentials)) current.abort();
+				else
+					await leased?.query("select 1").catch(() => {
+						lost = true;
+						current.abort();
+					});
 			}, every);
+			const sender = leased && (await sending().catch(() => undefined));
 			try {
-				await ingress.connect(as, onEvent, connection.signal);
+				await ingress.connect(as, onEvent, current.signal, state);
 			} catch (error) {
-				if (!connection.signal.aborted)
-					console.error(`The ${source.name} app's connection failed`, error);
+				if (!current.signal.aborted) {
+					backoff = Math.min(
+						backoff * 2 || firstBackoff,
+						STREAM_BACKOFF_MAX_MS,
+					);
+					console.error(
+						`The ${source.name} app's connection failed (another one may have taken its place); connecting again in ${backoff / 1000}s`,
+						error,
+					);
+				}
 			} finally {
 				clearInterval(watch);
 				closed.signal.removeEventListener("abort", close);
+				await sender?.close();
 			}
-			// it ends only when told to: one that threw, or ended by itself, connects again after the backoff
-			threwWith = connection.signal.aborted ? null : credentials;
+			// it ends only when told to: one that threw, or ended by itself, connects again after the backoff, keeping the lock
+			threwWith = current.signal.aborted ? null : credentials;
 			if (!threwWith) continue;
-			backoff = Math.min(backoff * 2 || 1000, STREAM_BACKOFF_MAX_MS);
+			backoff ||= firstBackoff;
 			const until = Date.now() + backoff;
-			while (!closed.signal.aborted && Date.now() < until) {
+			while (!closed.signal.aborted && !lost && Date.now() < until) {
 				await wait(Math.min(every, until - Date.now()));
 				if (await changed(credentials)) break;
 			}
 		}
+		letGo();
 	})();
 	return async () => {
 		closed.abort();

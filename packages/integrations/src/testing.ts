@@ -7,18 +7,20 @@ export { memoryOrrery } from "./orrery/testing.ts";
 
 /**
  * A scripted chat in memory that installs by credentials and pushes its events down a held connection, as Feishu, WeCom and email do;
- * its kind is "email". The Admin enters `appId` and the secret `appSecret`, traded for `tenant-<n>` lasting `tokenTtl` ms unless the
+ * its kind is "email". The Admin enters `appId`, the secret `appSecret` and maybe a `region`, traded for `tenant-<n>` lasting `tokenTtl` ms unless the
  * secret is not `appSecret`. People prove themselves by a private link, and a shared session answers only in an opened scope.
- * `push` sends an event down every open connection; `refuse` makes each connect throw.
+ * `push` sends an event down every open connection; `refuse` makes each connect throw; `exclusive` allows one connection at a time.
  */
 export function fakeChannel({
 	workspace = "Acme Chat",
 	appSecret = "app-s3cret",
 	tokenTtl = 2 * 3_600_000,
+	exclusive = false,
 }: {
 	workspace?: string;
 	appSecret?: string;
 	tokenTtl?: number;
+	exclusive?: boolean;
 } = {}) {
 	const issued = new Set<string>();
 	const open = new Set<(event: SessionEvent) => Promise<void>>();
@@ -30,6 +32,8 @@ export function fakeChannel({
 		trades: [] as Record<string, string>[],
 		/** What each connect acted as. */
 		connects: [] as Auth[],
+		/** The state each connect found: the id of the last event a connection handed on. */
+		resumed: [] as (string | null)[],
 		/** How many connections are open. */
 		get open() {
 			return open.size;
@@ -50,6 +54,7 @@ export function fakeChannel({
 			fields: [
 				{ name: "appId", secret: false },
 				{ name: "appSecret", secret: true },
+				{ name: "region", secret: false, optional: true },
 			],
 			async token(credentials) {
 				channel.trades.push(credentials);
@@ -66,15 +71,22 @@ export function fakeChannel({
 		},
 		ingress: {
 			mode: "stream",
-			async connect(auth, onEvent, signal) {
+			exclusive,
+			async connect(auth, onEvent, signal, state) {
 				channel.connects.push(await auth());
+				channel.resumed.push(await state.load());
 				if (channel.refuse) throw new Error("connection refused");
-				open.add(onEvent);
+				// its cursor is the last event it handed on
+				const send = async (event: SessionEvent) => {
+					await onEvent(event);
+					await state.save(event.id);
+				};
+				open.add(send);
 				await new Promise((resolve) => {
 					if (signal.aborted) resolve(undefined);
 					signal.addEventListener("abort", resolve, { once: true });
 				});
-				open.delete(onEvent);
+				open.delete(send);
 			},
 		},
 		proof: {

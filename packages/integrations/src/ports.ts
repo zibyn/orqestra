@@ -213,8 +213,8 @@ export type OAuthInstall = {
 /** The app installs by the Admin entering what the Integration gave them (an app id and secret, a mailbox's account). */
 export type CredentialsInstall = {
 	mode: "credentials";
-	/** What the Admin enters, in order; a secret one is never sent back to the browser. */
-	fields: { name: string; secret: boolean }[];
+	/** What the Admin enters, in order; a secret one is never sent back to the browser, an optional one may be left blank. */
+	fields: { name: string; secret: boolean; optional?: boolean }[];
 	/** An access token traded for the credentials, cached until `expiresAt` (ms since the epoch); none for a source that needs no token. */
 	token?(
 		credentials: Credentials,
@@ -243,15 +243,22 @@ export type WebhookIngress = {
 /** Orqestra holds a connection open to the Integration, which pushes events down it (Feishu's and WeCom's long connections, IMAP IDLE). */
 export type StreamIngress = {
 	mode: "stream";
+	/** The Integration allows one connection per installation (WeCom), or each costs (an IMAP mailbox): only the worker holding the installation's lock connects. */
+	exclusive: boolean;
 	/**
 	 * Connects as the app and calls `onEvent` with each event, the connection's next only once it resolves; reconnects by itself and
-	 * resolves once `signal` aborts. Throws when the credentials are refused. Each worker holds one: the queue's job id drops an event two
-	 * of them got.
+	 * resolves once `signal` aborts. Throws when the credentials are refused. Each worker holds one, unless `exclusive`: the queue's job
+	 * id drops an event two of them got.
 	 */
 	connect(
 		auth: () => Promise<Auth>,
 		onEvent: (event: SessionEvent) => Promise<void>,
 		signal: AbortSignal,
+		/** What the connection last got to (an IMAP cursor), kept with the installation; null until first saved. */
+		state: {
+			load(): Promise<string | null>;
+			save(value: string): Promise<void>;
+		},
 	): Promise<void>;
 };
 
@@ -296,6 +303,15 @@ export interface WorkSource {
 	proof: OAuthProof | PrivateLinkProof;
 	/** A shared session (a group chat) reaches the Agent only in a scope the Admin opened: `listed`; or anywhere: `all` (an issue tracker). */
 	sharedScopes: "all" | "listed";
+	/**
+	 * Checks, as the app, that the Integration lets the sender hand this work in (GitHub: write access to the repository) and
+	 * acknowledges it where it was asked (a 👀 reaction); a refusal's reason, posted as the session's error, else undefined.
+	 */
+	accept?(
+		auth: Auth,
+		event: SessionEvent,
+		fetch: Fetch,
+	): Promise<string | undefined>;
 	/** Posts an activity into a session as the app, its body cut to what the tool takes. */
 	post(
 		auth: Auth,

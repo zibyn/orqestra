@@ -6,9 +6,10 @@ import {
 	integrationAccount as account,
 	type IntegrationKind,
 	integrationInstallation as installation,
+	integrationLinkSent as linkSent,
 } from "@orqestra/db/schema";
 import { decryptSecret, encryptSecret } from "@orqestra/db/secret";
-import { and, eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { z } from "zod";
 import { callbackUrl, GrantRefused, tokenGrant } from "./installation.ts";
 import type { Credentials, Fetch, OAuthClient, WorkSource } from "./ports.ts";
@@ -195,13 +196,58 @@ export function privateLink(
 }
 
 /**
+ * Sends `person` a private link through `tell`, at most once per PENDING_TTL_MS however many workers are asked, since the one sent last
+ * still works: false when one was sent them since. One that `tell` throws on is not counted.
+ */
+export async function sendPrivateLink(
+	source: WorkSource,
+	person: { id: string; name: string },
+	tell: (link: string) => Promise<void>,
+	orqestraUrl?: string,
+) {
+	const now = new Date();
+	const [claimed] = await db
+		.insert(linkSent)
+		.values({ kind: source.kind, externalId: person.id, sentAt: now })
+		.onConflictDoUpdate({
+			target: [linkSent.kind, linkSent.externalId],
+			set: { sentAt: now },
+			setWhere: lt(linkSent.sentAt, new Date(now.getTime() - PENDING_TTL_MS)),
+		})
+		.returning({ sentAt: linkSent.sentAt });
+	if (!claimed) return false;
+	try {
+		await tell(privateLink(source, person, orqestraUrl));
+		return true;
+	} catch (error) {
+		await db
+			.delete(linkSent)
+			.where(
+				and(
+					eq(linkSent.kind, source.kind),
+					eq(linkSent.externalId, person.id),
+					eq(linkSent.sentAt, now),
+				),
+			);
+		throw error;
+	}
+}
+
+/** Who a private link proves its opener to be, and in which Integration, without linking them: undefined when it is no live one. */
+export function linkedBy(link: string) {
+	const sent = unsealed(sentLink, link);
+	// sealed with Orqestra's key, so a kind privateLink was given
+	return sent && { kind: sent.account as IntegrationKind, name: sent.name };
+}
+
+/**
  * Links the User `userId` signed in to the person a private link was sent to, as finishAccount does: the kind it linked, or undefined
- * when it is no link Orqestra sealed in the last PENDING_TTL_MS.
+ * when it is no link Orqestra sealed in the last PENDING_TTL_MS. Only a User's own request does this, never opening the link: a mail's
+ * link scanner opens it first.
  */
 export async function finishLink(userId: string, link: string) {
 	const sent = unsealed(sentLink, link);
 	if (!sent) return undefined;
-	// sealed with Orqestra's key, so a kind privateLink was given
 	const kind = sent.account as IntegrationKind;
 	await linkAccount(kind, userId, { id: sent.externalId, name: sent.name });
 	return kind;

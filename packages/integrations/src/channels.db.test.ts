@@ -12,12 +12,15 @@ const {
 	auth,
 	credentialsStatus,
 	finishLink,
+	linkedBy,
 	postActivity,
 	privateLink,
 	queueEvent,
 	serveEvents,
 	saveCredentials,
+	sendPrivateLink,
 	serveStream,
+	tellPerson,
 } = await import("./index.ts");
 const { chatEvent, fakeChannel } = await import("./testing.ts");
 
@@ -30,9 +33,21 @@ async function waitFor<T>(read: () => T | Promise<T>, ok: (v: T) => boolean) {
 	throw new Error("timed out");
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Empties a queue: a run before this one's jobs would be taken for its own. */
+async function obliterate(name: string) {
+	const queue = new Queue(
+		name,
+		{ connection: { connectionString: url as string } },
+		createPostgresBackend,
+	);
+	await queue.obliterate({ force: true });
+	await queue.close();
+}
 
 const reset = () =>
-	db.execute(sql`truncate integration_installation, "user" cascade`);
+	db.execute(
+		sql`truncate integration_installation, integration_link_sent, "user" cascade`,
+	);
 
 describe.skipIf(!url)("installing a chat's app by credentials", () => {
 	beforeEach(reset);
@@ -43,8 +58,27 @@ describe.skipIf(!url)("installing a chat's app by credentials", () => {
 		const { source } = chat;
 		expect(await credentialsStatus(source)).toEqual({
 			fields: [
-				{ name: "appId", secret: false, value: "", readable: false },
-				{ name: "appSecret", secret: true, value: "", readable: false },
+				{
+					name: "appId",
+					secret: false,
+					optional: false,
+					value: "",
+					readable: false,
+				},
+				{
+					name: "appSecret",
+					secret: true,
+					optional: false,
+					value: "",
+					readable: false,
+				},
+				{
+					name: "region",
+					secret: false,
+					optional: true,
+					value: "",
+					readable: false,
+				},
 			],
 			installation: null,
 		});
@@ -57,8 +91,27 @@ describe.skipIf(!url)("installing a chat's app by credentials", () => {
 		const status = await credentialsStatus(source);
 		expect(status).toEqual({
 			fields: [
-				{ name: "appId", secret: false, value: "cli-1", readable: true },
-				{ name: "appSecret", secret: true, value: "", readable: true },
+				{
+					name: "appId",
+					secret: false,
+					optional: false,
+					value: "cli-1",
+					readable: true,
+				},
+				{
+					name: "appSecret",
+					secret: true,
+					optional: false,
+					value: "",
+					readable: true,
+				},
+				{
+					name: "region",
+					secret: false,
+					optional: true,
+					value: "",
+					readable: false,
+				},
 			],
 			installation: {
 				workspace: "Acme Chat",
@@ -144,7 +197,7 @@ describe.skipIf(!url)("the connection a worker holds to a chat", () => {
 			async (event) => {
 				events.push(event.id);
 			},
-			{ every: 50 },
+			{ every: 50, backoff: 1000 },
 		);
 		try {
 			await sleep(200);
@@ -193,6 +246,118 @@ describe.skipIf(!url)("the connection a worker holds to a chat", () => {
 			await close();
 		}
 		expect(chat.open).toBe(0);
+	});
+
+	it("hands the next connection what the last one got to, until the app's credentials change", async () => {
+		const chat = fakeChannel();
+		const { source } = chat;
+		await saveCredentials(source, { appId: "cli-1", appSecret: "app-s3cret" });
+		const close = serveStream(source, async () => {}, { every: 50 });
+		try {
+			const connected = (n: number) =>
+				waitFor(
+					async () => chat.connects.length === n && chat.open === 1,
+					Boolean,
+				);
+			await connected(1);
+			await chat.push(chatEvent({ id: "m1" }));
+			// saved again as it was: the same mailbox
+			await saveCredentials(source, { appId: "cli-1", appSecret: "" });
+			await connected(2);
+			await saveCredentials(source, { appId: "cli-2", appSecret: "" });
+			await connected(3);
+			expect(chat.resumed).toEqual([null, "m1", null]);
+		} finally {
+			await close();
+		}
+	});
+
+	it("connects in one worker only for a source that allows one connection, the next taking over once it lets go", async () => {
+		const chat = fakeChannel({ exclusive: true });
+		const { source } = chat;
+		await saveCredentials(source, { appId: "cli-1", appSecret: "app-s3cret" });
+		const got: Record<string, string[]> = { a: [], b: [] };
+		const serve = (worker: "a" | "b") =>
+			serveStream(
+				source,
+				async (event) => {
+					got[worker].push(event.id);
+				},
+				{ every: 50 },
+			);
+		const closers = { a: serve("a"), b: serve("b") };
+		try {
+			await waitFor(
+				() => chat.open,
+				(n) => n === 1,
+			);
+			await sleep(400);
+			expect(chat.connects).toHaveLength(1);
+			await chat.push(chatEvent({ id: "m1" }));
+			const holder = got.a.length ? "a" : "b";
+			const other = holder === "a" ? "b" : "a";
+			expect(got[holder]).toEqual(["m1"]);
+
+			await closers[holder]();
+			await waitFor(
+				() => chat.connects.length === 2 && chat.open === 1,
+				Boolean,
+			);
+			await chat.push(chatEvent({ id: "m2" }));
+			expect(got[other]).toEqual(["m2"]);
+		} finally {
+			await Promise.all([closers.a(), closers.b()]);
+		}
+	});
+
+	it("sends what any process posts or tells, for a source that allows one connection, through the worker holding it", async () => {
+		const chat = fakeChannel({ exclusive: true });
+		const { source } = chat;
+		await obliterate("email-posts");
+		await saveCredentials(source, { appId: "cli-1", appSecret: "app-s3cret" });
+		// queued before any worker holds the connection
+		await postActivity(source, "chat-1", { type: "thought", body: "On it." });
+		expect(chat.posted).toEqual([]);
+		const close = serveStream(source, async () => {}, { every: 50 });
+		try {
+			await waitFor(
+				() => chat.posted.length,
+				(n) => n === 1,
+			);
+			await postActivity(source, "chat-1", { type: "response", body: "Done." });
+			await tellPerson(source, { id: "chat-user-1", name: "Uma" }, "A link");
+			await waitFor(
+				() => chat.posted.length,
+				(n) => n === 2,
+			);
+			expect(chat.posted).toEqual([
+				{
+					token: "tenant-1",
+					sessionId: "chat-1",
+					activity: { type: "thought", body: "On it." },
+				},
+				{
+					token: "tenant-1",
+					sessionId: "chat-1",
+					activity: { type: "response", body: "Done." },
+				},
+			]);
+			expect(chat.told).toEqual([
+				{ person: { id: "chat-user-1", name: "Uma" }, body: "A link" },
+			]);
+
+			chat.source.proof = {
+				mode: "private-link",
+				tell: async () => {
+					throw new Error("never wrote to the app alone");
+				},
+			};
+			await expect(
+				tellPerson(source, { id: "chat-user-2", name: "Ugo" }, "A link"),
+			).rejects.toThrow("never wrote to the app alone");
+		} finally {
+			await close();
+		}
 	});
 });
 
@@ -246,6 +411,54 @@ describe.skipIf(!url)("a private link", () => {
 		]);
 	});
 
+	it("says who it links without linking them, for the User to confirm", async () => {
+		const { source } = fakeChannel();
+		const sent = linkOf(
+			privateLink(
+				source,
+				{ id: "chat-user-1", name: "Uma" },
+				"https://o.example",
+			),
+		);
+		expect(linkedBy(sent)).toEqual({ kind: "email", name: "Uma" });
+		expect(linkedBy("guessed")).toBeUndefined();
+		expect(await accounts()).toEqual([]);
+	});
+
+	it("is sent a person at most once in ten minutes however many workers ask, unless it could not be sent", async () => {
+		const { source } = fakeChannel();
+		const uma = { id: "chat-user-1", name: "Uma" };
+		const told: string[] = [];
+		const tell = async (link: string) => {
+			told.push(link);
+		};
+		const both = await Promise.all([
+			sendPrivateLink(source, uma, tell),
+			sendPrivateLink(source, uma, tell),
+		]);
+		expect(both.sort()).toEqual([false, true]);
+		expect(told).toHaveLength(1);
+		expect(
+			await sendPrivateLink(source, { id: "chat-user-2", name: "Ugo" }, tell),
+		).toBe(true);
+
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
+		try {
+			const refused = new Error("never wrote to the app alone");
+			await expect(
+				sendPrivateLink(source, uma, async () => {
+					throw refused;
+				}),
+			).rejects.toBe(refused);
+			expect(await sendPrivateLink(source, uma, tell)).toBe(true);
+			expect(await sendPrivateLink(source, uma, tell)).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+		expect(told).toHaveLength(3);
+	});
+
 	it("links nobody once it is ten minutes old, or when it is not one Orqestra sealed", async () => {
 		const { source } = fakeChannel();
 		const sent = linkOf(
@@ -271,14 +484,7 @@ describe.skipIf(!url)("a private link", () => {
 describe.skipIf(!url)("a chat's queued events", () => {
 	it("queues each once under its own id, however it is spelled, a Message-ID's colons and an integer included", async () => {
 		const { source } = fakeChannel();
-		// a run before this one's jobs would be taken for these
-		const queue = new Queue(
-			"email-events",
-			{ connection: { connectionString: url as string } },
-			createPostgresBackend,
-		);
-		await queue.obliterate({ force: true });
-		await queue.close();
+		await obliterate("email-events");
 		const taken: string[] = [];
 		const worker = await serveEvents(source, async (event) => {
 			taken.push(event.id);
