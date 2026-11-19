@@ -15,7 +15,8 @@
     "./s3": "./src/s3/index.ts",
     "./sources": "./src/sources.ts",
     "./tavily": "./src/tavily/index.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./wecom": "./src/wecom/index.ts"
   },
   "scripts": {
     "test": "vitest run"
@@ -23,6 +24,7 @@
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.76.0",
     "@orqestra/db": "workspace:*",
+    "@wecom/aibot-node-sdk": "1.0.7",
     "bullmq": "^6.5.0",
     "drizzle-orm": "^0.45.4",
     "email-reply-parser": "2.3.9",
