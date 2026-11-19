@@ -118,7 +118,7 @@ export function messageEvent({
 	messageId?: string;
 	rootId?: string;
 	senderId?: string;
-	senderType?: "user" | "bot";
+	senderType?: "user" | "app" | "bot";
 	mentions?: { openId: string; name: string }[];
 	messageType?: string;
 	/** The raw content, a JSON string; built from `text` by default. */

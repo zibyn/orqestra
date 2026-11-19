@@ -121,10 +121,11 @@ describe("feishu events", () => {
 		});
 	});
 
-	it("ignores a bot's message, a group message not mentioning the bot, and what has no text", () => {
-		expect(
-			messageSessionEvent(messageEvent({ senderType: "bot" }), bot.openId),
-		).toBeNull();
+	it("ignores an app's or a bot's message, a group message not mentioning the bot, and what has no text", () => {
+		for (const senderType of ["app", "bot"] as const)
+			expect(
+				messageSessionEvent(messageEvent({ senderType }), bot.openId),
+			).toBeNull();
 		expect(
 			messageSessionEvent(
 				messageEvent({

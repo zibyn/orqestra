@@ -73,7 +73,7 @@ describe("feishu connect", () => {
 		expect(ws.appId).toBe("cli_app");
 		const first = receive(messageEvent({ text: "first" }));
 		const second = receive(messageEvent({ text: "second" }));
-		const ignored = receive(messageEvent({ senderType: "bot" }));
+		const ignored = receive(messageEvent({ senderType: "app" }));
 		await vi.waitFor(() => expect(seen).toEqual(["first from Uma"]));
 		// time for the second to overtake, were it not held back
 		await new Promise((r) => setTimeout(r, 50));

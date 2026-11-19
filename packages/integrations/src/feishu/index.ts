@@ -161,7 +161,8 @@ export function messageSessionEvent(
 	const parsed = messageEvent.safeParse(payload);
 	if (!parsed.success) return null;
 	const { sender, message } = parsed.data;
-	// a bot's message, the app's own included, never starts a session
+	// only a person's message starts a session: Feishu's receive doc names a sender "user" or "bot", Qwen Code's and cc-connect's
+	// adapters see "app" for an app's, the app's own included
 	if (sender.sender_type !== "user" || !sender.sender_id) return null;
 	const group = message.chat_type === "group";
 	// the scopes above push only messages @-mentioning the bot, but an app also granted every group message gets the rest
