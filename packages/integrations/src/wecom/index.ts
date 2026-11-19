@@ -1,6 +1,10 @@
 // WeCom (企业微信) as an Integration: its AI bot (智能机器人) installs by the bot's id and secret, holds a long connection that WeCom
 // pushes each message to the bot down, and answers down the same connection. https://developer.work.weixin.qq.com/document/path/101463
-// WeCom keeps one connection per bot: a new one kicks the old, so the process that holds it is the only one that can post (see `post`).
+// The Admin sets the bot's API mode to 长连接 (long connection) in WeCom; switching a bot's mode disables its callback URL.
+// WeCom keeps one connection per bot: a new one kicks the old, so only the worker holding the installation's lock connects
+// (`exclusive`), and the core sends every post to it.
+// A userid is opaque and scoped to the enterprise: WeCom encrypts it unless the enterprise's super-admin created the bot, so it is no
+// one's account name. WeCom pushes into a chat only after the person wrote to the bot there.
 import {
 	generateReqId,
 	WSAuthFailureError,
@@ -225,7 +229,6 @@ export function wecomSource(
 	const nextPush = new Map<string, number>();
 
 	/** Pushes Markdown into a chat in as many messages as it takes, spaced to keep within WeCom's 30 pushes a minute per chat. */
-	// shortcut: no cap on the messages, so a reply of hundreds of KB holds the chat for minutes; cap it with a note if one does
 	async function push(
 		client: WSClient,
 		botId: string,
@@ -233,6 +236,7 @@ export function wecomSource(
 		chat_type: 1 | 2,
 		body: string,
 	) {
+		// shortcut: no cap on the messages, so a reply of hundreds of KB holds the chat for minutes; cap it with a note if one does
 		const chat = `${botId}:${chat_type}:${chatid}`;
 		for (const content of split(body)) {
 			const now = Date.now();
