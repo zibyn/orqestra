@@ -120,8 +120,12 @@ _Avoid_: Connector, plugin, Connection
 Orqestra's app installed by an Admin into one workspace of an Integration where people hand it work, such as a Linear workspace. There it acts as itself rather than as the Admin who installed it, so people can assign issues to it and mention it. The Admin registers the app with the Integration and enters its credentials in the console, and installing needs that workspace's admin to approve. At most one exists per Integration, and installing again, for a new app or the same one, replaces it.
 _Avoid_: Linear connection, Linear account, Linear Installation
 
+**Integration Account**:
+A person of an Integration Installation's workspace, such as a Linear user, linked to the User who proved to be them by signing in to the Integration as them from the Connections page. It is how Orqestra knows whom an Integration Session is for, never by email. Each User links at most one per Integration, and Orqestra keeps none of that person's tokens.
+_Avoid_: Connection (that is an MCP Server's), linked email
+
 **Integration Session**:
-One piece of work handed to Orqestra's app in an Integration Installation's workspace; Linear calls it an Agent Session. It starts when someone there delegates an issue to the app or mentions it, and goes on with what they write in it. Each one opens one Conversation for the User with that person's email, with the Agent the Admin picked for the Integration. Its first message names the issue and the repository of the issue's team. Later messages go to the same Conversation, marked as from the Integration, and only that User's reach it. Someone with no User is told to sign in first. When a Run ends, the session gets its reply, its Question or its failure.
+One piece of work handed to Orqestra's app in an Integration Installation's workspace; Linear calls it an Agent Session. It starts when someone there delegates an issue to the app or mentions it, and goes on with what they write in it. Each one opens one Conversation for the User that person linked as their Integration Account, with the Agent the Admin picked for the Integration. Its first message names the issue and the repository of the issue's team. Later messages go to the same Conversation, marked as from the Integration, and only that User's reach it. Someone who linked no Integration Account is asked to link one on the Connections page and reply. When a Run ends, the session gets its reply, its Question or its failure.
 _Avoid_: Linear thread, Linear task, session
 
 **Search**:
