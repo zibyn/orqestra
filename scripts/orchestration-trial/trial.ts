@@ -39,8 +39,11 @@ async function call(method: string, path: string, body?: unknown, quiet = false)
 	return text ? JSON.parse(text) : undefined;
 }
 
-/** The dev database's key for PROVIDER, decrypted in memory with .env.local's key; never printed or written. */
-function devProviderKey() {
+// SANDBOX=1: the dev database's Sandbox Provider (orrery) too, so Agents get a Sandbox and share files through it
+const SANDBOX = process.env.SANDBOX === "1";
+
+/** One secret column from the dev database, decrypted in memory with .env.local's key; never printed or written. */
+function devSecret(query: string, what: string) {
 	const env = Object.fromEntries(
 		readFileSync(`${ROOT}.env.local`, "utf8")
 			.split("\n")
@@ -53,12 +56,25 @@ function devProviderKey() {
 	const url = env.DATABASE_URL.replace("@localhost", "@127.0.0.1");
 	const out = Bun.spawnSync([
 		"docker", "exec", "orqestra-pg", "psql", url, "-tAc",
-		`select api_key from provider where id = '${PROVIDER}'`,
+		query,
 	]);
 	const stored = out.stdout.toString().trim();
-	const key = stored ? decryptSecret(stored, encryptionKey(env.ORQESTRA_ENCRYPTION_KEY)) : undefined;
-	if (!key) throw new Error(`BLOCKED: no readable ${PROVIDER} key in the dev database (psql exit ${out.exitCode})`);
-	return key;
+	const secret = stored ? decryptSecret(stored, encryptionKey(env.ORQESTRA_ENCRYPTION_KEY)) : undefined;
+	if (!secret) throw new Error(`BLOCKED: no readable ${what} in the dev database (psql exit ${out.exitCode})`);
+	return { secret, env, url };
+}
+
+const devProviderKey = () =>
+	devSecret(`select api_key from provider where id = '${PROVIDER}'`, `${PROVIDER} key`).secret;
+
+/** The dev database's Sandbox Provider, its token decrypted in memory. */
+function devSandboxProvider() {
+	const { secret, url } = devSecret("select token from sandbox_provider", "Sandbox Provider token");
+	const out = Bun.spawnSync([
+		"docker", "exec", "orqestra-pg", "psql", url, "-tAc",
+		"select json_build_object('url', url, 'snapshot', coalesce(snapshot, ''), 'cpu', cpu, 'memory', memory) from sandbox_provider",
+	]);
+	return { ...JSON.parse(out.stdout.toString().trim()), token: secret };
 }
 
 /** Configures the Provider, Model and Agent Definitions through the api; safe to rerun. */
@@ -68,6 +84,11 @@ async function setup() {
 	await call("POST", "/providers", { id: PROVIDER, apiKey: devProviderKey(), baseUrl }, true);
 	await call("PUT", "/providers/models", { providerId: PROVIDER, modelId: MODEL, enabled: true });
 	await call("PUT", "/providers/models/default", { providerId: PROVIDER, modelId: MODEL });
+	if (SANDBOX) {
+		const saved = await call("POST", "/sandbox-provider", devSandboxProvider(), true);
+		if (Object.keys(saved?.errors ?? {}).length)
+			throw new Error(`BLOCKED: the Sandbox Provider was refused: ${Object.keys(saved.errors).join(", ")}`);
+	}
 	const existing = new Set((await call("GET", "/agents")).agents.map((a: { id: string }) => a.id));
 	for (const a of AGENTS)
 		await call("POST", "/agents", { id: a.id, create: !existing.has(a.id), definition: a.definition });
@@ -479,12 +500,15 @@ async function main() {
 		const up = Bun.spawnSync(["bash", VERIFY, "up"], { stdout: "inherit", stderr: "inherit" });
 		if (up.exitCode !== 0) throw new Error("BLOCKED: verify.sh up failed (see above)");
 	}
+	// the top-level Conversations this trial started: deleting one deletes its tree's Sandbox, a real machine at orrery
+	const started: string[] = [];
 	try {
 		const pick = await setup();
 		const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, "").replace("T", "-");
 		const dir = `${HERE}results/${stamp}`;
 		mkdirSync(dir, { recursive: true });
 		const runs: RunRecord[] = [];
+		writeFileSync(`${dir}/setup.json`, JSON.stringify({ model: pick.model, thinking: pick.thinking, sandbox: SANDBOX }));
 		// interleaved by task, so drift in the Provider's latency falls on every task alike
 		for (let i = 1; i <= RUNS; i++)
 			for (const task of TASKS.filter((t) => !process.env.ONLY || t.id === process.env.ONLY)) {
@@ -497,6 +521,7 @@ async function main() {
 					// no Memory or Recall, so one run cannot read another
 					incognito: true,
 				});
+				started.push(conversationId);
 				const settled = await settle(conversationId);
 				if (settled.end === "stuck") await call("POST", `/conversations/${conversationId}/stop`);
 				const record = await collect(conversationId, task, settled).then(
@@ -514,6 +539,10 @@ async function main() {
 		report(dir);
 		console.log(`results in ${dir}`);
 	} finally {
+		// shortcut: `recollect` cannot redo a Sandbox trial, whose Conversations are gone; runs.json keeps what it measured
+		if (SANDBOX)
+			for (const id of started)
+				await call("DELETE", `/conversations/${id}`).catch((e) => console.error(`left ${id}: ${e}`));
 		await db.close();
 		if (ours) Bun.spawnSync(["bash", VERIFY, "down"], { stdout: "inherit" });
 	}
