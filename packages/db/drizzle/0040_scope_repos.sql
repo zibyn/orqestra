@@ -1,0 +1,1 @@
+ALTER TABLE "integration_installation" RENAME COLUMN "team_repos" TO "scope_repos";

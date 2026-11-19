@@ -42,7 +42,7 @@ export const webhookUrl = (source: WorkSource, orqestraUrl: string) =>
 
 export const conversationsInput = z.object({
 	defaultAgentId: z.string().min(1),
-	teamRepos: z.record(
+	scopeRepos: z.record(
 		z.string().trim().min(1),
 		z
 			.string()
@@ -101,7 +101,7 @@ export async function installationStatus(source: WorkSource) {
 		? {
 				clientId: row.clientId,
 				defaultAgentId: row.defaultAgentId,
-				teamRepos: row.teamRepos,
+				scopeRepos: row.scopeRepos,
 				clientSecretReadable: secretReadable(row.clientSecret),
 				webhookSecretReadable: secretReadable(row.webhookSecret),
 				// tokens that no longer decrypt need installing again
@@ -116,7 +116,7 @@ export async function installationStatus(source: WorkSource) {
 export async function conversationSettings(source: WorkSource) {
 	return db.query.integrationInstallation.findFirst({
 		where: ofKind(source),
-		columns: { defaultAgentId: true, teamRepos: true },
+		columns: { defaultAgentId: true, scopeRepos: true },
 	});
 }
 

@@ -145,7 +145,7 @@ export async function handleSessionEvent(
 					agentId: settings?.defaultAgentId ?? undefined,
 					text: source.firstMessage(
 						event,
-						event.issue ? settings?.teamRepos[event.issue.teamKey] : undefined,
+						event.scope ? settings?.scopeRepos[event.scope] : undefined,
 					),
 					origin: source.kind,
 					session: { kind: source.kind, id: event.sessionId },

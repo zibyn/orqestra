@@ -155,9 +155,9 @@ export const linear: WorkSource = {
 						title: issue.title,
 						description: issue.description ?? null,
 						url: issue.url,
-						teamKey: issue.team.key,
 					}
 				: null,
+			scope: issue?.team.key ?? null,
 			text:
 				(action === "prompted"
 					? activity?.content.body

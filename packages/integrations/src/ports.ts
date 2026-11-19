@@ -169,8 +169,9 @@ export type SessionEvent = {
 		title: string;
 		description: string | null;
 		url: string;
-		teamKey: string;
 	} | null;
+	/** Where in the Integration the work was handed in (a Linear team's key), which the Admin maps to a repository; null when nowhere. */
+	scope: string | null;
 	/** The comment that mentioned the app, or the prompt. */
 	text: string | null;
 	/** The prompt asks the agent to stop. */
