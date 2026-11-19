@@ -1,8 +1,8 @@
 import {
 	type SearchProviderId,
 	searchProviders,
-	searchToolNames,
-} from "@orqestra/tools/shared";
+} from "@orqestra/integrations/shared";
+import { searchToolNames } from "@orqestra/tools/shared";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { PlusIcon, SearchIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";

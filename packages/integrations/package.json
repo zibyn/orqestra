@@ -13,6 +13,7 @@
     "./mineru": "./src/mineru/index.ts",
     "./orrery": "./src/orrery/index.ts",
     "./s3": "./src/s3/index.ts",
+    "./shared": "./src/shared.ts",
     "./sources": "./src/sources.ts",
     "./tavily": "./src/tavily/index.ts",
     "./testing": "./src/testing.ts",

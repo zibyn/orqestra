@@ -96,6 +96,9 @@ importers:
       '@orqestra/conversations':
         specifier: workspace:*
         version: link:../../packages/conversations
+      '@orqestra/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@orqestra/memory':
         specifier: workspace:*
         version: link:../../packages/memory

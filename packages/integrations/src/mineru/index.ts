@@ -2,9 +2,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { inflateRawSync } from "node:zlib";
 import type { Fetch, ParserClient } from "../ports.ts";
-
-/** mineru.net's online service, whose API (v4) needs a key; any other address is a self-hosted MinerU. */
-const isMineruNet = (url: string) => URL.parse(url)?.hostname === "mineru.net";
+import { isMineruNet } from "../shared.ts";
 
 /** MinerU's address and key; "" when none is set (a self-hosted MinerU). */
 type Service = { baseUrl: string; apiKey: string };
