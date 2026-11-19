@@ -67,15 +67,46 @@ describe("a message WeCom pushes", () => {
 		).toBe("group:chat-1:lisi");
 	});
 
-	it("/new resets the session", () => {
-		expect(sessionEvent(messageFrame({ text: " /new " }))).toMatchObject({
-			action: "reset",
-			sessionId: "single:zhangsan",
-			text: null,
-		});
+	it("in a group has the bot's @-mention cut from its start, else its end, every other @ kept", () => {
+		const said = (text: string) =>
+			sessionEvent(messageFrame({ chatid: "chat-1", text }))?.text;
+		expect(said("fix it @RobotA")).toBe("fix it");
+		expect(said("@RobotA mail ops@acme.com, cc @lisi")).toBe(
+			"mail ops@acme.com, cc @lisi",
+		);
+		expect(said("mail ops@acme.com")).toBe("mail ops@acme.com");
+		expect(said("ask @lisi about it @RobotA")).toBe("ask @lisi about it");
+		// a one-to-one chat has no mention to cut
+		expect(sessionEvent(messageFrame({ text: "@lisi wrote this" }))?.text).toBe(
+			"@lisi wrote this",
+		);
+	});
+
+	it("/new and /reset start the session afresh, /stop stops it, the mention before or after them cut", () => {
+		for (const text of [" /new ", "/reset"])
+			expect(sessionEvent(messageFrame({ text }))).toMatchObject({
+				action: "reset",
+				sessionId: "single:zhangsan",
+				text: null,
+				stop: false,
+			});
 		expect(
 			sessionEvent(messageFrame({ chatid: "chat-1", text: "@RobotA /new" })),
 		).toMatchObject({ action: "reset", sessionId: "group:chat-1:zhangsan" });
+		expect(
+			sessionEvent(messageFrame({ chatid: "chat-1", text: "/stop @RobotA" })),
+		).toMatchObject({
+			action: "prompted",
+			sessionId: "group:chat-1:zhangsan",
+			text: null,
+			stop: true,
+		});
+		expect(sessionEvent(messageFrame({ text: "/stop" }))?.stop).toBe(true);
+		expect(sessionEvent(messageFrame({ text: "please /stop" }))).toMatchObject({
+			action: "prompted",
+			stop: false,
+			text: "please /stop",
+		});
 	});
 
 	it("reads a voice message's transcript and a mixed one's text", () => {

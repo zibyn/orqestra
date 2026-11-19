@@ -47,7 +47,8 @@ const message = z.object({
 
 /**
  * A message callback's event, or null for one Orqestra does not act on: no person's text in it (an image, a file, an @-mention alone).
- * A chat has no threads, so a one-to-one chat is one rolling session per person and a group one per person in it; `/new` resets it.
+ * A chat has no threads, so a one-to-one chat is one rolling session per person and a group one per person in it; `/new` or `/reset`
+ * starts it afresh and `/stop` stops its Run.
  * shortcut: images, files and quoted messages are not read, only the text; download them through the SDK when people send work that way.
  */
 export function sessionEvent(frame: { body?: unknown }): SessionEvent | null {
@@ -66,11 +67,10 @@ export function sessionEvent(frame: { body?: unknown }): SessionEvent | null {
 							.flatMap((item) => (item.text ? [item.text.content] : []))
 							.join("\n")
 					: undefined;
-	// shortcut: a group message is delivered only when it @-mentions the bot, its text starting "@<bot's name> " in WeCom's own example;
-	// the bot's name is not in the frame, so the leading @-word is taken for it: a mention elsewhere in the text stays in the prompt
-	const text = (group ? said?.replace(/^\s*@\S+/, "") : said)?.trim();
+	const text = (group && said ? unmentioned(said) : said)?.trim();
 	if (!text) return null;
-	const reset = text === "/new";
+	const reset = text === "/new" || text === "/reset";
+	const stop = text === "/stop";
 	return {
 		id: m.msgid,
 		sessionId: group
@@ -82,9 +82,20 @@ export function sessionEvent(frame: { body?: unknown }): SessionEvent | null {
 		issue: null,
 		scope: group ? (m.chatid ?? null) : null,
 		shared: group,
-		text: reset ? null : text,
-		stop: false,
+		text: reset || stop ? null : text,
+		stop,
 	};
+}
+
+/**
+ * A group message's text without the bot's @-mention, as chatgpt-on-wechat's wecom_bot cuts it. WeCom delivers a group message only
+ * when it @-mentions the bot, as plain text with no mention list or bot name ("@RobotA hello" in WeCom's example), so the "@name"
+ * opening the text is taken for the bot's, else one ending it after a space ("/stop @RobotA"); any other "@" (an e-mail address,
+ * another member's mention) is what the person wrote.
+ */
+function unmentioned(text: string): string {
+	const cut = text.replace(/^\s*@\S+/, "");
+	return cut !== text ? cut : text.replace(/(?:^|\s)@\S+\s*$/, "");
 }
 
 /** Where a session's answers are pushed: a one-to-one chat by the person's userid (chat_type 1), a group by its chatid (2). */
