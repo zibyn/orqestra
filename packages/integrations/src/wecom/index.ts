@@ -273,7 +273,7 @@ export function wecomSource(
 				return `WeCom AI bot ${credentials.botId}`;
 			},
 		},
-		ingress: { mode: "stream", connect },
+		ingress: { mode: "stream", exclusive: true, connect },
 		// a WeCom one-to-one chat is read by that person alone; WeCom pushes into one only after they wrote to the bot there
 		proof: {
 			mode: "private-link",

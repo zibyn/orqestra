@@ -236,12 +236,15 @@ export type WebhookIngress = {
 		headers: Headers,
 		webhookSecret: string,
 		now: number,
+		credentials: Credentials,
 	): SessionEvent | null | undefined;
 };
 
 /** Orqestra holds a connection open to the Integration, which pushes events down it (Feishu's and WeCom's long connections, IMAP IDLE). */
 export type StreamIngress = {
 	mode: "stream";
+	/** The Integration allows one connection per installation (WeCom), or each costs (an IMAP mailbox): only the worker holding the installation's lock connects. */
+	exclusive: boolean;
 	/**
 	 * Connects as the app and calls `onEvent` with each event, the connection's next only once it resolves; reconnects by itself and
 	 * resolves once `signal` aborts. Throws when the credentials are refused. Each worker holds one: the queue's job id drops an event two
@@ -251,6 +254,11 @@ export type StreamIngress = {
 		auth: () => Promise<Auth>,
 		onEvent: (event: SessionEvent) => Promise<void>,
 		signal: AbortSignal,
+		/** What the connection last got to (an IMAP cursor), kept with the installation; null until first saved. */
+		state: {
+			load(): Promise<string | null>;
+			save(value: string): Promise<void>;
+		},
 	): Promise<void>;
 };
 

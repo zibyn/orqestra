@@ -5,6 +5,8 @@ import { fakeWecom, messageFrame } from "./testing.ts";
 
 const credentials = { botId: "bot-1", secret: "bot-s3cret" };
 const auth = { token: "", credentials };
+// WeCom keeps nothing between connections
+const noState = { load: async () => null, save: async () => {} };
 const noFetch = () =>
 	Promise.reject(new Error("WeCom is reached by its connection"));
 
@@ -20,6 +22,7 @@ async function connected() {
 			events.push(event);
 		},
 		controller.signal,
+		noState,
 	);
 	await vi.waitFor(() => expect(wecom.holder()).toBeDefined());
 	return { wecom, source, events, done, stop: () => controller.abort() };
@@ -136,6 +139,7 @@ describe("connect", () => {
 					release = () => resolve();
 				}),
 			controller.signal,
+			noState,
 		);
 		await vi.waitFor(() => expect(wecom.holder()).toBeDefined());
 		wecom.deliver(messageFrame({ text: "one" }));
@@ -156,6 +160,7 @@ describe("connect", () => {
 				async () => auth,
 				async () => {},
 				new AbortController().signal,
+				noState,
 			),
 		).rejects.toThrow(
 			/refused AI bot bot-1's id and secret: Authentication failed/,
@@ -170,6 +175,7 @@ describe("connect", () => {
 				throw new Error("queue down");
 			},
 			new AbortController().signal,
+			noState,
 		);
 		await vi.waitFor(() => expect(wecom.holder()).toBeDefined());
 		wecom.deliver(messageFrame());
