@@ -289,12 +289,26 @@ const tokenResponse = z.object({
 	expires_in: z.number(),
 });
 
-/** A grant at the token endpoint, which takes only a form. */
+/** A grant at the token endpoint, which takes only a form: the installation's tokens. */
 async function tokenRequest(
 	source: WorkSource,
 	fetch: Fetch,
 	params: Record<string, string>,
 ): Promise<Tokens> {
+	const body = tokenResponse.parse(await tokenGrant(source, fetch, params));
+	return {
+		accessToken: body.access_token,
+		refreshToken: body.refresh_token,
+		expiresAt: Date.now() + body.expires_in * 1000,
+	};
+}
+
+/** A grant at the token endpoint, which takes only a form: its JSON answer. Throws GrantRefused when the grant is refused. */
+export async function tokenGrant(
+	source: WorkSource,
+	fetch: Fetch,
+	params: Record<string, string>,
+): Promise<unknown> {
 	const response = await fetch(source.tokenUrl, {
 		method: "POST",
 		headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -307,12 +321,7 @@ async function tokenRequest(
 			? new GrantRefused(message)
 			: new Error(message);
 	}
-	const body = tokenResponse.parse(await response.json());
-	return {
-		accessToken: body.access_token,
-		refreshToken: body.refresh_token,
-		expiresAt: Date.now() + body.expires_in * 1000,
-	};
+	return response.json();
 }
 
 /** Posts an activity into a session as the app. */

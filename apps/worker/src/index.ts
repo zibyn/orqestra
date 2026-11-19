@@ -38,6 +38,7 @@ const close = await startAgentWorker(config, {
 	connections: connectionStore,
 	telemetry: traces.telemetry,
 	captureContent: traces.captureContent,
+	orqestraUrl: process.env.ORQESTRA_URL,
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {

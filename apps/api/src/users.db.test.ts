@@ -61,7 +61,7 @@ const at = (iso: string) => setSystemTime(new Date(iso));
 
 describe.skipIf(!url)("/api/users", () => {
 	const reset = async () => {
-		await db.execute(sql`truncate "user", usage, limits`);
+		await db.execute(sql`truncate "user", usage, limits, integration_account`);
 	};
 	beforeEach(reset);
 	afterAll(async () => {
