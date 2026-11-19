@@ -1,7 +1,14 @@
 // Feishu as an Integration: a self-built app's bot, installed by its app id and secret, which people write to one-to-one or @-mention
 // in a group; events come down Feishu's long connection, so Orqestra needs no public address. https://open.feishu.cn/document/
-// The app needs the bot capability and the scopes im:message.p2p_msg:readonly, im:message.group_at_msg:readonly and
-// im:message:send_as_bot; contact:user.base:readonly only to name the people who write (else they go by their open_id).
+// What an Admin does at open.feishu.cn/app:
+// 1. Creates a self-built app (企业自建应用) and adds the bot capability (机器人).
+// 2. Under permissions (权限管理) adds im:message.p2p_msg:readonly and im:message.group_at_msg:readonly (to hear it written to),
+//    im:message:send_as_bot (to answer), im:message.reactions:write_only (the OnIt reaction on receipt; im:message also grants it),
+//    and contact:user.base:readonly to name who writes, else they go by their open_id (only people within the app's contacts range).
+// 3. Creates a version and publishes it (创建版本, 发布), then enters the app's App ID and App Secret in Orqestra, which connects.
+// 4. Under events and callbacks (事件与回调) picks receiving events through the long connection (使用长连接接收事件), which saves
+//    only while Orqestra holds one (AstrBot's lark.md), and adds the event im.message.receive_v1.
+// 5. Publishes a new version, so the event and any scope added since take effect.
 // shortcut: open.feishu.cn only; Lark (open.larksuite.com) is the same API on another host, make the host a field if one asks for it.
 
 import { createHash } from "node:crypto";
