@@ -7,11 +7,11 @@ import type { Fetch } from "@orqestra/integrations";
 import { deepseek } from "@orqestra/integrations/deepseek";
 import { firecrawl } from "@orqestra/integrations/firecrawl";
 import { mineru } from "@orqestra/integrations/mineru";
+import type { SearchProviderId } from "@orqestra/integrations/shared";
 import { tavily } from "@orqestra/integrations/tavily";
 import { type DocumentParser, type ParseFiles, parseTool } from "./parse.ts";
 import {
 	mcpToolRef,
-	type SearchProviderId,
 	type SearchToolName,
 	type ToolRef,
 	toolNames,

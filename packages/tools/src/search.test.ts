@@ -1,6 +1,7 @@
+import type { SearchProviderId } from "@orqestra/integrations/shared";
 import { describe, expect, it } from "vitest";
 import { builtinTools, type ToolService } from "./index.ts";
-import type { SearchProviderId, ToolName } from "./shared.ts";
+import type { ToolName } from "./shared.ts";
 
 const officialUrl = {
 	tavily: "https://api.tavily.com",

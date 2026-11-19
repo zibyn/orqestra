@@ -23,15 +23,17 @@ import {
 	type SandboxTestResult,
 	testSandboxProvider,
 } from "@orqestra/integrations/orrery";
+import {
+	isMineruNet,
+	type SearchProviderId,
+	searchProviders as searchProviderCatalog,
+} from "@orqestra/integrations/shared";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { ToolServices } from "./index.ts";
 import type { SandboxProvider } from "./sandbox.ts";
 import {
-	isMineruNet,
-	type SearchProviderId,
 	type SearchToolName,
-	searchProviders as searchProviderCatalog,
 	searchProviderId,
 	searchToolName,
 	searchToolNames,

@@ -80,7 +80,7 @@ function selfCheck() {
 	assert.deepEqual(
 		violations(
 			{ ...ok, [INTEGRATIONS]: ["@orqestra/db"] },
-			["@orqestra/api", "@orqestra/tools/shared"],
+			["@orqestra/api", "@orqestra/tools/shared", `${INTEGRATIONS}/shared`],
 			okApp,
 			okImports,
 		),
