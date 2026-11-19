@@ -11,15 +11,19 @@ import {
  * A GitHub App installed on `account`: `credentials` are what its Admin enters, its private key a fresh PKCS#1 PEM as GitHub hands one
  * out. The app's JWT is checked as GitHub does (RS256 by that key, `iss` its id, at most 10 minutes long). `authorize` plays a person
  * approving a user authorization URL: the redirect's query, with a code the client's secret redeems once at the token endpoint, which
- * answers JSON only to `accept: application/json`, as GitHub does. `comments` holds each comment posted, `revoked` each token revoked.
+ * answers JSON only to `accept: application/json`, as GitHub does. `comments` holds each comment posted, `reactions` each reaction
+ * added (its path under the repository), `revoked` each token revoked.
  */
 export function fakeGitHub({
 	account = "acme",
 	user = { id: 4242, login: "octocat" },
+	permissions = { octocat: "write" },
 }: {
 	account?: string;
 	/** Who authorizes as themselves: GET /user answers with them for a token their authorization was given. */
 	user?: { id: number; login: string };
+	/** Each person's permission on every repository, as GitHub's collaborator permission names it; `read` for anyone else. */
+	permissions?: Record<string, string>;
 } = {}) {
 	const { privateKey, publicKey } = generateKeyPairSync("rsa", {
 		modulusLength: 2048,
@@ -34,6 +38,7 @@ export function fakeGitHub({
 		clientId: "Iv1.client",
 		clientSecret: "client-s3cret",
 		slug: "orqestra-bot",
+		label: "Orqestra",
 	};
 	const codes = new Set<string>();
 	let n = 0;
@@ -63,6 +68,7 @@ export function fakeGitHub({
 		installationTokens: new Set<string>(),
 		userTokens: new Set<string>(),
 		comments: [] as { repo: string; number: number; body: string }[],
+		reactions: [] as { repo: string; at: string; content: string }[],
 		revoked: [] as string[],
 		/** Each token request's form and `accept` header. */
 		tokenRequests: [] as { form: Record<string, string>; accept: string }[],
@@ -137,6 +143,26 @@ export function fakeGitHub({
 				return json({ id: gh.comments.length, body }, 201);
 			}
 
+			const installed = !!bearer && gh.installationTokens.has(bearer);
+			const permission =
+				/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)\/collaborators\/([^/]+)\/permission$/.exec(
+					path,
+				);
+			if (permission && method === "GET") {
+				if (!installed) return json({ message: "Bad credentials" }, 401);
+				return json({ permission: permissions[permission[2]] ?? "read" });
+			}
+			const reaction =
+				/^https:\/\/api\.github\.com\/repos\/([^/]+\/[^/]+)\/((?:issues|pulls)\/comments\/\d+|issues\/\d+)\/reactions$/.exec(
+					path,
+				);
+			if (reaction && method === "POST") {
+				if (!installed) return json({ message: "Bad credentials" }, 401);
+				const { content } = JSON.parse(String(init?.body));
+				gh.reactions.push({ repo: reaction[1], at: reaction[2], content });
+				return json({ id: gh.reactions.length, content }, 201);
+			}
+
 			if (path === "https://api.github.com/user") {
 				if (!bearer || !gh.userTokens.has(bearer))
 					return json({ message: "Bad credentials" }, 401);
@@ -166,7 +192,11 @@ export function fakeGitHub({
 	return gh;
 }
 
-type Sender = { id?: number; login?: string; type?: "User" | "Bot" };
+type Sender = {
+	id?: number;
+	login?: string;
+	type?: "User" | "Bot" | "Organization";
+};
 
 const sender = ({ id = 4242, login = "octocat", type = "User" }: Sender) => ({
 	id,
@@ -211,19 +241,22 @@ export function issueComment({
 	};
 }
 
-/** An `issues` delivery's payload as GitHub sends it, with fewer fields: issue acme/web#7. */
+/** An `issues` delivery's payload as GitHub sends it, with fewer fields: issue acme/web#7, given `label` when one is named. */
 export function issueOpened({
 	body,
 	action = "opened",
+	label,
 	from = {},
 }: {
 	body: string | null;
 	action?: string;
+	label?: string;
 	from?: Sender;
 }) {
 	return {
 		action,
 		issue: issue(body),
+		...(label && { label: { id: 3, name: label } }),
 		repository,
 		sender: sender(from),
 		installation: { id: 678 },
@@ -246,5 +279,54 @@ export function delivery(
 			"x-hub-signature-256": `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`,
 			"content-type": "application/json",
 		}),
+	};
+}
+
+const pullRequest = {
+	id: 9002,
+	number: 7,
+	title: "Fix the login button",
+	body: "Closes #6.",
+	html_url: "https://github.com/acme/web/pull/7",
+	user: sender({}),
+};
+
+/** A `pull_request_review_comment` delivery's payload, with fewer fields: comment 56 on a line of pull request acme/web#7. */
+export function reviewComment({
+	body,
+	action = "created",
+	from = {},
+}: {
+	body: string;
+	action?: string;
+	from?: Sender;
+}) {
+	return {
+		action,
+		comment: { id: 56, body, path: "src/login.ts", user: sender(from) },
+		pull_request: pullRequest,
+		repository,
+		sender: sender(from),
+		installation: { id: 678 },
+	};
+}
+
+/** A `pull_request_review` delivery's payload, with fewer fields: a review of pull request acme/web#7. */
+export function review({
+	body,
+	action = "submitted",
+	from = {},
+}: {
+	body: string | null;
+	action?: string;
+	from?: Sender;
+}) {
+	return {
+		action,
+		review: { id: 57, body, state: "commented", user: sender(from) },
+		pull_request: pullRequest,
+		repository,
+		sender: sender(from),
+		installation: { id: 678 },
 	};
 }
