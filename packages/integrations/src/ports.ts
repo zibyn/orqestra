@@ -229,13 +229,14 @@ export type WebhookIngress = {
 	mode: "webhook";
 	/**
 	 * A webhook request's event, when the webhook secret signed it and it is fresh at `now`: undefined otherwise, null for a genuine one
-	 * Orqestra does not act on.
+	 * Orqestra does not act on. `credentials` are the installation's ({} for OAuth), such as the app's own name to tell a mention by.
 	 */
 	event(
 		rawBody: string,
 		headers: Headers,
 		webhookSecret: string,
 		now: number,
+		credentials: Credentials,
 	): SessionEvent | null | undefined;
 };
 

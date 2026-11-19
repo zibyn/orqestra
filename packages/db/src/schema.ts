@@ -96,7 +96,7 @@ export const conversation = pgTable(
 	],
 );
 
-export type InputOrigin = "task" | "timer" | "linear";
+export type InputOrigin = "task" | "timer" | IntegrationKind;
 
 /** When a Scheduled Task fires: once at an ISO time, every so many seconds, or by a cron expression in the task's time zone. */
 export type Schedule =
@@ -787,17 +787,25 @@ export const usage = pgTable(
 );
 
 /** The kinds of Integration (ADR 0018): each has its adapter in @orqestra/integrations. */
-export type IntegrationKind = "linear" | "feishu" | "wecom" | "github" | "email";
+export type IntegrationKind =
+	| "linear"
+	| "feishu"
+	| "wecom"
+	| "github"
+	| "email";
 
 // Orqestra's app installed by an Admin in /console/<kind> into one workspace of an outside tool (an Integration), acting as itself (actor=app); one per kind
 export const integrationInstallation = pgTable("integration_installation", {
 	kind: text("kind").$type<IntegrationKind>().primaryKey(),
-	// the OAuth app's
-	clientId: text("client_id").notNull(),
+	// the OAuth app's, for a kind that installs by OAuth; null for one that installs by credentials
+	clientId: text("client_id"),
 	// these two encrypted with ORQESTRA_ENCRYPTION_KEY; never sent to the browser
-	clientSecret: text("client_secret").notNull(),
-	webhookSecret: text("webhook_secret").notNull(),
-	// access token, refresh token and expiry as one JSON, encrypted with ORQESTRA_ENCRYPTION_KEY; null until the app is installed
+	clientSecret: text("client_secret"),
+	webhookSecret: text("webhook_secret"),
+	// what the Admin entered for a kind that installs by credentials, by its fields' names, as one JSON encrypted with ORQESTRA_ENCRYPTION_KEY
+	credentials: text("credentials"),
+	// access token, refresh token and expiry as one JSON, encrypted with ORQESTRA_ENCRYPTION_KEY; null until the app is installed. A
+	// credentials install's is the token traded for its credentials, with no refresh token
 	tokens: text("tokens"),
 	// the workspace's name; null until the app is installed
 	workspace: text("workspace"),
@@ -812,6 +820,8 @@ export const integrationInstallation = pgTable("integration_installation", {
 		.$type<Record<string, string>>()
 		.default({})
 		.notNull(),
+	// the scopes (group chats) a shared session reaches the Agent in, for a kind whose shared sessions answer only where the Admin opened
+	openScopes: jsonb("open_scopes").$type<string[]>().default([]).notNull(),
 	// the authorization an Admin started, sent as its `state`, and when; its callback takes it, so it is used once
 	pendingState: text("pending_state"),
 	pendingAt: timestamp("pending_at", { withTimezone: true }),
