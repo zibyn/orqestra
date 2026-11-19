@@ -7,12 +7,15 @@ if (url) process.env.DATABASE_URL = url;
 const { db } = await import("@orqestra/db");
 const { integrationInstallation } = await import("@orqestra/db/schema");
 const { sql } = await import("drizzle-orm");
+const { createPostgresBackend, Queue } = await import("bullmq");
 const {
 	auth,
 	credentialsStatus,
 	finishLink,
 	postActivity,
 	privateLink,
+	queueEvent,
+	serveEvents,
 	saveCredentials,
 	serveStream,
 } = await import("./index.ts");
@@ -262,5 +265,36 @@ describe.skipIf(!url)("a private link", () => {
 		expect(await finishLink("u1", `${sent.slice(0, -4)}AAA=`)).toBeUndefined();
 		expect(await finishLink("u1", "guessed")).toBeUndefined();
 		expect(await accounts()).toEqual([]);
+	});
+});
+
+describe.skipIf(!url)("a chat's queued events", () => {
+	it("queues each once under its own id, however it is spelled, a Message-ID's colons and an integer included", async () => {
+		const { source } = fakeChannel();
+		// a run before this one's jobs would be taken for these
+		const queue = new Queue(
+			"email-events",
+			{ connection: { connectionString: url as string } },
+			createPostgresBackend,
+		);
+		await queue.obliterate({ force: true });
+		await queue.close();
+		const taken: string[] = [];
+		const worker = await serveEvents(source, async (event) => {
+			taken.push(event.id);
+		});
+		try {
+			const ids = ["<a1:b2@mail.example>", "42", "#42", "created-7"];
+			for (const id of [...ids, ...ids])
+				await queueEvent(source, chatEvent({ id }));
+			await waitFor(
+				() => taken.length,
+				(n) => n >= ids.length,
+			);
+			await sleep(300);
+			expect(taken.sort()).toEqual([...ids].sort());
+		} finally {
+			await worker.close();
+		}
 	});
 });

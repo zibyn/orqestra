@@ -546,10 +546,11 @@ export async function queueEvent(source: WorkSource, event: SessionEvent) {
 	const queue = queues.get(name) ?? newQueue(name);
 	queues.set(name, queue);
 	await queue.add("event", event, {
-		// BullMQ refuses a job id that is an integer or holds a colon; Linear's pass unchanged
+		// BullMQ refuses a job id that holds a colon (a Message-ID's) or is an integer; Linear's ids are left as they are, and no
+		// encoded id holds a "#"
 		jobId: /^\d+$/.test(event.id)
-			? `n${event.id}`
-			: event.id.replaceAll(":", "%3A"),
+			? `#${event.id}`
+			: encodeURIComponent(event.id),
 		// Linear retries a delivery it thinks failed for up to about 7 hours
 		removeOnComplete: { age: 86_400 },
 		removeOnFail: 1000,
