@@ -1,0 +1,12 @@
+Received: from mail.example.com (mail.example.com [192.0.2.10])
+	by mx.orqestra.test with ESMTPS id 4A1B2C3D; Thu, 19 Nov 2026 09:00:00 +0000
+From: Alice Liu <Alice@Example.com>
+To: agent@orqestra.test
+Subject: Fix the login redirect
+Date: Thu, 19 Nov 2026 09:00:00 +0000
+Message-ID: <m1:start@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+After signing in, the app sends me back to /login.
+Can you find out why?

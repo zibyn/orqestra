@@ -1,5 +1,6 @@
 import { db } from "@orqestra/db";
 import { s3Store } from "@orqestra/integrations/s3";
+import { sources } from "@orqestra/integrations/sources";
 import { connectionStore } from "@orqestra/mcp";
 import { backfillSkillFiles } from "@orqestra/skills";
 import { createCapabilities } from "./capabilities.ts";
@@ -54,6 +55,11 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 	});
 }
 
+const queues = sources.flatMap((s) => [
+	`${s.kind}-events`,
+	...(s.install.mode === "oauth" ? [`${s.kind}-tokens`] : []),
+]);
+const held = sources.filter((s) => s.ingress.mode === "stream");
 console.log(
-	"worker listening on queues agent-runs, subagent-runs, timers, firings, linear-events and linear-tokens",
+	`worker listening on queues agent-runs, subagent-runs, timers, firings, ${queues.join(", ")}${held.length ? `; holding the connections of ${held.map((s) => s.name).join(", ")}` : ""}`,
 );

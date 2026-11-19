@@ -5,16 +5,21 @@ import {
 	reportingToSessions,
 	reportSessionFailure,
 } from "@orqestra/conversations";
-import { serveEvents, serveTokenRefresh } from "@orqestra/integrations";
-import { linear } from "@orqestra/integrations/linear";
+import {
+	queueEvent,
+	serveEvents,
+	serveStream,
+	serveTokenRefresh,
+} from "@orqestra/integrations";
+import { sources } from "@orqestra/integrations/sources";
 import { type RuntimeDeps, runAgent, titlesSettled } from "./runtime/index.ts";
 import { openToolbox } from "./runtime/toolbox.ts";
 
 type Deps = Parameters<typeof createConversations>[0];
 
 /**
- * Works on queued Runs and Linear's Agent Session events in this process, replying to each, and keeps the Linear app's tokens fresh,
- * until the returned close function is called.
+ * Works on queued Runs and every source's Integration Session events in this process, replying to each, keeps the OAuth apps' tokens
+ * fresh, and holds the connection of each source that pushes its events down one, until the returned close function is called.
  */
 export async function startAgentWorker(
 	// `current` read per Run: a Run keeps the config it started with, the next one picks up a reload
@@ -66,14 +71,31 @@ export async function startAgentWorker(
 				reportSessionFailure(id, error, jobId, { fetch }),
 		},
 	);
-	const events = await serveEvents(linear, (event) =>
-		handleSessionEvent(linear, event, conversations, { fetch, orqestraUrl }),
+	// each source's events, however they arrive, are worked on from its queue; a held connection only queues them
+	const served = await Promise.all(
+		sources.map(async (source) => {
+			const events = await serveEvents(source, (event) =>
+				handleSessionEvent(source, event, conversations, {
+					fetch,
+					orqestraUrl,
+				}),
+			);
+			const tokens =
+				source.install.mode === "oauth" &&
+				(await serveTokenRefresh(source, { fetch }));
+			const stream =
+				source.ingress.mode === "stream" &&
+				serveStream(source, (event) => queueEvent(source, event), { fetch });
+			return async () => {
+				if (stream) await stream();
+				if (tokens) await tokens.close();
+				await events.close();
+			};
+		}),
 	);
-	const tokens = await serveTokenRefresh(linear, { fetch });
 	// a Run's title outlives it: closing waits for those under way, so none is cut off with its Usage unrecorded
 	return async () => {
-		await tokens.close();
-		await events.close();
+		await Promise.all(served.map((close) => close()));
 		await stopRuns();
 		await titlesSettled();
 	};

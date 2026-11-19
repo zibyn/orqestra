@@ -156,12 +156,13 @@ export interface SandboxClient {
 	): Promise<void>;
 }
 
-/** An Integration Session started (`created`: the app was delegated an issue or mentioned) or prompted again, as the worker acts on it. */
+/** An Integration Session started (`created`: the app was delegated an issue, mentioned or written to), prompted again, or asked to start afresh (`reset`, a chat's `/new`), as the worker acts on it. */
 export type SessionEvent = {
 	/** One per session start or prompt: a redelivery is the same job. */
 	id: string;
+	/** Everything `post` needs to answer into the session, such as a chat's id; stable for the session's life. */
 	sessionId: string;
-	action: "created" | "prompted";
+	action: "created" | "prompted" | "reset";
 	/** Who started the session, or wrote the prompt, by the Integration's own user id (their Integration Account); null for a session no person started. */
 	from: { id: string; name: string } | null;
 	issue: {
@@ -170,9 +171,11 @@ export type SessionEvent = {
 		description: string | null;
 		url: string;
 	} | null;
-	/** Where in the Integration the work was handed in (a Linear team's key), which the Admin maps to a repository; null when nowhere. */
+	/** Where in the Integration the work was handed in (a Linear team's key, a repository, a chat), which the Admin maps to a repository; null when nowhere. */
 	scope: string | null;
-	/** The comment that mentioned the app, or the prompt. */
+	/** People other than the sender read what is posted into the session: an issue, a group chat. */
+	shared: boolean;
+	/** The comment that mentioned the app, the message, or the prompt. */
 	text: string | null;
 	/** The prompt asks the agent to stop. */
 	stop: boolean;
@@ -180,53 +183,142 @@ export type SessionEvent = {
 
 /**
  * What the app posts into a session as itself, its body Markdown: a thought, shown as the agent at work; a response, which completes
- * the turn; an elicitation, which waits for the person's answer; or an error.
+ * the turn; an elicitation, which waits for the person's answer; or an error. A source shows each as it can, or not at all.
  */
 export type Activity = {
 	type: "thought" | "response" | "elicitation" | "error";
 	body: string;
 };
 
-/**
- * A system where people hand work to Orqestra's app (Linear): it installs the app by OAuth, pushes sessions in by webhook, and takes
- * the app's activities back. Each kind's directory implements it; the Integration Installation and Integration Session are generic.
- */
-export interface WorkSource {
-	kind: IntegrationKind;
-	/** The tool's name, as messages and logs say it. */
-	name: string;
+/** An installation's own secrets and settings, by the names its source's `fields` give. */
+export type Credentials = Record<string, string>;
+
+/** What a source acts as the app with: its access token (empty when it has none) and the installation's Credentials ({} for OAuth). */
+export type Auth = { token: string; credentials: Credentials };
+
+/** An OAuth client's id and secret: the installation's own, or for a credentials install its `clientId` and `clientSecret` fields. */
+export type OAuthClient = { id: string; secret: string };
+
+/** The app installs by the workspace admin approving it through OAuth as the app (Linear). */
+export type OAuthInstall = {
+	mode: "oauth";
 	/** Its OAuth authorization endpoint, with the scope and any further parameters it asks for. */
 	authorize: { url: string; scope: string; params?: Record<string, string> };
-	/** Its OAuth token endpoint, which takes a form (RFC 6749). */
+	/** Its OAuth token endpoint, which takes a form (RFC 6749) and answers JSON. */
 	tokenUrl: string;
 	/** The name of the workspace an access token is for. */
 	workspace(accessToken: string, fetch: Fetch): Promise<string>;
-	/** The scope a person authorizes as themselves with, through the same OAuth app, so Orqestra learns which of the tool's users they are. */
-	accountScope: string;
-	/** The user an access token a person authorized is for, by the id the tool's events name them with. */
-	account(
-		accessToken: string,
+};
+
+/** The app installs by the Admin entering what the Integration gave them (an app id and secret, a mailbox's account). */
+export type CredentialsInstall = {
+	mode: "credentials";
+	/** What the Admin enters, in order; a secret one is never sent back to the browser, an optional one may be left blank. */
+	fields: { name: string; secret: boolean; optional?: boolean }[];
+	/** An access token traded for the credentials, cached until `expiresAt` (ms since the epoch); none for a source that needs no token. */
+	token?(
+		credentials: Credentials,
 		fetch: Fetch,
-	): Promise<{ id: string; name: string }>;
-	/** Revokes an access token, once its account is known: Orqestra keeps none of a person's. */
-	revoke(accessToken: string, fetch: Fetch): Promise<void>;
+	): Promise<{ accessToken: string; expiresAt: number }>;
+	/** The workspace's name, checking the credentials work; throws when they do not. */
+	workspace(auth: Auth, fetch: Fetch): Promise<string>;
+};
+
+/** The Integration pushes events to Orqestra's webhook, signed with the installation's webhook secret (Linear, GitHub). */
+export type WebhookIngress = {
+	mode: "webhook";
 	/**
 	 * A webhook request's event, when the webhook secret signed it and it is fresh at `now`: undefined otherwise, null for a genuine one
-	 * Orqestra does not act on.
+	 * Orqestra does not act on. `credentials` are the installation's ({} for OAuth), such as the app's own name to tell a mention by.
 	 */
 	event(
 		rawBody: string,
 		headers: Headers,
 		webhookSecret: string,
 		now: number,
+		credentials: Credentials,
 	): SessionEvent | null | undefined;
+};
+
+/** Orqestra holds a connection open to the Integration, which pushes events down it (Feishu's and WeCom's long connections, IMAP IDLE). */
+export type StreamIngress = {
+	mode: "stream";
+	/** The Integration allows one connection per installation (WeCom), or each costs (an IMAP mailbox): only the worker holding the installation's lock connects. */
+	exclusive: boolean;
+	/**
+	 * Connects as the app and calls `onEvent` with each event, the connection's next only once it resolves; reconnects by itself and
+	 * resolves once `signal` aborts. Throws when the credentials are refused. Each worker holds one, unless `exclusive`: the queue's job
+	 * id drops an event two of them got.
+	 */
+	connect(
+		auth: () => Promise<Auth>,
+		onEvent: (event: SessionEvent) => Promise<void>,
+		signal: AbortSignal,
+		/** What the connection last got to (an IMAP cursor), kept with the installation; null until first saved. */
+		state: {
+			load(): Promise<string | null>;
+			save(value: string): Promise<void>;
+		},
+	): Promise<void>;
+};
+
+/** A person proves who they are by authorizing as themselves through the app's OAuth client (Linear, GitHub). */
+export type OAuthProof = {
+	mode: "oauth";
+	authorizeUrl: string;
+	tokenUrl: string;
+	/** The scope a person authorizes as themselves with, so Orqestra learns which of the tool's users they are. */
+	scope: string;
+	/** The user an access token a person authorized is for, by the id the tool's events name them with. */
+	account(
+		accessToken: string,
+		fetch: Fetch,
+	): Promise<{ id: string; name: string }>;
+	/** Revokes an access token, once its account is known: Orqestra keeps none of a person's. */
+	revoke(accessToken: string, client: OAuthClient, fetch: Fetch): Promise<void>;
+};
+
+/** A person proves who they are by opening a link the app sent where only they read it (a direct message, a reply mail): ADR 0020. */
+export type PrivateLinkProof = {
+	mode: "private-link";
+	/** Sends `body` to the person alone, as the app. */
+	tell(
+		auth: Auth,
+		person: { id: string; name: string },
+		body: string,
+		fetch: Fetch,
+	): Promise<void>;
+};
+
+/**
+ * A system where people hand work to Orqestra's app: it installs the app, pushes sessions in, and takes the app's activities back.
+ * Each kind's directory implements it; the Integration Installation and Integration Session are generic (ADR 0018, 0020).
+ */
+export interface WorkSource {
+	kind: IntegrationKind;
+	/** The tool's name, as messages and logs say it. */
+	name: string;
+	install: OAuthInstall | CredentialsInstall;
+	ingress: WebhookIngress | StreamIngress;
+	proof: OAuthProof | PrivateLinkProof;
+	/** A shared session (a group chat) reaches the Agent only in a scope the Admin opened: `listed`; or anywhere: `all` (an issue tracker). */
+	sharedScopes: "all" | "listed";
+	/**
+	 * Checks, as the app, that the Integration lets the sender hand this work in (GitHub: write access to the repository) and
+	 * acknowledges it where it was asked (a 👀 reaction); a refusal's reason, posted as the session's error, else undefined.
+	 */
+	accept?(
+		auth: Auth,
+		event: SessionEvent,
+		fetch: Fetch,
+	): Promise<string | undefined>;
 	/** Posts an activity into a session as the app, its body cut to what the tool takes. */
 	post(
-		accessToken: string,
+		auth: Auth,
 		sessionId: string,
 		activity: Activity,
 		fetch: Fetch,
 	): Promise<void>;
-	/** The first message of the Conversation a session opens, `repo` the repository its issue's team works in. */
+	/** The first message of the Conversation a session opens, `repo` the repository the Admin mapped its scope to. */
 	firstMessage(event: SessionEvent, repo: string | undefined): string;
 }

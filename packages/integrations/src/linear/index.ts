@@ -75,98 +75,115 @@ export async function linearGraphql(
 export const linear: WorkSource = {
 	kind: "linear",
 	name: "Linear",
-	authorize: {
-		url: "https://linear.app/oauth/authorize",
-		// to read and write, and to be assigned issues and mentioned as an agent
-		scope: "read,write,app:assignable,app:mentionable",
-		params: { actor: "app" },
-	},
-	tokenUrl: "https://api.linear.app/oauth/token",
+	install: {
+		mode: "oauth",
+		authorize: {
+			url: "https://linear.app/oauth/authorize",
+			// to read and write, and to be assigned issues and mentioned as an agent
+			scope: "read,write,app:assignable,app:mentionable",
+			params: { actor: "app" },
+		},
+		tokenUrl: "https://api.linear.app/oauth/token",
 
-	async workspace(accessToken, fetch) {
-		const { organization } = z
-			.object({ organization: z.object({ name: z.string() }) })
-			.parse(
-				await linearGraphql(accessToken, "{ organization { name } }", {
-					fetch,
-				}),
+		async workspace(accessToken, fetch) {
+			const { organization } = z
+				.object({ organization: z.object({ name: z.string() }) })
+				.parse(
+					await linearGraphql(accessToken, "{ organization { name } }", {
+						fetch,
+					}),
+				);
+			return organization.name;
+		},
+	},
+
+	proof: {
+		mode: "oauth",
+		authorizeUrl: "https://linear.app/oauth/authorize",
+		tokenUrl: "https://api.linear.app/oauth/token",
+		// a person's own authorization (actor=user, the default) is only to learn who they are
+		scope: "read",
+
+		async account(accessToken, fetch) {
+			const { viewer } = z
+				.object({ viewer: z.object({ id: z.string(), name: z.string() }) })
+				.parse(
+					await linearGraphql(accessToken, "{ viewer { id name } }", { fetch }),
+				);
+			return viewer;
+		},
+
+		// the token alone authorizes its revocation
+		async revoke(accessToken, _client, fetch) {
+			const response = await fetch("https://api.linear.app/oauth/revoke", {
+				method: "POST",
+				headers: { authorization: `Bearer ${accessToken}` },
+				signal: AbortSignal.timeout(30_000),
+			});
+			if (!response.ok)
+				throw new Error(`Linear's revoke endpoint answered ${response.status}`);
+		},
+	},
+
+	// an issue's session is read by its whole workspace
+	sharedScopes: "all",
+
+	ingress: {
+		mode: "webhook",
+		// `Linear-Signature` is the hex HMAC-SHA256 of the raw body with the webhook secret
+		event(rawBody, headers, webhookSecret, now) {
+			const signature = headers.get("linear-signature");
+			if (!signature) return undefined;
+			const expected = Buffer.from(
+				createHmac("sha256", webhookSecret).update(rawBody).digest("hex"),
 			);
-		return organization.name;
+			const given = Buffer.from(signature);
+			if (expected.length !== given.length || !timingSafeEqual(expected, given))
+				return undefined;
+			let payload: unknown;
+			try {
+				payload = JSON.parse(rawBody);
+			} catch {
+				return undefined;
+			}
+			const sent = (payload as { webhookTimestamp?: unknown }).webhookTimestamp;
+			if (typeof sent !== "number" || Math.abs(now - sent) > FRESH_MS)
+				return undefined;
+			const parsed = agentSessionEvent.safeParse(payload);
+			if (!parsed.success) return null;
+			const {
+				action,
+				agentSession: session,
+				agentActivity: activity,
+			} = parsed.data;
+			if (action === "prompted" && !activity) return null;
+			const issue = session.issue;
+			return {
+				id: activity ? `prompted-${activity.id}` : `created-${session.id}`,
+				sessionId: session.id,
+				action,
+				from:
+					(action === "prompted" ? activity?.user : session.creator) ?? null,
+				issue: issue
+					? {
+							identifier: issue.identifier,
+							title: issue.title,
+							description: issue.description ?? null,
+							url: issue.url,
+						}
+					: null,
+				scope: issue?.team.key ?? null,
+				text:
+					(action === "prompted"
+						? activity?.content.body
+						: session.comment?.body) ?? null,
+				stop: activity?.signal === "stop",
+				shared: true,
+			};
+		},
 	},
 
-	// a person's own authorization (actor=user, the default) is only to learn who they are
-	accountScope: "read",
-
-	async account(accessToken, fetch) {
-		const { viewer } = z
-			.object({ viewer: z.object({ id: z.string(), name: z.string() }) })
-			.parse(
-				await linearGraphql(accessToken, "{ viewer { id name } }", { fetch }),
-			);
-		return viewer;
-	},
-
-	async revoke(accessToken, fetch) {
-		const response = await fetch("https://api.linear.app/oauth/revoke", {
-			method: "POST",
-			headers: { authorization: `Bearer ${accessToken}` },
-			signal: AbortSignal.timeout(30_000),
-		});
-		if (!response.ok)
-			throw new Error(`Linear's revoke endpoint answered ${response.status}`);
-	},
-
-	// `Linear-Signature` is the hex HMAC-SHA256 of the raw body with the webhook secret
-	event(rawBody, headers, webhookSecret, now) {
-		const signature = headers.get("linear-signature");
-		if (!signature) return undefined;
-		const expected = Buffer.from(
-			createHmac("sha256", webhookSecret).update(rawBody).digest("hex"),
-		);
-		const given = Buffer.from(signature);
-		if (expected.length !== given.length || !timingSafeEqual(expected, given))
-			return undefined;
-		let payload: unknown;
-		try {
-			payload = JSON.parse(rawBody);
-		} catch {
-			return undefined;
-		}
-		const sent = (payload as { webhookTimestamp?: unknown }).webhookTimestamp;
-		if (typeof sent !== "number" || Math.abs(now - sent) > FRESH_MS)
-			return undefined;
-		const parsed = agentSessionEvent.safeParse(payload);
-		if (!parsed.success) return null;
-		const {
-			action,
-			agentSession: session,
-			agentActivity: activity,
-		} = parsed.data;
-		if (action === "prompted" && !activity) return null;
-		const issue = session.issue;
-		return {
-			id: activity ? `prompted-${activity.id}` : `created-${session.id}`,
-			sessionId: session.id,
-			action,
-			from: (action === "prompted" ? activity?.user : session.creator) ?? null,
-			issue: issue
-				? {
-						identifier: issue.identifier,
-						title: issue.title,
-						description: issue.description ?? null,
-						url: issue.url,
-					}
-				: null,
-			scope: issue?.team.key ?? null,
-			text:
-				(action === "prompted"
-					? activity?.content.body
-					: session.comment?.body) ?? null,
-			stop: activity?.signal === "stop",
-		};
-	},
-
-	async post(accessToken, agentSessionId, { type, body }: Activity, fetch) {
+	async post({ token }, agentSessionId, { type, body }: Activity, fetch) {
 		const content = {
 			type,
 			body:
@@ -178,7 +195,7 @@ export const linear: WorkSource = {
 							.replace(/[\uD800-\uDBFF]$/, "") + TRUNCATED,
 		};
 		await linearGraphql(
-			accessToken,
+			token,
 			"mutation ($input: AgentActivityCreateInput!) { agentActivityCreate(input: $input) { success } }",
 			{ variables: { input: { agentSessionId, content } }, fetch },
 		);

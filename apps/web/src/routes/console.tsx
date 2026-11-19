@@ -15,6 +15,7 @@ import {
 	FileTextIcon,
 	GaugeIcon,
 	type LucideIcon,
+	MessagesSquareIcon,
 	PlugIcon,
 	SearchIcon,
 	SettingsIcon,
@@ -46,6 +47,7 @@ import {
 	SidebarRail,
 	SidebarTrigger,
 } from "#/components/ui/sidebar";
+import { api, ok } from "#/lib/api";
 import { signIn } from "#/lib/instance";
 import { m } from "#/paraglide/messages";
 
@@ -55,6 +57,8 @@ export const Route = createFileRoute("/console")({
 		if (!context.user.admin) throw redirect({ to: "/" });
 		return { user: context.user };
 	},
+	// the Integrations whose apps install by credentials each have a page of their own
+	loader: () => ok(api().api.integrations.get()),
 	component: Console,
 });
 
@@ -74,6 +78,12 @@ type NavItem = {
 	label: () => string;
 	icon: LucideIcon;
 };
+
+/** An Integration installed by credentials, at /console/$kind. */
+type KindItem = { kind: string; label: () => string; icon: LucideIcon };
+
+const href = (item: NavItem | KindItem) =>
+	"kind" in item ? `/console/${item.kind}` : item.to;
 
 // One list drives the sidebar and the breadcrumb; labels are functions so they follow the locale
 const nav: { label: () => string; items: NavItem[] }[] = [
@@ -118,9 +128,29 @@ const nav: { label: () => string; items: NavItem[] }[] = [
 function Console() {
 	const { user } = Route.useRouteContext();
 	const { pathname } = useLocation();
-	const current = nav
+	const integrations = Route.useLoaderData();
+	const groups = nav.map((group) =>
+		group.label !== m.integrations
+			? group
+			: {
+					...group,
+					items: [
+						...group.items,
+						...integrations
+							.filter((i) => i.install === "credentials")
+							.map(
+								(i): KindItem => ({
+									kind: i.kind,
+									label: () => i.name,
+									icon: MessagesSquareIcon,
+								}),
+							),
+					],
+				},
+	);
+	const current = groups
 		.flatMap((g) => g.items)
-		.find((item) => pathname.startsWith(item.to));
+		.find((item) => pathname.startsWith(href(item)));
 
 	return (
 		<SidebarProvider>
@@ -143,16 +173,25 @@ function Console() {
 					</SidebarMenu>
 				</SidebarHeader>
 				<SidebarContent>
-					{nav.map((group) => (
-						<SidebarGroup key={group.items[0].to}>
+					{groups.map((group) => (
+						<SidebarGroup key={href(group.items[0])}>
 							<SidebarGroupLabel>{group.label()}</SidebarGroupLabel>
 							<SidebarMenu>
 								{group.items.map((item) => (
-									<SidebarMenuItem key={item.to}>
+									<SidebarMenuItem key={href(item)}>
 										<SidebarMenuButton
 											isActive={item === current}
 											tooltip={item.label()}
-											render={<Link to={item.to} />}
+											render={
+												"kind" in item ? (
+													<Link
+														to="/console/$kind"
+														params={{ kind: item.kind }}
+													/>
+												) : (
+													<Link to={item.to} />
+												)
+											}
 										>
 											<item.icon />
 											<span>{item.label()}</span>

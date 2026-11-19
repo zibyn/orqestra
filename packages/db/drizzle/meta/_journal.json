@@ -288,6 +288,13 @@
       "when": 1795050842516,
       "tag": "0040_scope_repos",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1795053099544,
+      "tag": "0041_credentials_install",
+      "breakpoints": true
     }
   ]
 }

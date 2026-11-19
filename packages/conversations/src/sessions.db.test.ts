@@ -1,7 +1,10 @@
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import type { AgentDefinition } from "@orqestra/agents";
+import type { SessionEvent } from "@orqestra/integrations";
 import {
 	agentSessionEvent,
+	chatEvent,
+	fakeChannel,
 	fakeLinear,
 	signed,
 } from "@orqestra/integrations/testing";
@@ -22,7 +25,9 @@ const {
 } = await import("@orqestra/db/schema");
 const { encryptSecret } = await import("@orqestra/db/secret");
 const { memoryStore } = await import("@orqestra/db/store");
-const { webhookEvent } = await import("@orqestra/integrations");
+const { finishLink, saveCredentials, webhookEvent } = await import(
+	"@orqestra/integrations"
+);
 const { linear: source } = await import("@orqestra/integrations/linear");
 const { eq, sql } = await import("drizzle-orm");
 const {
@@ -106,7 +111,7 @@ const link = (userId: string, externalId: string) =>
 describe.skipIf(!url)("Linear Agent Session events", () => {
 	const reset = async () => {
 		await db.execute(
-			sql`truncate conversation, integration_installation, "user" cascade`,
+			sql`truncate conversation, integration_installation, integration_link_sent, "user" cascade`,
 		);
 		await db.delete(agentRow).where(eq(agentRow.id, "coder"));
 		linear = fakeLinear();
@@ -273,6 +278,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 				from: null,
 				issue: null,
 				scope: null,
+				shared: true,
 				text: null,
 				stop: false,
 			},
@@ -451,5 +457,232 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 				": longer than Linear shows. The whole of it is in the Conversation in Orqestra.]",
 			);
 		}
+	});
+});
+
+// A chat's sessions (ADR 0020): its app installed by credentials, people proving themselves by a private link, its group chats
+// answered only once the Admin opened them. The chat is a fake in memory.
+describe.skipIf(!url)("a chat's sessions", () => {
+	let chat = fakeChannel();
+	const reset = () =>
+		db.execute(
+			sql`truncate conversation, integration_installation, integration_link_sent, "user" cascade`,
+		);
+	beforeEach(async () => {
+		await reset();
+		chat = fakeChannel();
+		await saveCredentials(chat.source, {
+			appId: "cli-1",
+			appSecret: chat.appSecret,
+		});
+		await db.insert(user).values({
+			id: "u1",
+			name: "Uma",
+			email: "uma@example.com",
+			lastActiveAt: new Date(),
+		});
+	});
+	afterAll(reset);
+
+	const send = (event: Partial<SessionEvent>) =>
+		handleSessionEvent(chat.source, chatEvent(event), conversations, {
+			orqestraUrl: "https://orqestra.example.com",
+		});
+	const linkChat = () =>
+		db.insert(integrationAccount).values({
+			kind: "email",
+			externalId: "chat-user-1",
+			userId: "u1",
+			name: "Uma",
+		});
+	const posted = () => chat.posted.map((p) => p.activity);
+	const group = {
+		sessionId: "group-1:chat-user-1",
+		scope: "group-1",
+		shared: true,
+	};
+
+	it("answers a group chat only once the Admin opened it, saying so and doing nothing else until then", async () => {
+		await linkChat();
+		await send({ ...group, text: "Fix the build" });
+		expect(posted()).toEqual([
+			{
+				type: "error",
+				body: "Orqestra's Agent does not answer here: the Admin has not opened this chat to it. Message the app directly instead.",
+			},
+		]);
+		expect(await db.select().from(conversation)).toEqual([]);
+		// no link either: a stranger in an unopened group hears only that
+		await db.delete(integrationAccount);
+		await send({ ...group, text: "Fix the build" });
+		expect(chat.told).toEqual([]);
+
+		await linkChat();
+		await db
+			.update(integrationInstallation)
+			.set({ openScopes: ["group-1"], scopeRepos: { "group-1": "acme/web" } });
+		await send({ ...group, text: "Fix the build" });
+		const [opened] = await conversationsOf("u1");
+		expect(await inputsOf(opened.id)).toEqual([
+			{ text: "Repository: acme/web\n\nFix the build", origin: "email" },
+		]);
+		// a one-to-one chat needs no opening
+		await send({ text: "Hi" });
+		expect(await conversationsOf("u1")).toHaveLength(2);
+	});
+
+	it("sends a sender who linked no account a link only they read, which links them for their next message", async () => {
+		await send({ text: "Fix the build" });
+		expect(await db.select().from(conversation)).toEqual([]);
+		// in a one-to-one chat the link is the answer
+		expect(posted()).toEqual([]);
+		const [{ person, body }] = chat.told;
+		expect(person).toEqual({ id: "chat-user-1", name: "Uma" });
+		const link = body.match(
+			/https:\/\/orqestra\.example\.com\/connections\?link=\S+/,
+		)?.[0];
+		expect(link).toBeDefined();
+		expect(
+			await finishLink(
+				"u1",
+				new URL(link ?? "").searchParams.get("link") ?? "",
+			),
+		).toBe("email");
+
+		await send({ text: "Fix the build" });
+		expect(await conversationsOf("u1")).toHaveLength(1);
+	});
+
+	it("says in a group chat that it sent the link, without it, sends no other for ten minutes, and asks to be messaged first when it cannot send one", async () => {
+		await db.update(integrationInstallation).set({ openScopes: ["group-1"] });
+		await send({ ...group, text: "Fix the build" });
+		expect(chat.told).toHaveLength(1);
+		expect(posted()).toEqual([
+			{
+				type: "elicitation",
+				body: "I sent you a link where only you can read it: open it while signed in to Orqestra to connect your Fake Chat account, then write here again.",
+			},
+		]);
+		await send({ text: "Did you?" });
+		expect(chat.told).toHaveLength(1);
+		expect(posted().at(-1)).toEqual({
+			type: "elicitation",
+			body: "I sent you a link a few minutes ago where only you can read it: open it while signed in to Orqestra to connect your Fake Chat account, then write here again.",
+		});
+
+		const reachable = chat.source;
+		chat.source = {
+			...chat.source,
+			proof: {
+				mode: "private-link",
+				tell: async () => {
+					throw new Error("never wrote to the app alone");
+				},
+			},
+		};
+		const ugo = {
+			sessionId: "group-1:chat-user-2",
+			from: { id: "chat-user-2", name: "Ugo" },
+		};
+		await send({ ...group, ...ugo, text: "Fix the build" });
+		expect(posted().at(-1)).toEqual({
+			type: "elicitation",
+			body: "Message me directly first, so I can send you a link to connect your Fake Chat account to Orqestra, then write here again.",
+		});
+		expect(JSON.stringify(chat.posted)).not.toContain("link=");
+		// not counted as sent: once Ugo can be reached, he is sent one
+		chat.source = reachable;
+		await send({ ...ugo, sessionId: "chat-2", text: "Hi" });
+		expect(chat.told.at(-1)?.person).toEqual(ugo.from);
+	});
+
+	it("posts the reason a source refuses an event from its sender, as the app, opening nothing, and retries what it could not check", async () => {
+		await linkChat();
+		const checked: { token: string; text: string | null }[] = [];
+		chat.source = {
+			...chat.source,
+			accept: async ({ token }, event) => {
+				checked.push({ token, text: event.text });
+				if (event.text === "down") throw new Error("permission check failed");
+				return event.text === "Deploy"
+					? "You cannot write to this repository."
+					: undefined;
+			},
+		};
+		await send({ text: "Deploy" });
+		expect(posted()).toEqual([
+			{ type: "error", body: "You cannot write to this repository." },
+		]);
+		expect(await db.select().from(conversation)).toEqual([]);
+		await expect(send({ text: "down" })).rejects.toThrow(
+			"permission check failed",
+		);
+		expect(posted()).toHaveLength(1);
+
+		await send({ text: "Fix the build" });
+		expect(await conversationsOf("u1")).toHaveLength(1);
+		expect(checked).toEqual([
+			{ token: "tenant-1", text: "Deploy" },
+			{ token: "tenant-1", text: "down" },
+			{ token: "tenant-1", text: "Fix the build" },
+		]);
+		// a stop is never refused
+		await send({ stop: true, text: "Stop" });
+		expect(checked).toHaveLength(3);
+	});
+
+	it("lets nobody but its User stop a session or start it afresh", async () => {
+		await linkChat();
+		await db.insert(user).values({
+			id: "u2",
+			name: "Vic",
+			email: "vic@example.com",
+			lastActiveAt: new Date(),
+		});
+		await db.insert(integrationAccount).values({
+			kind: "email",
+			externalId: "chat-user-2",
+			userId: "u2",
+			name: "Vic",
+		});
+		await send({ text: "Fix the build" });
+		const vic = { id: "chat-user-2", name: "Vic" };
+		await send({ action: "reset", text: "/new", from: vic });
+		await send({ stop: true, text: "/stop", from: vic });
+
+		expect(posted().slice(-2)).toEqual([
+			{
+				type: "error",
+				body: "Only the person who started this session can direct it.",
+			},
+			{
+				type: "error",
+				body: "Only the person who started this session can direct it.",
+			},
+		]);
+		expect(await db.select().from(integrationSession)).toHaveLength(1);
+		expect((await conversationsOf("u1"))[0].status).not.toBe("idle");
+	});
+
+	it("starts afresh on a reset: stops the Conversation, keeps it, and opens another with the next message", async () => {
+		await linkChat();
+		await send({ text: "Fix the build" });
+		const [first] = await conversationsOf("u1");
+		await send({ action: "reset", text: "/new" });
+
+		expect((await conversationsOf("u1"))[0].status).toBe("idle");
+		expect(await db.select().from(integrationSession)).toEqual([]);
+		expect(posted().at(-1)).toEqual({
+			type: "response",
+			body: "Starting afresh: your next message here opens a new Conversation.",
+		});
+
+		await send({ text: "Now the tests" });
+		const all = await conversationsOf("u1");
+		expect(all).toHaveLength(2);
+		const second = all.find((c) => c.id !== first.id);
+		expect(await inputsOf(second?.id ?? "")).toEqual([
+			{ text: "Now the tests", origin: "email" },
+		]);
 	});
 });

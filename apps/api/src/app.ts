@@ -1,4 +1,5 @@
 import type { Conversations } from "@orqestra/conversations";
+import type { WorkSource } from "@orqestra/integrations";
 import type { OrqestraReach } from "@orqestra/mcp";
 import { Elysia } from "elysia";
 import { z } from "zod";
@@ -10,9 +11,8 @@ import { conversationRoutes, notFound } from "./conversations.ts";
 import { documentParser } from "./document-parser.ts";
 import { download, upload } from "./files.ts";
 import type { User } from "./identity.ts";
+import { integrationRoutes, integrationWebhooks } from "./integrations.ts";
 import { limits } from "./limits.ts";
-import { linearRoutes } from "./linear.ts";
-import { linearWebhook } from "./linear-webhook.ts";
 import { mcpServers } from "./mcp-servers.ts";
 import { memoryRoutes } from "./memories.ts";
 import { providers } from "./providers.ts";
@@ -63,11 +63,14 @@ export function createApp({
 	config,
 	orqestraUrl = "http://localhost",
 	fetch,
+	sources,
 }: {
 	session: Session;
 	auth: Auth;
 	conversations: Conversations;
 	config: Capabilities;
+	/** The WorkSources served, every one by default; tests add fakes. */
+	sources?: WorkSource[];
 	// tests that connect no User may leave orqestraUrl out
 } & OrqestraReach) {
 	const user = signedIn(session);
@@ -90,7 +93,7 @@ export function createApp({
 						),
 					});
 				})
-				.use(linearWebhook)
+				.use(integrationWebhooks(sources))
 				.use(user)
 				.use(skills(user, config.skills, config.agents))
 				.use(conversationRoutes(user, conversations))
@@ -110,7 +113,7 @@ export function createApp({
 						fetch,
 					}),
 				)
-				.use(linearRoutes(user, { orqestraUrl, fetch }))
+				.use(integrationRoutes(user, { orqestraUrl, fetch, sources }))
 				.use(sandboxProvider(user, config.tools))
 				.use(documentParser(user, config.tools))
 				.use(limits(user, config.limits))

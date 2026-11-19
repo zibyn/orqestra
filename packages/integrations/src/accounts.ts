@@ -1,17 +1,20 @@
-// Integration Accounts (ADR 0019): which Orqestra User each person of an Integration's workspace is, learned by their authorizing as
-// themselves through the app's OAuth client, never by matching emails. Orqestra keeps none of their tokens.
+// Integration Accounts (ADR 0019, 0020): which Orqestra User each person of an Integration's workspace is, learned by their authorizing
+// as themselves through the app's OAuth client, or by their opening, signed in to Orqestra, a link the app sent them where only they
+// read it; never by matching emails. Orqestra keeps none of their tokens.
 import { db } from "@orqestra/db";
 import {
 	integrationAccount as account,
+	type IntegrationKind,
 	integrationInstallation as installation,
+	integrationLinkSent as linkSent,
 } from "@orqestra/db/schema";
 import { decryptSecret, encryptSecret } from "@orqestra/db/secret";
-import { and, eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { z } from "zod";
 import { callbackUrl, GrantRefused, tokenGrant } from "./installation.ts";
-import type { Fetch, WorkSource } from "./ports.ts";
+import type { Credentials, Fetch, OAuthClient, WorkSource } from "./ports.ts";
 
-/** How long the User has at the authorization page. */
+/** How long the User has at the authorization page, and to open a private link. */
 const PENDING_TTL_MS = 10 * 60_000;
 
 const pending = z.object({
@@ -20,37 +23,70 @@ const pending = z.object({
 	expiresAt: z.number(),
 });
 
+const sentLink = z.object({
+	account: z.string(),
+	externalId: z.string(),
+	name: z.string(),
+	expiresAt: z.number(),
+});
+
+/** What a value sealed with ORQESTRA_ENCRYPTION_KEY holds, when it is `schema`'s and has not expired. */
+function unsealed<T extends { expiresAt: number }>(
+	schema: z.ZodType<T>,
+	value: string | null,
+) {
+	const plain = value ? decryptSecret(value) : undefined;
+	const parsed = plain ? schema.safeParse(JSON.parse(plain)) : undefined;
+	return parsed?.success && parsed.data.expiresAt > Date.now()
+		? parsed.data
+		: undefined;
+}
+
 /**
  * The User a callback's `state` was started for, when it is an account authorization of `source` started within PENDING_TTL_MS:
  * undefined for any other state, such as an installation's. Sealed with ORQESTRA_ENCRYPTION_KEY, so nobody can make one for another User.
  */
 export function accountState(source: WorkSource, state: string | null) {
-	const plain = state ? decryptSecret(state) : undefined;
-	const parsed = plain ? pending.safeParse(JSON.parse(plain)) : undefined;
-	return parsed?.success &&
-		parsed.data.account === source.kind &&
-		parsed.data.expiresAt > Date.now()
-		? parsed.data.userId
+	const sealed = unsealed(pending, state);
+	return sealed?.account === source.kind ? sealed.userId : undefined;
+}
+
+/** The OAuth client people authorize as themselves through: the installation's own, or its credentials' `clientId` and `clientSecret`. */
+async function oauthClient(
+	source: WorkSource,
+): Promise<OAuthClient | undefined> {
+	const row = await db.query.integrationInstallation.findFirst({
+		where: eq(installation.kind, source.kind),
+		columns: { clientId: true, clientSecret: true, credentials: true },
+	});
+	if (row?.clientId)
+		return {
+			id: row.clientId,
+			secret: (row.clientSecret && decryptSecret(row.clientSecret)) ?? "",
+		};
+	const plain = row?.credentials ? decryptSecret(row.credentials) : undefined;
+	const credentials: Credentials = plain ? JSON.parse(plain) : {};
+	return credentials.clientId
+		? { id: credentials.clientId, secret: credentials.clientSecret ?? "" }
 		: undefined;
 }
 
-/** The URL to send the User to so they authorize as themselves; undefined until the app's credentials are saved. */
+/** The URL to send the User to so they authorize as themselves; undefined until the app's OAuth client is saved, or for a source whose people prove themselves another way. */
 export async function startAccount(
 	source: WorkSource,
 	userId: string,
 	orqestraUrl: string,
 ) {
-	const row = await db.query.integrationInstallation.findFirst({
-		where: eq(installation.kind, source.kind),
-		columns: { clientId: true },
-	});
-	if (!row) return undefined;
-	const url = new URL(source.authorize.url);
+	const { proof } = source;
+	if (proof.mode !== "oauth") return undefined;
+	const client = await oauthClient(source);
+	if (!client) return undefined;
+	const url = new URL(proof.authorizeUrl);
 	url.search = new URLSearchParams({
-		client_id: row.clientId,
+		client_id: client.id,
 		redirect_uri: callbackUrl(source, orqestraUrl),
 		response_type: "code",
-		scope: source.accountScope,
+		scope: proof.scope,
 		state: encryptSecret(
 			JSON.stringify({
 				account: source.kind,
@@ -60,6 +96,26 @@ export async function startAccount(
 		),
 	}).toString();
 	return url.href;
+}
+
+/** Links the User to the person, replacing the account they had linked, and taking that person from any other User, since the proof is theirs. */
+async function linkAccount(
+	kind: IntegrationKind,
+	userId: string,
+	person: { id: string; name: string },
+) {
+	await db.transaction(async (tx) => {
+		await tx
+			.delete(account)
+			.where(and(eq(account.kind, kind), eq(account.userId, userId)));
+		await tx
+			.insert(account)
+			.values({ kind, externalId: person.id, userId, name: person.name })
+			.onConflictDoUpdate({
+				target: [account.kind, account.externalId],
+				set: { userId, name: person.name, createdAt: new Date() },
+			});
+	});
 }
 
 export type FinishAccountError = "state_invalid" | "denied" | "failed";
@@ -77,59 +133,124 @@ export async function finishAccount(
 		fetch = globalThis.fetch,
 	}: { orqestraUrl: string; fetch?: Fetch },
 ): Promise<FinishAccountError | undefined> {
-	if (accountState(source, query.get("state")) !== userId)
+	const { proof } = source;
+	if (
+		proof.mode !== "oauth" ||
+		accountState(source, query.get("state")) !== userId
+	)
 		return "state_invalid";
 	const code = query.get("code");
 	if (!code) return "denied";
 	try {
-		const row = await db.query.integrationInstallation.findFirst({
-			where: eq(installation.kind, source.kind),
-			columns: { clientId: true, clientSecret: true },
-		});
-		if (!row) return "failed";
+		const client = await oauthClient(source);
+		if (!client) return "failed";
 		const { access_token: token } = z
 			.object({ access_token: z.string() })
 			.parse(
-				await tokenGrant(source, fetch, {
+				await tokenGrant(source, proof.tokenUrl, fetch, {
 					grant_type: "authorization_code",
 					code,
 					redirect_uri: callbackUrl(source, orqestraUrl),
-					client_id: row.clientId,
-					client_secret: decryptSecret(row.clientSecret) ?? "",
+					client_id: client.id,
+					client_secret: client.secret,
 				}),
 			);
-		const person = await source.account(token, fetch);
-		await source
-			.revoke(token, fetch)
+		const person = await proof.account(token, fetch);
+		await proof
+			.revoke(token, client, fetch)
 			.catch((error) =>
 				console.error(
 					`Revoking a ${source.name} account's token failed`,
 					error,
 				),
 			);
-		await db.transaction(async (tx) => {
-			await tx
-				.delete(account)
-				.where(and(eq(account.kind, source.kind), eq(account.userId, userId)));
-			await tx
-				.insert(account)
-				.values({
-					kind: source.kind,
-					externalId: person.id,
-					userId,
-					name: person.name,
-				})
-				.onConflictDoUpdate({
-					target: [account.kind, account.externalId],
-					set: { userId, name: person.name, createdAt: new Date() },
-				});
-		});
+		await linkAccount(source.kind, userId, person);
 		return undefined;
 	} catch (error) {
 		if (!(error instanceof GrantRefused))
 			console.error(`Linking a ${source.name} account failed`, error);
 		return "failed";
 	}
+}
+
+/**
+ * The link that proves whoever opens it, signed in to Orqestra within PENDING_TTL_MS, to be `person`: for the app to send where only
+ * they read it. On Orqestra's Connections page, under `orqestraUrl` when given.
+ */
+export function privateLink(
+	source: WorkSource,
+	person: { id: string; name: string },
+	orqestraUrl?: string,
+) {
+	const page = `/connections?${new URLSearchParams({
+		link: encryptSecret(
+			JSON.stringify({
+				account: source.kind,
+				externalId: person.id,
+				name: person.name,
+				expiresAt: Date.now() + PENDING_TTL_MS,
+			}),
+		),
+	})}`;
+	return orqestraUrl ? new URL(page, orqestraUrl).href : page;
+}
+
+/**
+ * Sends `person` a private link through `tell`, at most once per PENDING_TTL_MS however many workers are asked, since the one sent last
+ * still works: false when one was sent them since. One that `tell` throws on is not counted.
+ */
+export async function sendPrivateLink(
+	source: WorkSource,
+	person: { id: string; name: string },
+	tell: (link: string) => Promise<void>,
+	orqestraUrl?: string,
+) {
+	const now = new Date();
+	const [claimed] = await db
+		.insert(linkSent)
+		.values({ kind: source.kind, externalId: person.id, sentAt: now })
+		.onConflictDoUpdate({
+			target: [linkSent.kind, linkSent.externalId],
+			set: { sentAt: now },
+			setWhere: lt(linkSent.sentAt, new Date(now.getTime() - PENDING_TTL_MS)),
+		})
+		.returning({ sentAt: linkSent.sentAt });
+	if (!claimed) return false;
+	try {
+		await tell(privateLink(source, person, orqestraUrl));
+		return true;
+	} catch (error) {
+		await db
+			.delete(linkSent)
+			.where(
+				and(
+					eq(linkSent.kind, source.kind),
+					eq(linkSent.externalId, person.id),
+					eq(linkSent.sentAt, now),
+				),
+			);
+		throw error;
+	}
+}
+
+/** Who a private link proves its opener to be, and in which Integration, without linking them: undefined when it is no live one. */
+export function linkedBy(link: string) {
+	const sent = unsealed(sentLink, link);
+	// sealed with Orqestra's key, so a kind privateLink was given
+	return sent && { kind: sent.account as IntegrationKind, name: sent.name };
+}
+
+/**
+ * Links the User `userId` signed in to the person a private link was sent to, as finishAccount does: the kind it linked, or undefined
+ * when it is no link Orqestra sealed in the last PENDING_TTL_MS. Only a User's own request does this, never opening the link: a mail's
+ * link scanner opens it first.
+ */
+export async function finishLink(userId: string, link: string) {
+	const sent = unsealed(sentLink, link);
+	if (!sent) return undefined;
+	const kind = sent.account as IntegrationKind;
+	await linkAccount(kind, userId, { id: sent.externalId, name: sent.name });
+	return kind;
 }
 
 /** The account the User linked, as the Connections page shows it; null when none. */

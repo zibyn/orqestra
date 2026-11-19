@@ -17,7 +17,11 @@ People should reach the same Agent from where they already work: an issue tracke
 - **Each channel names its own session.** Linear's Agent Session, Plane's Agent Run, Slack's `channel:thread_ts`, a Feishu thread's `root_id`, an email thread's first `Message-ID`. WeCom has no threads, so each chat is one rolling session, and `/new` starts another.
 - **Each channel maps the four Activities onto what it shows.** Linear and Plane take them as they are. Slack shows a `thought` as the session's `processing` status and must set it back to `active` itself, or it stays for an hour. Feishu posts a card for the `thought` and updates it with the closing activity. WeCom's AI bot streams a reply left open by the `thought` and finished by the closing activity. Email sends no `thought`.
 - **Only one-to-one chats reach the Agent until the Admin opens a channel.** A Run works with its User's Connections, and its reply in a group is read by everyone there. The Admin lists the channels or groups the app answers in, beside `scope_repos`.
-- **An email is acted on only when DKIM and DMARC pass for its `From`.** A link proves the address once; every later mail could be forged without this check.
+- **An email is acted on only when a DKIM signature aligned with its `From` covers the whole body.** IMAP gives no connecting IP, so SPF, and with it a DMARC pass, cannot be checked; mail over 48 hours old, auto-replies, bounces and lists are dropped too. An Admin may also trust the `dmarc=pass` of the topmost `Authentication-Results` their own provider writes, by its authserv-id.
+- **Only the session's User may stop it or start it afresh.** Anyone else in a group or an issue gets an error, as they do for any other message.
+- **A source may refuse a sender before any work** (`accept`): GitHub takes work only from people with write access to the repository, then adds 👀 where it was asked.
+- **A link is never consumed on opening.** Link scanners in mail open links first, so `/connections?link=` shows whom it links and the User's click links them. A person is sent one at most every 10 minutes.
+- **Some Integrations allow one connection per installation** (`exclusive`: WeCom's bot, and an IMAP mailbox, where Gmail allows 15). Only the worker holding a Postgres advisory lock for the kind connects, and every post and private link of that kind goes through the `<kind>-posts` queue that worker serves, since WeCom answers only down that connection. A connection taken over elsewhere is retried after a backoff, never at once, so two holders cannot take it from each other forever. Feishu hands each event to one of up to 50 connections, so every worker holds one.
 
 ## Considered options
 
@@ -28,4 +32,13 @@ People should reach the same Agent from where they already work: an issue tracke
 ## Consequences
 
 - Migration 0040 renames `integration_installation.team_repos` to `scope_repos`, and `SessionEvent.issue.teamKey` becomes `SessionEvent.scope`. A Linear event queued across that deploy opens its Conversation without the repository line.
-- The order is Plane (the same model as Linear), Slack (chat sessions, private links), Feishu (credentials, long connection), WeCom (its reply is tied to the incoming frame, so a long Run may need an active push to close), then email. GitHub's issue and pull request mentions fit as a tracker after Slack.
+- GitHub, Feishu, WeCom and email landed first, Plane and Slack later. Each adapter follows the platforms below where they agree. A GitHub App is assumed installed once (`installationId`); events of its other installations are dropped. Microsoft 365 mailboxes, which need OAuth for IMAP, are not supported.
+
+## Research
+
+Each adapter was checked against code, not only docs:
+
+- **GitHub:** claude-code-action (trigger phrase, `User` senders only, write permission, sanitizer), OpenHands' resolver (👀, collaborator permission; its org-membership fallback passes anyone), Copilot, Devin and Cursor (write access, one session per issue or PR). An ordinary App cannot be assigned an issue, and GitHub does not redeliver a failed webhook.
+- **Feishu:** OpenClaw, cc-connect, Qwen Code, LangBot, AstrBot. Long connection by default; dedupe by `message_id`, not `event_id`; the SDK acks only once the handler returns, within 3 seconds; reply to the message, not into a topic; an `OnIt` reaction while working.
+- **WeCom:** the WeCom team's own OpenClaw plugin, Qwen Code, chatgpt-on-wechat, LangBot. The AI bot's long connection; one connection per bot, a new one taking it over; streamed replies end within about 6 minutes, so answers are pushed; userids are opaque unless the super-admin made the bot.
+- **Email:** OpenClaw's IMAP plugin (read-only INBOX, a `{uidValidity, lastUid}` cursor, its sender gate), GitLab mail_room and n8n (one connection per mailbox), Discourse and RFC 3834 (auto-reply guards), crisp-oss/email-reply-parser.

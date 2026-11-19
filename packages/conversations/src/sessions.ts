@@ -1,5 +1,5 @@
-// Integration Sessions (ADR 0018): a WorkSource's session (Linear's Agent Session) is one Conversation, and each of its Runs closes the
-// session's turn once, with its reply, its Question, its failure or the stop the session asked for.
+// Integration Sessions (ADR 0018, 0020): a WorkSource's session (Linear's Agent Session, a chat, a mail thread) is one Conversation,
+// and each of its Runs closes the session's turn once, with its reply, its Question, its failure or the stop the session asked for.
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { db } from "@orqestra/db";
 import {
@@ -10,22 +10,22 @@ import {
 import {
 	type Activity,
 	accountUser,
+	auth,
 	conversationSettings,
 	type Fetch,
 	postActivity,
 	type SessionEvent,
+	sendPrivateLink,
+	tellPerson,
 	type WorkSource,
 } from "@orqestra/integrations";
-import { linear } from "@orqestra/integrations/linear";
+import { sourceOf } from "@orqestra/integrations/sources";
 import { and, eq, sql } from "drizzle-orm";
 import { ConversationError } from "./errors.ts";
 import type { Conversations } from "./index.ts";
 import { type RunHandler, RunTimedOut } from "./serve.ts";
 import { messageText } from "./shared.ts";
 import { SpendingLimitReached } from "./spending.ts";
-
-/** Each kind's WorkSource, which a session's activities go to. */
-const SOURCES: Record<IntegrationKind, WorkSource> = { linear };
 
 /**
  * The session of the Conversation whose Run, job `jobId`'s, is closing its turn, which it then records closed: undefined when the
@@ -50,25 +50,31 @@ const closing = async (conversationId: string, jobId: string) => {
 };
 
 /** Posts a closing activity, logging rather than throwing when the WorkSource cannot take it. */
-const postClosing = (
+const postClosing = async (
 	session: { kind: IntegrationKind; id: string },
 	activity: Activity,
 	fetch?: Fetch,
-) =>
-	postActivity(SOURCES[session.kind], session.id, activity, { fetch }).catch(
-		(error) =>
-			console.error(
-				`could not post to ${SOURCES[session.kind].name} session ${session.id}`,
-				error,
-			),
-	);
+) => {
+	const source = sourceOf(session.kind);
+	try {
+		if (!source) throw new Error(`Orqestra no longer serves ${session.kind}`);
+		await postActivity(source, session.id, activity, { fetch });
+	} catch (error) {
+		console.error(
+			`could not post to ${source?.name ?? session.kind} session ${session.id}`,
+			error,
+		);
+	}
+};
 
 /**
  * Acts on a session's event: the first one from a session opens its Conversation, as the Orqestra User the sender linked their
- * Integration Account to, and the app says so in the session; a later prompt goes to that Conversation, a stop stops it and says so.
- * A sender who linked none is asked to, at Orqestra's Connections page under `orqestraUrl`, and to reply once they have. Anything else
- * the session should hear of is posted to it as an error. Converges when run again: a session opens one Conversation however often it
- * is delivered.
+ * Integration Account to, and the app says so in the session; a later prompt goes to that Conversation, a stop stops it and says so, a
+ * reset stops it and leaves it, so the session's next message opens another. A sender who linked none is asked to, at Orqestra's
+ * Connections page under `orqestraUrl`, or sent a link to open there where only they read it, and to reply once they have. A shared
+ * session of a source that answers only where the Admin opened it is told so, and nothing else; so is an event the source does not
+ * accept from its sender, with its reason. Anything else the session should hear of is posted to it as an error. Converges when run
+ * again: a session opens one Conversation however often it is delivered.
  */
 export async function handleSessionEvent(
 	source: WorkSource,
@@ -78,6 +84,19 @@ export async function handleSessionEvent(
 ) {
 	const post = (type: Activity["type"], body: string) =>
 		postActivity(source, event.sessionId, { type, body }, { fetch });
+	// what the Agent replies is read by everyone there, and it acts as the sender, with their Connections
+	if (event.shared && source.sharedScopes === "listed") {
+		const opened = (await conversationSettings(source))?.openScopes ?? [];
+		if (!event.scope || !opened.includes(event.scope))
+			return post(
+				"error",
+				"Orqestra's Agent does not answer here: the Admin has not opened this chat to it. Message the app directly instead.",
+			);
+	}
+	const sessionIs = and(
+		eq(integrationSession.kind, source.kind),
+		eq(integrationSession.sessionId, event.sessionId),
+	);
 	const [session] = await db
 		.select({
 			conversationId: integrationSession.conversationId,
@@ -88,13 +107,23 @@ export async function handleSessionEvent(
 			conversation,
 			eq(conversation.id, integrationSession.conversationId),
 		)
-		.where(
-			and(
-				eq(integrationSession.kind, source.kind),
-				eq(integrationSession.sessionId, event.sessionId),
-			),
+		.where(sessionIs);
+	// it is its User's Conversation: in a shared place, another person may neither stop it nor start it afresh
+	const ownerOnly = async () => {
+		if (
+			!session ||
+			!event.from ||
+			(await accountUser(source, event.from.id)) === session.userId
+		)
+			return false;
+		await post(
+			"error",
+			"Only the person who started this session can direct it.",
 		);
+		return true;
+	};
 	if (event.stop) {
+		if (await ownerOnly()) return;
 		const stopped =
 			session &&
 			(await conversations.stop(session.userId, session.conversationId));
@@ -106,12 +135,70 @@ export async function handleSessionEvent(
 			return;
 		return post("response", "Stopped.");
 	}
+	if (source.accept) {
+		const as = await auth(source, { fetch });
+		if (!as) throw new Error(`The ${source.name} app is not installed`);
+		const refused = await source.accept(as, event, fetch ?? globalThis.fetch);
+		if (refused) return post("error", refused);
+	}
+	if (event.action === "reset") {
+		if (await ownerOnly()) return;
+		if (session) {
+			// detached first, so the Run it stops posts nothing here after this
+			await db.delete(integrationSession).where(sessionIs);
+			await conversations.stop(session.userId, session.conversationId);
+		}
+		return post(
+			"response",
+			"Starting afresh: your next message here opens a new Conversation.",
+		);
+	}
 	if (!event.from)
 		return post(
 			"error",
 			"Only a person can start this: nobody's Orqestra account is linked to it.",
 		);
 	const senderId = await accountUser(source, event.from.id);
+	if (!senderId && source.proof.mode === "private-link") {
+		const from = event.from;
+		let sent: boolean;
+		try {
+			sent = await sendPrivateLink(
+				source,
+				from,
+				(link) =>
+					tellPerson(
+						source,
+						from,
+						`Open this link while signed in to Orqestra to connect your ${source.name} account, then write to me again. It works for 10 minutes.\n\n${link}`,
+						{ fetch },
+					),
+				orqestraUrl,
+			);
+		} catch (error) {
+			// such as a chat that cannot reach a person who never wrote to the app alone
+			console.error(
+				`could not send a link to ${source.name} user ${event.from.id}`,
+				error,
+			);
+			return post(
+				"elicitation",
+				`Message me directly first, so I can send you a link to connect your ${source.name} account to Orqestra, then write here again.`,
+			);
+		}
+		// the link sent last still works: say so rather than send another
+		if (!sent)
+			return post(
+				"elicitation",
+				`I sent you a link a few minutes ago where only you can read it: open it while signed in to Orqestra to connect your ${source.name} account, then write here again.`,
+			);
+		if (event.shared)
+			return post(
+				"elicitation",
+				`I sent you a link where only you can read it: open it while signed in to Orqestra to connect your ${source.name} account, then write here again.`,
+			);
+		return;
+	}
 	if (!senderId) {
 		const page = orqestraUrl
 			? new URL("/connections", orqestraUrl).href
