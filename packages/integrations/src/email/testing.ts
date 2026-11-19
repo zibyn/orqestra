@@ -54,13 +54,15 @@ export function dkim(domain: string) {
 			[`TXT s1._domainkey.${domain}`]: [`v=DKIM1; k=rsa; p=${p}`],
 			[`TXT _dmarc.${domain}`]: ["v=DMARC1; p=reject"],
 		},
-		async sign(raw: string) {
+		/** With `maxBodyLength`, the signature's l= tag: it signs only so much of the body. */
+		async sign(raw: string, maxBodyLength?: number) {
 			const { signatures } = await dkimSign(raw, {
 				signatureData: [
 					{
 						signingDomain: domain,
 						selector: "s1",
 						privateKey: privateKey.export({ type: "pkcs1", format: "pem" }),
+						maxBodyLength,
 					},
 				],
 			});
@@ -69,15 +71,39 @@ export function dkim(domain: string) {
 	};
 }
 
+/** A connection's state kept in memory, as the core keeps it with the installation; `value` is what was saved last. */
+export function memoryState(value: string | null = null) {
+	return {
+		get value() {
+			return value;
+		},
+		async load() {
+			return value;
+		},
+		async save(next: string) {
+			value = next;
+		},
+	};
+}
+
+const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+/** RFC 9051's date-time, in UTC. */
+const internalDate = (d: Date) =>
+	`"${String(d.getUTCDate()).padStart(2, "0")}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()} ${d.toISOString().slice(11, 19)} +0000"`;
+
 /**
- * An IMAP server on localhost holding one INBOX, speaking as much IMAP4rev1 and IDLE as ImapFlow uses. `deliver` adds a mail (told to
- * an idling client at once, or once it idles, as a real server does); `messages` are the mail with their `seen` flag; and `logins` counts the sign-ins.
+ * An IMAP server on localhost holding one INBOX, speaking as much IMAP4rev1 and IDLE as ImapFlow uses. `deliver` adds a mail received at
+ * a time (told to an idling client at once, or once it idles, as a real server does); `uidValidity` is the INBOX's, which a server
+ * changes when it renumbers the UIDs; `drop` cuts every connection; `commands` are the commands clients sent, and `logins` counts the
+ * sign-ins.
  */
 export async function fakeImap({
 	username = "agent@orqestra.test",
 	password = "imap-s3cret",
 } = {}) {
-	const messages: { uid: number; raw: string; seen: boolean }[] = [];
+	const messages: { uid: number; raw: string; received: Date }[] = [];
+	const commands: string[] = [];
+	let uidValidity = 1;
 	const sockets = new Set<Socket>();
 	// each idling client's way to tell it of mail it has not heard of
 	const idling = new Map<Socket, () => void>();
@@ -132,6 +158,7 @@ export async function fakeImap({
 				const ok = (text = "done") => write(`${tag} OK ${text}`);
 				const uid = command.toUpperCase() === "UID";
 				const verb = (uid ? args.shift() : command)?.toUpperCase();
+				if (verb) commands.push(verb);
 				switch (verb) {
 					case "CAPABILITY":
 						write("* CAPABILITY IMAP4rev1 IDLE");
@@ -161,41 +188,33 @@ export async function fakeImap({
 						write("* FLAGS (\\Seen)");
 						known = messages.length;
 						write(`* ${known} EXISTS`);
-						write("* OK [UIDVALIDITY 1] UIDs valid");
+						write(`* OK [UIDVALIDITY ${uidValidity}] UIDs valid`);
 						write(`* OK [UIDNEXT ${(messages.at(-1)?.uid ?? 0) + 1}] next`);
-						ok("[READ-WRITE] selected");
-						break;
-					case "SEARCH": {
-						const unseen = /UNSEEN|NOT SEEN/i.test(args.join(" "));
-						const found = messages.filter((m) => !unseen || !m.seen);
-						write(
-							`* SEARCH${found.map((m) => ` ${uid ? m.uid : messages.indexOf(m) + 1}`).join("")}`,
+						ok(
+							verb === "EXAMINE"
+								? "[READ-ONLY] examined"
+								: "[READ-WRITE] selected",
 						);
-						ok();
 						break;
-					}
-					case "FETCH":
+					case "FETCH": {
+						// only the items asked for: the UID always, the INTERNALDATE and the whole mail when named
+						const items = args.slice(1).join(" ").toUpperCase();
 						for (const n of uids(args[0])) {
 							const m = messages.find((x) => x.uid === n);
 							if (!m) continue;
-							const bytes = Buffer.byteLength(m.raw);
+							const date = items.includes("INTERNALDATE")
+								? ` INTERNALDATE ${internalDate(m.received)}`
+								: "";
+							const body = items.includes("BODY")
+								? ` BODY[] {${Buffer.byteLength(m.raw)}}\r\n${m.raw}`
+								: "";
 							socket.write(
-								`* ${messages.indexOf(m) + 1} FETCH (UID ${m.uid} BODY[] {${bytes}}\r\n${m.raw})\r\n`,
+								`* ${messages.indexOf(m) + 1} FETCH (UID ${m.uid}${date}${body})\r\n`,
 							);
 						}
 						ok();
 						break;
-					case "STORE":
-						if (
-							/\+FLAGS/i.test(args[1]) &&
-							/\\Seen/i.test(args.slice(2).join(" "))
-						)
-							for (const n of uids(args[0])) {
-								const m = messages.find((x) => x.uid === n);
-								if (m) m.seen = true;
-							}
-						ok();
-						break;
+					}
 					case "IDLE":
 						idleTag = tag;
 						idling.set(socket, tell);
@@ -222,8 +241,15 @@ export async function fakeImap({
 
 	return {
 		messages,
+		commands,
 		get logins() {
 			return logins;
+		},
+		get uidValidity() {
+			return uidValidity;
+		},
+		set uidValidity(value: number) {
+			uidValidity = value;
 		},
 		credentials: {
 			address: username,
@@ -234,9 +260,12 @@ export async function fakeImap({
 			username,
 			password,
 		} satisfies Credentials,
-		deliver(raw: string) {
-			messages.push({ uid: (messages.at(-1)?.uid ?? 0) + 1, raw, seen: false });
+		deliver(raw: string, received = new Date()) {
+			messages.push({ uid: (messages.at(-1)?.uid ?? 0) + 1, raw, received });
 			for (const tell of idling.values()) tell();
+		},
+		drop() {
+			for (const socket of sockets) socket.destroy();
 		},
 		async close() {
 			for (const socket of sockets) socket.destroy();
