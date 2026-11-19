@@ -17,6 +17,7 @@ export function fakeFeishu({
 	users?: Record<string, string>;
 } = {}) {
 	let n = 0;
+	const uuids = new Map<string, string>();
 	const ok = (rest: Record<string, unknown>) =>
 		Response.json({ code: 0, msg: "ok", ...rest });
 	const feishu = {
@@ -69,6 +70,11 @@ export function fakeFeishu({
 			}
 			const reply = path.match(/^\/im\/v1\/messages\/([^/]+)\/reply$/);
 			if (path === "/im/v1/messages" || reply) {
+				// a message whose uuid was sent before is not sent again (within the hour)
+				const sent = body.uuid && uuids.get(body.uuid);
+				if (sent) return ok({ data: { message_id: sent } });
+				const messageId = `om_${randomUUID()}`;
+				if (body.uuid) uuids.set(body.uuid, messageId);
 				feishu.messages.push({
 					...(reply
 						? {
@@ -82,7 +88,7 @@ export function fakeFeishu({
 					msgType: body.msg_type,
 					content: body.content,
 				});
-				return ok({ data: { message_id: `om_${randomUUID()}` } });
+				return ok({ data: { message_id: messageId } });
 			}
 			return Response.json({ code: 404, msg: "not found" }, { status: 404 });
 		},

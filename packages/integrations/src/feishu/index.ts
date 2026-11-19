@@ -3,6 +3,8 @@
 // The app needs the bot capability and the scopes im:message.p2p_msg:readonly, im:message.group_at_msg:readonly and
 // im:message:send_as_bot; contact:user.base:readonly only to name the people who write (else they go by their open_id).
 // shortcut: open.feishu.cn only; Lark (open.larksuite.com) is the same API on another host, make the host a field if one asks for it.
+
+import { createHash } from "node:crypto";
 import {
 	EventDispatcher,
 	LoggerLevel,
@@ -248,21 +250,36 @@ function postContent(body: string): string {
 	}
 }
 
-/** Sends `body` as the bot to a chat or a person, by `receiveIdType`. */
+/**
+ * A post message's request fields showing `body`, its `uuid` derived from `key` and the body: Feishu sends one message per uuid an
+ * hour, so a post retried after a lost answer is not shown twice.
+ * shortcut: the same body posted again under the same key within the hour is taken for a retry and not shown; derive the uuid from
+ * an Activity id instead, should the port give one.
+ */
+function postMessage(key: string, body: string) {
+	return {
+		msg_type: "post",
+		content: postContent(body),
+		// Feishu takes a uuid of up to 50 characters
+		uuid: createHash("sha256")
+			.update(`${key}\0${body}`)
+			.digest("hex")
+			.slice(0, 32),
+	};
+}
+
+/** Sends `body` as the bot to a chat or a person, by `receiveIdType`, `key` naming what it answers (see postMessage). */
 function send(
 	{ token }: Auth,
 	receiveIdType: "chat_id" | "open_id",
 	receiveId: string,
+	key: string,
 	body: string,
 	fetch: Fetch,
 ) {
 	return feishuApi(`/im/v1/messages?receive_id_type=${receiveIdType}`, {
 		token,
-		body: {
-			receive_id: receiveId,
-			msg_type: "post",
-			content: postContent(body),
-		},
+		body: { receive_id: receiveId, ...postMessage(key, body) },
 		fetch,
 	});
 }
@@ -354,7 +371,7 @@ export const feishu: WorkSource = {
 	proof: {
 		mode: "private-link",
 		async tell(auth, person, body, fetch) {
-			await send(auth, "open_id", person.id, body, fetch);
+			await send(auth, "open_id", person.id, `proof:${person.id}`, body, fetch);
 		},
 	},
 	sharedScopes: "listed",
@@ -362,18 +379,24 @@ export const feishu: WorkSource = {
 	// shortcut: a thought shows nothing; a reaction on the message that prompted it would, once a post knows that message's id
 	async post(auth, sessionId, { type, body }: Activity, fetch) {
 		if (type === "thought") return;
+		const key = `${sessionId}:${type}`;
 		if (sessionId.startsWith("chat:")) {
-			await send(auth, "chat_id", sessionId.slice("chat:".length), body, fetch);
+			await send(
+				auth,
+				"chat_id",
+				sessionId.slice("chat:".length),
+				key,
+				body,
+				fetch,
+			);
 			return;
 		}
+		// a group session's every answer quotes the message that opened it, a follow-up's too: the session is all post knows. Not
+		// reply_in_thread, which Feishu folds out of the chat's view into a topic (OpenClaw's bot.ts, LangBot and AstrBot keep it off)
 		const root = sessionId.slice("thread:".length);
 		await feishuApi(`/im/v1/messages/${encodeURIComponent(root)}/reply`, {
 			token: auth.token,
-			body: {
-				msg_type: "post",
-				content: postContent(body),
-				reply_in_thread: true,
-			},
+			body: postMessage(key, body),
 			fetch,
 		});
 	},
