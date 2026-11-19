@@ -5,6 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./deepseek": "./src/deepseek/index.ts",
+    "./email": "./src/email/index.ts",
     "./feishu": "./src/feishu/index.ts",
     "./firecrawl": "./src/firecrawl/index.ts",
     "./github": "./src/github/index.ts",
@@ -24,6 +25,11 @@
     "@orqestra/db": "workspace:*",
     "bullmq": "^6.5.0",
     "drizzle-orm": "^0.45.4",
+    "email-reply-parser": "2.3.9",
+    "imapflow": "2.10.2",
+    "mailauth": "8.0.4",
+    "mailparser": "3.14.2",
+    "nodemailer": "10.3.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

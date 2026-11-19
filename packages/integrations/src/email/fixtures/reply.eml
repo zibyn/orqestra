@@ -1,0 +1,19 @@
+From: Alice Liu <alice@example.com>
+To: agent@orqestra.test
+Subject: Re: 回复: Fix the login redirect
+Date: Thu, 19 Nov 2026 10:00:00 +0000
+Message-ID: <m2@example.com>
+In-Reply-To: <reply-1@orqestra.test>
+References: <m1:start@example.com> <reply-1@orqestra.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Thanks. Please also check the logout path.
+
+On Thu, Nov 19, 2026 at 9:30 AM Orqestra Agent <
+agent@orqestra.test> wrote:
+
+> The session cookie is set on the wrong path.
+>
+> On Thu, Nov 19, 2026 Alice wrote:
+>> After signing in, the app sends me back to /login.
