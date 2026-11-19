@@ -33,7 +33,7 @@ The reusable description of an Agent, maintained by Admins: who it is (its name,
 _Avoid_: Profile, persona, preset
 
 **Subagent**:
-An Agent that another Agent starts to carry out one task from a fresh context, in a Conversation of its own nested under the starting one, using an Agent Definition as its template or the built-in general worker. It works in the background and can outlive the Run that started it; when it finishes, its result goes back as a Notification. The starting Agent can send it further instructions, continue it once finished, or stop it; the User can only view and stop it. A Subagent can start Subagents of its own, down to a depth the Admin sets; stopping one stops every Subagent below it, and it has not finished, so sends no Notification, while any Subagent it started, or any Background Call it made, is still at work.
+An Agent that another Agent starts to carry out one task from a fresh context, in a Conversation of its own nested under the starting one and titled by it, using an Agent Definition as its template or the built-in general worker. Whatever its template, it is told that its last reply is its whole result. It works in the background and can outlive the Run that started it; when it finishes, its result goes back as a Notification. The starting Agent can send it further instructions, continue it once finished, or stop it; the User can only view and stop it. A Subagent can start Subagents of its own, down to a depth the Admin sets; stopping one stops every Subagent below it, and it has not finished, so sends no Notification, while any Subagent it started, or any Background Call it made, is still at work.
 _Avoid_: Child agent, worker, delegate
 
 **Notification**:
@@ -77,7 +77,7 @@ What an input does when it arrives in the Inbox of a Conversation that has no Ru
 _Avoid_: Trigger, resume
 
 **Outcome**:
-How a Subagent's work stands: queued while it waits for a free slot, running, or how its latest Run ended: completed, partial (cut off at its step limit), failed or stopped. Its Notification carries it. A Conversation's own state is its status instead: idle, running or failed.
+How a Subagent's work stands: queued while it waits for a free slot, running, or how its latest Run ended: completed, partial (cut off at an Unattended Run's step or time limit), failed or stopped. Its Notification carries it. A Conversation's own state is its status instead: idle, running or failed.
 _Avoid_: Status (of a Subagent), state, result
 
 **Tool**:

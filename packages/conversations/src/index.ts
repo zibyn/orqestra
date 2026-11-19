@@ -193,6 +193,7 @@ type Read = Pick<
 		parentId: string;
 		depth: number;
 		template: string | null;
+		title: string | null;
 	})[];
 	timer: { note: string; ringsAt: string } | null;
 	calls: Pick<
@@ -393,7 +394,7 @@ export function createConversations({
 						from ${compaction} where ${compaction.conversationId} = ${conversation.id}) "compactedBefore",
 					-- the whole tree's, so its panels drill down to Subagents of Subagents
 					(select coalesce(json_agg(json_build_object('id', ${subagent.conversationId}, 'parentId', ${tree.parentId}, 'depth', ${tree.depth},
-						'toolCallId', ${subagent.toolCallId}, 'number', ${subagent.number}, 'template', ${tree.agentId}, 'brief', ${subagent.brief},
+						'toolCallId', ${subagent.toolCallId}, 'number', ${subagent.number}, 'template', ${tree.agentId}, 'title', ${tree.title}, 'brief', ${subagent.brief},
 						'outcome', ${subagent.outcome}) order by ${tree.depth}, ${subagent.number}), '[]')
 						from ${subagent} join ${conversation} ${tree} on ${tree.id} = ${subagent.conversationId} where ${tree.rootId} = ${conversation.id}) subagents,
 					(select json_build_object('note', ${timer.note}, 'ringsAt', ${timer.ringsAt})

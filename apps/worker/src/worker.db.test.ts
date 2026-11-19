@@ -85,7 +85,6 @@ const telemetry = otelTelemetry(
 		spanProcessors: [new SimpleSpanProcessor({ exporter: spans })],
 	}).getTracer("test"),
 );
-const { MAX_SUBAGENT_STEPS } = await import("./runtime/tools.ts");
 
 /** The Users' Connections to per-User OAuth MCP Servers, as the worker reads them. */
 const connections = memoryConnections();
@@ -254,7 +253,7 @@ function script(replies: {
 			const head = JSON.stringify(context.messages[0]);
 			const queue = head.includes("Write a title")
 				? queues.title
-				: head.includes("You carry out one task")
+				: head.includes("You are working as a subagent")
 					? queues.sub
 					: queues.parent;
 			const next = queue.shift();
@@ -557,12 +556,51 @@ describe.skipIf(!url)(
 			expect(titled?.status).toBe("idle");
 		});
 
-		it("gives a Subagent at its step limit one last request without Tools for its answer", async () => {
+		it("tells a Subagent started from a template how to hand its work back, and titles it as its parent named it", async () => {
+			let prompt: string | undefined;
+			script({
+				parent: [
+					fauxAssistantMessage(
+						fauxToolCall("subagent", {
+							title: "Take notes",
+							brief: "note",
+							template: "skilled",
+						}),
+					),
+					fauxAssistantMessage("Waiting"),
+					fauxAssistantMessage("Done"),
+				],
+				sub: [
+					(context) => {
+						prompt = JSON.stringify(context.messages[0]);
+						return fauxAssistantMessage("noted");
+					},
+				],
+			});
+			const id = await conversations.send(userId, {
+				agentId: "faux",
+				text: "take notes",
+			});
+			const view = await waitFor(
+				() => conversations.get(userId, id),
+				(v) => v?.status === "idle" && v.messages.some((m) => m.subagentId),
+			);
+			expect(prompt).toContain(skilledAgent.instructions);
+			expect(prompt).toContain("Your last reply is your whole result");
+			expect(view?.subagents[0].title).toBe("Take notes");
+			expect(JSON.stringify(view?.messages.at(-2)?.message.content)).toContain(
+				'title=\\"Take notes\\"',
+			);
+		});
+
+		it("runs a Subagent of a User's Conversation for as many steps as it takes", async () => {
 			let first: { messages: { toolsAdded?: unknown }[] } | undefined;
 			let last: unknown;
 			script({
 				parent: [
-					fauxAssistantMessage(fauxToolCall("subagent", { brief: "dig" })),
+					fauxAssistantMessage(
+						fauxToolCall("subagent", { title: "Task", brief: "dig" }),
+					),
 					fauxAssistantMessage("Digging"),
 					fauxAssistantMessage("Done"),
 				],
@@ -574,7 +612,8 @@ describe.skipIf(!url)(
 							fauxToolCall("search", { query: "more" }),
 						]);
 					},
-					...Array.from({ length: MAX_SUBAGENT_STEPS - 2 }, (_, i) =>
+					// more than the 20 steps Subagents were once held to
+					...Array.from({ length: 23 }, (_, i) =>
 						fauxAssistantMessage([
 							fauxText(`step ${i + 2}`),
 							fauxToolCall("search", { query: "more" }),
@@ -598,19 +637,22 @@ describe.skipIf(!url)(
 			expect(JSON.stringify(first?.messages[0].toolsAdded)).toContain(
 				"subagent_message",
 			);
-			expect(JSON.stringify(last)).toContain("step limit");
+			expect(JSON.stringify(last)).not.toContain("step limit");
 			const notified = JSON.stringify(view?.messages[4].message.content);
-			expect(notified).toContain('status=\\"partial\\"');
+			expect(notified).toContain('status=\\"completed\\"');
 			expect(notified).toContain("what I found");
-			expect(view?.subagents[0].outcome).toBe("partial");
+			expect(view?.subagents[0].outcome).toBe("completed");
 		});
 
 		it("traces a Subagent's first Run under the Tool call that started it, and the Run its Notification wakes as a root linked back to it", async () => {
 			script({
 				parent: [
-					fauxAssistantMessage(fauxToolCall("subagent", { brief: "dig" }), {
-						stopReason: "toolUse",
-					}),
+					fauxAssistantMessage(
+						fauxToolCall("subagent", { title: "Task", brief: "dig" }),
+						{
+							stopReason: "toolUse",
+						},
+					),
 					fauxAssistantMessage("Digging"),
 					fauxAssistantMessage("Done"),
 				],
@@ -674,7 +716,11 @@ describe.skipIf(!url)(
 			script({
 				parent: [
 					fauxAssistantMessage(
-						fauxToolCall("subagent", { brief: "wait", template: "skilled" }),
+						fauxToolCall("subagent", {
+							title: "Task",
+							brief: "wait",
+							template: "skilled",
+						}),
 					),
 					fauxAssistantMessage("Waiting"),
 				],
@@ -775,7 +821,11 @@ describe.skipIf(!url)(
 				script({
 					parent: [
 						fauxAssistantMessage(
-							fauxToolCall("subagent", { brief: "note", template: "skilled" }),
+							fauxToolCall("subagent", {
+								title: "Task",
+								brief: "note",
+								template: "skilled",
+							}),
 						),
 						fauxAssistantMessage("Waiting"),
 						fauxAssistantMessage("Done"),
@@ -954,8 +1004,12 @@ describe.skipIf(!url)(
 			script({
 				parent: [
 					fauxAssistantMessage([
-						fauxToolCall("subagent", { brief: "dig" }),
-						fauxToolCall("subagent", { brief: "note", template: "skilled" }),
+						fauxToolCall("subagent", { title: "Task", brief: "dig" }),
+						fauxToolCall("subagent", {
+							title: "Task",
+							brief: "note",
+							template: "skilled",
+						}),
 					]),
 					...Array.from({ length: 3 }, () => fauxAssistantMessage("Done")),
 				],
@@ -1749,7 +1803,9 @@ describe.skipIf(!url)(
 				});
 				script({
 					parent: [
-						fauxAssistantMessage(fauxToolCall("subagent", { brief: "dig" })),
+						fauxAssistantMessage(
+							fauxToolCall("subagent", { title: "Task", brief: "dig" }),
+						),
 						fauxAssistantMessage("Digging"),
 					],
 					sub: [
@@ -2382,7 +2438,11 @@ describe.skipIf(!url)(
 			describe("of a Subagent", () => {
 				const delegate = (template = "mcp-sub") =>
 					fauxAssistantMessage(
-						fauxToolCall("subagent", { brief: "crunch", template }),
+						fauxToolCall("subagent", {
+							title: "Task",
+							brief: "crunch",
+							template,
+						}),
 					);
 				/** The parent delegates to a Subagent, which puts a call in the background and ends its Run. */
 				const delegated = async (parentAfter: FauxResponseStep[] = []) => {

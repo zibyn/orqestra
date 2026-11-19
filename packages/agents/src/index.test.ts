@@ -2,9 +2,9 @@ import { type ModelSettings, resolveModels } from "@orqestra/models";
 import { describe, expect, it } from "vitest";
 import {
 	availableTools,
-	GENERAL_WORKER,
 	resolveAgents,
 	resolveTurn,
+	subagentInstructions,
 	turnSkills,
 } from "./index";
 
@@ -280,7 +280,8 @@ describe("resolveTurn", () => {
 			model: "deepseek/deepseek-v4-pro",
 		});
 		expect(turn?.model.id).toBe("deepseek-v4-pro");
-		expect(turn?.agent.instructions).toBe(GENERAL_WORKER);
+		// its only instructions are those every Subagent gets
+		expect(turn?.agent.instructions).toBe("");
 		expect(turn?.agent.tools).toEqual(["search", "scrape"]);
 	});
 
@@ -311,5 +312,18 @@ describe("availableTools", () => {
 				mcpServers: { github: server("GitHub"), wiki: server("Wiki") },
 			}),
 		).toEqual(["scrape", "mcp:github", "mcp:wiki"]);
+	});
+});
+
+describe("subagentInstructions", () => {
+	it("follows a template's instructions with how a Subagent hands its work back, naming files only with a Sandbox", () => {
+		const framed = subagentInstructions("You review code.", false);
+		expect(framed).toMatch(
+			/^You review code\.\n\nYou are working as a subagent/,
+		);
+		expect(framed).not.toContain("file");
+		expect(subagentInstructions("", true)).toMatch(
+			/^You are working as a subagent.*absolute path/,
+		);
 	});
 });
