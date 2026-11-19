@@ -255,10 +255,10 @@ export function subagentTools(
 	const templates = config.agents
 		.map((a) => `- ${a.id} (${a.name}): ${a.description}`)
 		.join("\n");
-	// without a Sandbox, promising shared files sends subagents off to delegate writing files nobody can write
+	// only a Sandbox gives them files to share; promising them without one sends subagents off to write files nobody can
 	const handover = config.sandboxProvider
-		? "They share your sandbox: files you leave under /workspace are theirs to read, and theirs yours. Each works in a folder of its own under /workspace/subagents/ and names in its answer the files it left you; give it absolute paths for anything it should read or write elsewhere."
-		: "There is no sandbox: you and they share no files, so put everything a subagent needs in its brief, and ask for its whole result in its answer.";
+		? " They share your sandbox: files you leave under /workspace are theirs to read, and theirs yours. Each works in a folder of its own under /workspace/subagents/ and names in its answer the files it left you; give it absolute paths for anything it should read or write elsewhere."
+		: "";
 	// a refusal goes to the model as the Tool's error
 	const refused = (error: unknown): never => {
 		throw refusal(error);
@@ -268,7 +268,7 @@ export function subagentTools(
 	const spawn = tool({
 		name: "subagent",
 		label: "Subagent",
-		description: `Start a subagent on a task. It works in the background from a blank context, so you can keep working; to start several in parallel, call this tool once per task in the same step. ${handover} Use subagents for self-contained work such as research. The brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
+		description: `Start a subagent on a task. It works in the background from a blank context, so you can keep working; to start several in parallel, call this tool once per task in the same step.${handover} Use subagents for self-contained work such as research. The brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
 		parameters: Type.Object({
 			brief: Type.String({
 				description: "The complete task, with all needed context",
