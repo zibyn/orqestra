@@ -281,6 +281,13 @@
       "when": 1795047471741,
       "tag": "0039_integration_account",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1795050842516,
+      "tag": "0040_scope_repos",
+      "breakpoints": true
     }
   ]
 }

@@ -243,7 +243,7 @@ function LinearConversations() {
 			"",
 	);
 	const [repos, setRepos] = useState(
-		Object.entries(installation?.teamRepos ?? {})
+		Object.entries(installation?.scopeRepos ?? {})
 			.map(([team, repo]) => `${team} ${repo}`)
 			.join("\n"),
 	);
@@ -255,7 +255,7 @@ function LinearConversations() {
 		setBusy(true);
 		setDone(false);
 		try {
-			const teamRepos = Object.fromEntries(
+			const scopeRepos = Object.fromEntries(
 				repos
 					.split("\n")
 					.map((line) => line.trim().split(/\s+/))
@@ -265,7 +265,7 @@ function LinearConversations() {
 			const result = await saved(
 				api().api.linear.conversations.put({
 					defaultAgentId: agentId,
-					teamRepos,
+					scopeRepos,
 				}),
 			);
 			setErrors(saveErrorTexts(result.errors));
@@ -278,11 +278,11 @@ function LinearConversations() {
 		}
 	}
 
-	// "teamRepos.OPS": the team whose line it refused
+	// "scopeRepos.OPS": the team whose line it refused
 	const reposError = Object.entries(errors)
-		.filter(([field]) => field.startsWith("teamRepos"))
+		.filter(([field]) => field.startsWith("scopeRepos"))
 		.map(([field, text]) =>
-			`${field.replace(/^teamRepos\.?/, "")} ${text}`.trim(),
+			`${field.replace(/^scopeRepos\.?/, "")} ${text}`.trim(),
 		)
 		.join("; ");
 

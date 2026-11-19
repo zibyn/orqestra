@@ -1089,7 +1089,7 @@ describe.skipIf(!url)(
 						}),
 					),
 					workspace: "Acme",
-					teamRepos: {},
+					scopeRepos: {},
 				});
 			});
 			/** Sends a message from the session, as the worker does for Linear's events: the first opens its Conversation. */
@@ -1377,6 +1377,7 @@ describe.skipIf(!url)(
 							action: "prompted",
 							from: null,
 							issue: null,
+							scope: null,
 							text: "Stop",
 							stop: true,
 						},

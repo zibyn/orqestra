@@ -807,8 +807,8 @@ export const integrationInstallation = pgTable("integration_installation", {
 	defaultAgentId: text("default_agent_id").references(() => agent.id, {
 		onDelete: "set null",
 	}),
-	// a team's key to the repository its issues are worked in, "owner/repo"
-	teamRepos: jsonb("team_repos")
+	// a scope's key (a Linear team's key) to the repository the work handed in there is done in, "owner/repo"
+	scopeRepos: jsonb("scope_repos")
 		.$type<Record<string, string>>()
 		.default({})
 		.notNull(),

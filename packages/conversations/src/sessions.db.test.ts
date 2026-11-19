@@ -127,7 +127,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 			),
 			workspace: "Acme",
 			defaultAgentId: null,
-			teamRepos: { ENG: "acme/web" },
+			scopeRepos: { ENG: "acme/web" },
 		});
 		linear.accessTokens.add("access-0");
 		await db.insert(user).values({
@@ -272,6 +272,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 				action: "created",
 				from: null,
 				issue: null,
+				scope: null,
 				text: null,
 				stop: false,
 			},

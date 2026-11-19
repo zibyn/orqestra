@@ -125,7 +125,7 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 		expect(after.body.installation).toEqual({
 			clientId: "lin-client",
 			defaultAgentId: null,
-			teamRepos: {},
+			scopeRepos: {},
 			clientSecretReadable: true,
 			webhookSecretReadable: true,
 			workspace: "Acme",
@@ -271,7 +271,7 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 	it("saves the Agent of the Conversations Linear opens and each team's repository, once the app's credentials are", async () => {
 		const settings = {
 			defaultAgentId: "general",
-			teamRepos: { ENG: "acme/web" },
+			scopeRepos: { ENG: "acme/web" },
 		};
 		const put = (body: unknown) =>
 			call("PUT", "/linear/conversations", { body });
@@ -287,9 +287,9 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 		expect(
 			(await put({ ...settings, defaultAgentId: "gone" })).body.errors,
 		).toEqual({ defaultAgentId: { code: "not_found" } });
-		const bad = await put({ ...settings, teamRepos: { ENG: "not a repo" } });
+		const bad = await put({ ...settings, scopeRepos: { ENG: "not a repo" } });
 		expect(bad.status).toBe(422);
-		expect(Object.keys(bad.body.errors)).toEqual(["teamRepos.ENG"]);
+		expect(Object.keys(bad.body.errors)).toEqual(["scopeRepos.ENG"]);
 	});
 
 	it("is for Admins only, the callback too", async () => {
@@ -306,7 +306,7 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 					method === "POST"
 						? credentials
 						: method === "PUT"
-							? { defaultAgentId: "general", teamRepos: {} }
+							? { defaultAgentId: "general", scopeRepos: {} }
 							: undefined,
 			});
 			expect(status).toBe(403);
