@@ -562,9 +562,7 @@ describe.skipIf(!url)(
 			let last: unknown;
 			script({
 				parent: [
-					fauxAssistantMessage(
-						fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }),
-					),
+					fauxAssistantMessage(fauxToolCall("subagent", { brief: "dig" })),
 					fauxAssistantMessage("Digging"),
 					fauxAssistantMessage("Done"),
 				],
@@ -610,10 +608,9 @@ describe.skipIf(!url)(
 		it("traces a Subagent's first Run under the Tool call that started it, and the Run its Notification wakes as a root linked back to it", async () => {
 			script({
 				parent: [
-					fauxAssistantMessage(
-						fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }),
-						{ stopReason: "toolUse" },
-					),
+					fauxAssistantMessage(fauxToolCall("subagent", { brief: "dig" }), {
+						stopReason: "toolUse",
+					}),
 					fauxAssistantMessage("Digging"),
 					fauxAssistantMessage("Done"),
 				],
@@ -677,9 +674,7 @@ describe.skipIf(!url)(
 			script({
 				parent: [
 					fauxAssistantMessage(
-						fauxToolCall("subagent", {
-							tasks: [{ brief: "wait", template: "skilled" }],
-						}),
+						fauxToolCall("subagent", { brief: "wait", template: "skilled" }),
 					),
 					fauxAssistantMessage("Waiting"),
 				],
@@ -780,9 +775,7 @@ describe.skipIf(!url)(
 				script({
 					parent: [
 						fauxAssistantMessage(
-							fauxToolCall("subagent", {
-								tasks: [{ brief: "note", template: "skilled" }],
-							}),
+							fauxToolCall("subagent", { brief: "note", template: "skilled" }),
 						),
 						fauxAssistantMessage("Waiting"),
 						fauxAssistantMessage("Done"),
@@ -960,11 +953,10 @@ describe.skipIf(!url)(
 		it("records a Subagent's requests for the top-level Conversation's User, under the Agent that sent them", async () => {
 			script({
 				parent: [
-					fauxAssistantMessage(
-						fauxToolCall("subagent", {
-							tasks: [{ brief: "dig" }, { brief: "note", template: "skilled" }],
-						}),
-					),
+					fauxAssistantMessage([
+						fauxToolCall("subagent", { brief: "dig" }),
+						fauxToolCall("subagent", { brief: "note", template: "skilled" }),
+					]),
 					...Array.from({ length: 3 }, () => fauxAssistantMessage("Done")),
 				],
 				sub: [fauxAssistantMessage("found"), fauxAssistantMessage("found")],
@@ -1757,9 +1749,7 @@ describe.skipIf(!url)(
 				});
 				script({
 					parent: [
-						fauxAssistantMessage(
-							fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }),
-						),
+						fauxAssistantMessage(fauxToolCall("subagent", { brief: "dig" })),
 						fauxAssistantMessage("Digging"),
 					],
 					sub: [
@@ -2392,9 +2382,7 @@ describe.skipIf(!url)(
 			describe("of a Subagent", () => {
 				const delegate = (template = "mcp-sub") =>
 					fauxAssistantMessage(
-						fauxToolCall("subagent", {
-							tasks: [{ brief: "crunch", template }],
-						}),
+						fauxToolCall("subagent", { brief: "crunch", template }),
 					);
 				/** The parent delegates to a Subagent, which puts a call in the background and ends its Run. */
 				const delegated = async (parentAfter: FauxResponseStep[] = []) => {

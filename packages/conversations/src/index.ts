@@ -108,7 +108,6 @@ export {
 } from "./runs.ts";
 export { ensureSandbox } from "./sandbox.ts";
 export {
-	MAX_SUBAGENT_TASKS,
 	NoSuchSubagent,
 	NoSuchTemplate,
 	type RunConfig,

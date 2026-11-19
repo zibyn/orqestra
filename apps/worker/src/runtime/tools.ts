@@ -4,7 +4,6 @@ import type { Limits, RunConfig } from "@orqestra/conversations";
 import {
 	BudgetExceeded,
 	checkSchedule,
-	MAX_SUBAGENT_TASKS,
 	MAX_TIMER_DELAY,
 	MIN_TIMER_DELAY,
 	NoSuchSubagent,
@@ -248,7 +247,7 @@ export function refusal(error: unknown) {
  * Each Subagent works in the background, past the parent's Run; it hands back its result as a Notification that wakes the parent.
  */
 export function subagentTools(
-	config: Pick<RunConfig, "agents">,
+	config: Pick<RunConfig, "agents" | "sandboxProvider">,
 	subagents: NonNullable<RunHandle["subagents"]>,
 	/** The trace context of the Tool call's span, by call id. */
 	trace: (toolCallId: string) => TraceCarrier | undefined = () => undefined,
@@ -256,37 +255,35 @@ export function subagentTools(
 	const templates = config.agents
 		.map((a) => `- ${a.id} (${a.name}): ${a.description}`)
 		.join("\n");
+	// only a Sandbox gives them files to share; promising them without one sends subagents off to write files nobody can
+	const handover = config.sandboxProvider
+		? " They share your sandbox: files you leave under /workspace are theirs to read, and theirs yours. Each works in a folder of its own under /workspace/subagents/ and names in its answer the files it left you; give it absolute paths for anything it should read or write elsewhere."
+		: "";
 	// a refusal goes to the model as the Tool's error
 	const refused = (error: unknown): never => {
 		throw refusal(error);
 	};
 
+	// one task per call: models start several by calling it several times in one step
 	const spawn = tool({
 		name: "subagent",
 		label: "Subagent",
-		description: `Start subagents on tasks. They work in the background, in parallel, from a blank context, so you can keep working. They share your sandbox: files you leave under /workspace are theirs to read, and theirs yours. Each works in a folder of its own under /workspace/subagents/ and names in its answer the files it left you; give it absolute paths for anything it should read or write elsewhere. Use them for self-contained work such as research. Each brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
+		description: `Start a subagent on a task. It works in the background from a blank context, so you can keep working; to start several in parallel, call this tool once per task in the same step.${handover} Use subagents for self-contained work such as research. The brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
 		parameters: Type.Object({
-			tasks: Type.Array(
-				Type.Object({
-					brief: Type.String({
-						description: "The complete task, with all needed context",
-					}),
-					template: Type.Optional(
-						Type.String({ description: "A template id from the list" }),
-					),
-				}),
-				{ minItems: 1, maxItems: MAX_SUBAGENT_TASKS },
+			brief: Type.String({
+				description: "The complete task, with all needed context",
+			}),
+			template: Type.Optional(
+				Type.String({ description: "A template id from the list" }),
 			),
 		}),
-		execute: async (toolCallId, { tasks }) => {
-			const started = await subagents
-				.start(toolCallId, tasks, trace(toolCallId))
+		execute: async (toolCallId, task) => {
+			const [number] = await subagents
+				.start(toolCallId, [task], trace(toolCallId))
 				.catch(refused);
 			return {
-				content: text(
-					`Started subagent${started.length > 1 ? "s" : ""} ${started.join(", ")}.`,
-				),
-				details: { numbers: started },
+				content: text(`Started subagent ${number}.`),
+				details: { numbers: [number] },
 			};
 		},
 	});

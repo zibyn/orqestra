@@ -13,3 +13,4 @@ __unconfig*
 todos.json
 .migration
 .claude/
+scripts/orchestration-trial/results/

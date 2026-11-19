@@ -16,11 +16,17 @@ describe("subagentTools", () => {
 
 	it("tells the model how much of its budget is spent when it refuses more Subagents", async () => {
 		const [spawn] = refusing(new BudgetExceeded(15));
-		await expect(
-			spawn.execute("call", { tasks: [{ brief: "b" }, { brief: "c" }] }),
-		).rejects.toThrow(
+		await expect(spawn.execute("call", { brief: "b" })).rejects.toThrow(
 			"Since the user's last message at most 16 subagents and background calls may be started, or subagents continued, and 15 have been: do the rest of the work yourself.",
 		);
+	});
+
+	it("promises shared files under /workspace only when there is a Sandbox", () => {
+		const described = (sandboxProvider: unknown) =>
+			subagentTools({ agents: [], sandboxProvider } as never, {} as never)[0]
+				.description;
+		expect(described({ kind: "orrery" })).toContain("/workspace");
+		expect(described(undefined)).not.toContain("/workspace");
 	});
 
 	it("tells the model which Subagent does not exist", async () => {
