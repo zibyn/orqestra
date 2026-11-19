@@ -6,6 +6,7 @@
     ".": "./src/index.ts",
     "./deepseek": "./src/deepseek/index.ts",
     "./firecrawl": "./src/firecrawl/index.ts",
+    "./github": "./src/github/index.ts",
     "./linear": "./src/linear/index.ts",
     "./mineru": "./src/mineru/index.ts",
     "./orrery": "./src/orrery/index.ts",
