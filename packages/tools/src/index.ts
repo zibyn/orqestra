@@ -11,8 +11,8 @@ import type { SearchProviderId } from "@orqestra/integrations/shared";
 import { tavily } from "@orqestra/integrations/tavily";
 import { type DocumentParser, type ParseFiles, parseTool } from "./parse.ts";
 import {
-	mcpToolRef,
 	type SearchToolName,
+	type ToolName,
 	type ToolRef,
 	toolNames,
 } from "./shared.ts";
@@ -32,8 +32,6 @@ export interface ToolServices {
 	tools: Partial<Record<SearchToolName, ToolService>> & {
 		parse?: DocumentParser;
 	};
-	/** The MCP Servers whose Tools can be offered, by id. */
-	mcpServers: Record<string, unknown>;
 }
 
 /** The client of each Search Provider. */
@@ -43,11 +41,9 @@ const searchClients: Record<SearchProviderId, typeof tavily> = {
 	deepseek,
 };
 
-/** The Tool entries that can be offered in a Run now. */
-export const availableTools = (services: ToolServices): ToolRef[] => [
-	...toolNames.filter((t) => services.tools[t]),
-	...Object.keys(services.mcpServers).map(mcpToolRef),
-];
+/** The built-in Tools that can be offered in a Run now. */
+export const availableBuiltinTools = (services: ToolServices): ToolName[] =>
+	toolNames.filter((t) => services.tools[t]);
 
 const text = (t: string) => [{ type: "text" as const, text: t }];
 

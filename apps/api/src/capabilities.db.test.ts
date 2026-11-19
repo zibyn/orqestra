@@ -1,11 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
-import { turnSkills } from "@orqestra/agents";
+import { availableTools, turnSkills } from "@orqestra/agents";
 import { limitsInput } from "@orqestra/conversations";
 import { db } from "@orqestra/db";
 import { decryptSecret } from "@orqestra/db/secret";
 import { memoryStore } from "@orqestra/db/store";
 import { zip } from "@orqestra/skills/test-zip";
-import { availableTools } from "@orqestra/tools";
 import { sql } from "drizzle-orm";
 import { createCapabilities } from "./capabilities.ts";
 

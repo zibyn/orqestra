@@ -2,13 +2,13 @@ import type { Db } from "@orqestra/db";
 import { live } from "@orqestra/db/live";
 import { agent, mcpConnection, mcpServer, skill } from "@orqestra/db/schema";
 import { decryptSecret } from "@orqestra/db/secret";
-import { connectionStatus } from "@orqestra/mcp";
+import { connectionStatus, type McpServices } from "@orqestra/mcp";
 import type { SkillInfo, Skills } from "@orqestra/skills";
-import { availableTools, type ToolServices } from "@orqestra/tools";
+import type { ToolServices } from "@orqestra/tools";
 import { mcpToolRef, type ToolRef } from "@orqestra/tools/shared";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { resolveAgents, turnSkills } from "./index.ts";
+import { availableTools, resolveAgents, turnSkills } from "./index.ts";
 import {
 	type AgentSaveError,
 	agentDefinition,
@@ -42,10 +42,11 @@ export function createAgents(
 		skills: Pick<Skills, "delete">;
 		/** What a Run can use now, for the Agent form: the Tools', MCP Servers' and Skills' snapshots. */
 		available: () => Promise<
-			ToolServices & {
-				skills: Record<string, SkillInfo>;
-				sandboxProvider?: unknown;
-			}
+			ToolServices &
+				McpServices & {
+					skills: Record<string, SkillInfo>;
+					sandboxProvider?: unknown;
+				}
 		>;
 	},
 ) {
