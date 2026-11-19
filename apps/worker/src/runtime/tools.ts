@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
 import { type TSchema, Type } from "@earendil-works/pi-ai";
+import { thinkingLevel } from "@orqestra/agents/shared";
 import type { Limits, RunConfig } from "@orqestra/conversations";
 import {
 	BudgetExceeded,
@@ -14,6 +15,7 @@ import {
 	TimerLimitReached,
 	type TraceCarrier,
 } from "@orqestra/conversations";
+import { modelRef } from "@orqestra/models";
 
 const text = (t: string) => [{ type: "text" as const, text: t }];
 
@@ -244,14 +246,22 @@ export function refusal(error: unknown) {
  * Each Subagent works in the background, past the parent's Run; it hands back its result as a Notification that wakes the parent.
  */
 export function subagentTools(
-	config: Pick<RunConfig, "agents" | "sandboxProvider">,
+	config: Pick<RunConfig, "agents" | "sandboxProvider" | "models">,
 	subagents: NonNullable<RunHandle["subagents"]>,
 	/** The trace context of the Tool call's span, by call id. */
 	trace: (toolCallId: string) => TraceCarrier | undefined = () => undefined,
 ) {
 	const templates = config.agents
-		.map((a) => `- ${a.id} (${a.name}): ${a.description}`)
+		.map(
+			(a) =>
+				`- ${a.id} (${a.name}${a.model ? `, runs on ${a.model}` : ""}): ${a.description}`,
+		)
 		.join("\n");
+	// a choice only when there is one to make
+	const models =
+		config.models.length > 1
+			? `\n\nModels you may name for a task, by id:\n${config.models.map((m) => `- ${modelRef(m)} (${m.name})`).join("\n")}`
+			: "";
 	// only a Sandbox gives them files to share; promising them without one sends subagents off to write files nobody can
 	const handover = config.sandboxProvider
 		? " They share your sandbox: files you leave under /workspace are theirs to read, and theirs yours. Each works in a folder of its own under /workspace/subagents/ and names in its answer the files it left you; give it absolute paths for anything it should read or write elsewhere."
@@ -265,7 +275,7 @@ export function subagentTools(
 	const spawn = tool({
 		name: "subagent",
 		label: "Subagent",
-		description: `Start a subagent on a task. It works in the background from a blank context, so you can keep working; to start several in parallel, call this tool once per task in the same step.${handover} Use subagents for self-contained work such as research. The brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
+		description: `Start a subagent on a task. It works in the background from a blank context, so you can keep working; to start several in parallel, call this tool once per task in the same step.${handover} Use subagents for self-contained work such as research. The brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. It runs on the Model and thinking level you name, else its template's, else yours. ${NOTIFIED}\n\nTemplates:\n${templates}${models}`,
 		parameters: Type.Object({
 			title: Type.String({
 				description: "The task in 3 to 7 words, shown to the user",
@@ -275,6 +285,12 @@ export function subagentTools(
 			}),
 			template: Type.Optional(
 				Type.String({ description: "A template id from the list" }),
+			),
+			model: Type.Optional(
+				Type.String({ description: "A Model id from the list" }),
+			),
+			thinking: Type.Optional(
+				Type.Union(thinkingLevel.options.map((l) => Type.Literal(l))),
 			),
 		}),
 		execute: async (toolCallId, task) => {

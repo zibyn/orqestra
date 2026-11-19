@@ -9,6 +9,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { PlusIcon, TriangleAlertIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { MessageResponse } from "#/components/ai-elements/message";
+import { levelLabels } from "#/components/Composer";
 import {
 	ConsolePage,
 	DeleteButton,
@@ -18,6 +19,7 @@ import {
 	SheetForm,
 	useSheet,
 } from "#/components/ConsolePage";
+import { Picker } from "#/components/Picker";
 import { Alert, AlertDescription } from "#/components/ui/alert";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -39,7 +41,14 @@ import { api, ok } from "#/lib/api";
 import { errorText, saved, saveErrorTexts } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 
-const listAgents = () => ok(api().api.agents.get());
+const listAgents = async () => {
+	const [listed, options] = await Promise.all([
+		ok(api().api.agents.get()),
+		ok(api().api["model-options"].get()),
+	]);
+	// the enabled Models a template may run on as a Subagent
+	return { ...listed, models: options.models };
+};
 
 export const Route = createFileRoute("/console/agents")({
 	loader: listAgents,
@@ -184,10 +193,13 @@ const empty: AgentDefinitionInput = {
 	default: false,
 };
 
+/** The Picker value for "as its parent": a Subagent runs on its parent's Model or level. */
+const INHERIT = "inherit";
+
 /** Creates an Agent, or edits `agent`; its id is fixed once created. */
 function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 	const router = useRouter();
-	const { mcpServers, skills, availableSkills } = Route.useLoaderData();
+	const { mcpServers, skills, availableSkills, models } = Route.useLoaderData();
 	const [def, setDef] = useState<AgentDefinitionInput>(
 		agent?.definition ?? empty,
 	);
@@ -210,6 +222,20 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 		...skills,
 		...(def.skills ?? []).filter((name) => !skills.includes(name)),
 	];
+	// a Model disabled or deleted meanwhile stays listed, so the Admin can see and change it
+	const modelChoices = [
+		{ value: INHERIT, label: m.agent_model_inherit() },
+		...models.map((x) => ({ value: x.ref, label: x.name })),
+		...(def.model && !models.some((x) => x.ref === def.model)
+			? [
+					{
+						value: def.model,
+						label: m.agent_model_unavailable({ model: def.model }),
+					},
+				]
+			: []),
+	];
+	const subagentModel = models.find((x) => x.ref === def.model);
 	const toggle = <T,>(list: T[] | undefined, item: T, on: boolean) => {
 		const next = on
 			? [...(list ?? []), item]
@@ -368,6 +394,44 @@ function AgentForm({ agent, onDone }: { agent?: Listed; onDone: () => void }) {
 					}
 					idPrefix={fieldId("skill")}
 				/>
+				<div className="flex flex-wrap gap-4">
+					<Picker
+						label={m.agent_model()}
+						hint={m.agent_model_hint()}
+						error={fieldError("model")}
+						value={def.model ?? INHERIT}
+						onChange={(v) =>
+							// a level one Model offers may not be another's
+							update({
+								model: v === INHERIT ? undefined : v,
+								thinking: undefined,
+							})
+						}
+						items={modelChoices}
+					/>
+					{subagentModel && subagentModel.thinking.allowed.length > 1 && (
+						<Picker
+							label={m.agent_thinking()}
+							error={fieldError("thinking")}
+							value={def.thinking ?? INHERIT}
+							onChange={(v) =>
+								update({
+									thinking:
+										v === INHERIT
+											? undefined
+											: (v as (typeof subagentModel.thinking.allowed)[number]),
+								})
+							}
+							items={[
+								{ value: INHERIT, label: m.agent_model_inherit() },
+								...subagentModel.thinking.allowed.map((l) => ({
+									value: l,
+									label: levelLabels[l](),
+								})),
+							]}
+						/>
+					)}
+				</div>
 				<FieldSeparator />
 				<SwitchField
 					id={fieldId("pickable")}

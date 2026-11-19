@@ -28,6 +28,9 @@ export interface AgentDefinition {
 	tools: ToolRef[];
 	/** Allowed Skills by name, as written; a Run gets the available ones from `turnSkills`. */
 	skills: string[];
+	/** The Model, `<provider>/<id>`, and thinking level it runs on as a Subagent; omitted, its parent's. */
+	model?: string;
+	thinking?: ThinkingLevel;
 	/** Users can start Conversations with it; any Agent can be a Subagent template. */
 	pickable: boolean;
 	default: boolean;

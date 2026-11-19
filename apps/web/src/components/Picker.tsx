@@ -1,4 +1,9 @@
-import { Field, FieldError, FieldLabel } from "#/components/ui/field";
+import {
+	Field,
+	FieldDescription,
+	FieldError,
+	FieldLabel,
+} from "#/components/ui/field";
 import {
 	Select,
 	SelectContent,
@@ -8,15 +13,17 @@ import {
 	SelectValue,
 } from "#/components/ui/select";
 
-/** A labelled Select over `items`, with an optional error below. */
+/** A labelled Select over `items`, with an optional hint and error below. */
 export function Picker({
 	label,
+	hint,
 	error,
 	value,
 	onChange,
 	items,
 }: {
 	label: string;
+	hint?: string;
 	error?: string;
 	value: string;
 	onChange: (value: string) => void;
@@ -47,6 +54,7 @@ export function Picker({
 					</SelectGroup>
 				</SelectContent>
 			</Select>
+			{hint && <FieldDescription>{hint}</FieldDescription>}
 			<FieldError>{error}</FieldError>
 		</Field>
 	);

@@ -71,7 +71,13 @@ const skilled = {
 	skills: ["pdf", "manual", "gone"],
 };
 const config = {
-	agents: [fauxAgent, agent("small"), skilled],
+	agents: [
+		fauxAgent,
+		agent("small"),
+		skilled,
+		// runs on a Model of its own as a Subagent
+		{ ...agent("cheap"), model: "faux/faux-small", thinking: "high" },
+	],
 	models: faux.models,
 	streamSimple,
 	defaultAgent: fauxAgent,
@@ -683,6 +689,59 @@ describe.skipIf(!url)(
 			expect(view?.subagents[0].template).toBe("small");
 			expect(turn?.agent.id).toBe("small");
 			expect(turn?.model.id).toBe("faux-1");
+		});
+
+		it("runs a Subagent on the Model named for its task, else its template's, else its parent's, passing over one not enabled", async () => {
+			let parentTurn: RunHandle["turn"] | undefined;
+			const turns: RunHandle["turn"][] = [];
+			script({
+				parent: [
+					call({
+						name: "subagent",
+						run: async ({ run, toolCallId }) => {
+							parentTurn = run.turn;
+							return String(
+								await subagents(run).start(toolCallId, [
+									{ brief: "b", title: "template's", template: "cheap" },
+									{
+										brief: "b",
+										title: "named",
+										template: "cheap",
+										model: "faux/faux-1",
+										thinking: "high",
+									},
+									{ brief: "b", title: "parent's", model: "faux/gone" },
+								]),
+							);
+						},
+					}),
+					say("Asked"),
+					say("Done"),
+					say("Done"),
+					say("Done"),
+				],
+				sub: Array.from({ length: 3 }, () => ({ run }) => {
+					turns.push(run.turn);
+					return "done";
+				}),
+			});
+			const id = await send("go");
+			await waitFor(
+				() => get(id),
+				(v) =>
+					v?.status === "idle" &&
+					v.subagents.length === 3 &&
+					v.subagents.every((s) => s.outcome === "completed"),
+			);
+			const ran = turns.map((t) => `${t.model.id} ${t.thinking}`).toSorted();
+			expect(ran).toEqual(
+				[
+					// faux-small offers no thinking, so the template's level falls to its default
+					"faux-small off",
+					"faux-1 high",
+					`faux-1 ${parentTurn?.thinking}`,
+				].toSorted(),
+			);
 		});
 
 		it("refuses a template that does not exist", async () => {

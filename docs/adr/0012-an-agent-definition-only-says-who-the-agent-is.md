@@ -26,3 +26,9 @@ Now an Agent Definition holds its name, description, instructions, Tools and Ski
 - Agents that had memory off, such as a translator, now get the Memory Tools and Recall unless the User turns memory off; the release notes must say so.
 - Memory Tidying can run on any Agent the User can pick.
 - `ORQESTRA_DEFAULT_MODEL`, the fallback for an Agent's default Model, is gone; the Admin marks the default in /console/providers.
+
+## Amendment (2026-11-19): a Definition may name its Model as a Subagent
+
+A Definition may now name the Model (`model`, `<provider>/<id>`) and the thinking level (`thinking`) it runs on as a Subagent. Omitted, the Subagent runs on its parent's, as before. The Agent starting a Subagent may also name a Model and level for that one task, and that pick wins over the Definition's. Cursor's subagents (`model: inherit` by default) and Claude Code's Agent Tool (`model`, `effort`) both offer this, so a quick, cheap Model can do the searching and a strong one the judging. See issue #184.
+
+A User still picks the Model for each of their messages. A Definition's `model` never applies to a Conversation a User has with it. A pick that is not enabled is passed over: first the task's, then the Definition's, then the parent's, which is always enabled. So an Agent never goes offline for its Model, and the reason to reject this in the first place does not return. A level the Model does not offer falls to its default, as `resolveThinking` does for a User's pick. A continued Subagent keeps the Model it last used.

@@ -208,12 +208,17 @@ describe("loadConfig", () => {
 					general: agentWith({
 						models: ["deepseek/deepseek-flash"],
 						defaultModel: "deepseek/deepseek-flash",
-						thinking: { default: "low" },
 						memory: true,
 						compaction: { reserveTokens: 1000 },
 					}),
 				},
-				/"general": models, defaultModel, thinking, memory, compaction/,
+				/"general": models, defaultModel, memory, compaction/,
+			));
+
+		it("a thinking level it may run at as a Subagent that is none, such as the allowed levels of old", () =>
+			fails(
+				{ general: agentWith({ thinking: { default: "low" } }) },
+				/"general": thinking/,
 			));
 
 		it("an unknown Tool", () =>
