@@ -233,7 +233,8 @@ async function collect(rootId: string, task: (typeof TASKS)[number], settled: Se
 					id: c.id!,
 					by: m.conversation_id === rootId ? "lead" : `#${numberOf.get(m.conversation_id)}`,
 					tool: c.name,
-					templates: ((c.arguments?.tasks as { template?: string }[] | undefined) ?? []).map((t) => t.template ?? null),
+					// one task per call since b8f8058, a `tasks` array before
+					templates: ((c.arguments?.tasks as { template?: string }[] | undefined) ?? (c.name === "subagent" ? [c.arguments as { template?: string }] : [])).map((t) => t.template ?? null),
 				});
 	}
 
