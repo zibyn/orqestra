@@ -319,6 +319,15 @@ export interface WorkSource {
 		activity: Activity,
 		fetch: Fetch,
 	): Promise<void>;
+	/**
+	 * Checks, as the app, that the Integration lets the sender hand this work in (GitHub: write access to the repository) and acknowledges
+	 * it where it was asked (a 👀 reaction); a refusal's reason, posted as the session's error, else undefined.
+	 */
+	accept?(
+		auth: Auth,
+		event: SessionEvent,
+		fetch: Fetch,
+	): Promise<string | undefined>;
 	/** The first message of the Conversation a session opens, `repo` the repository the Admin mapped its scope to. */
 	firstMessage(event: SessionEvent, repo: string | undefined): string;
 }
