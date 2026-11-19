@@ -229,7 +229,7 @@ export const STEP_LIMIT =
 	"You have reached your step limit and can no longer use tools. Reply now with your final answer from what you have so far, saying what is left undone.";
 
 const NOTIFIED =
-	"Each subagent's final answer comes to you by itself as a <task-notification>, once it finishes: do not poll. Until the results you need are in, you may tell the user what you are doing and end your reply. Tell the user only what a subagent's notification says it did or found, and which subagents are still working: never guess at a result that has not come in.";
+	"Each subagent's final answer comes to you by itself as a <task-notification>, once it finishes: do not poll. Until the results you need are in, you may tell the user what you are doing and end your reply. Tell the user only what a subagent's notification says it did or found, and which subagents are still working: never guess at a result that has not come in, and do not do a subagent's task yourself while it works.";
 
 /** What the model is told when its Subagent request or Background Call is refused. */
 export function refusal(error: unknown) {
@@ -270,6 +270,9 @@ export function subagentTools(
 		label: "Subagent",
 		description: `Start a subagent on a task. It works in the background from a blank context, so you can keep working; to start several in parallel, call this tool once per task in the same step.${handover} Use subagents for self-contained work such as research. The brief must contain everything the subagent needs, including the role it should take. Optionally pick a template by id; without one a general worker does the task. ${NOTIFIED}\n\nTemplates:\n${templates}`,
 		parameters: Type.Object({
+			title: Type.String({
+				description: "The task in 3 to 7 words, shown to the user",
+			}),
 			brief: Type.String({
 				description: "The complete task, with all needed context",
 			}),
@@ -282,7 +285,7 @@ export function subagentTools(
 				.start(toolCallId, [task], trace(toolCallId))
 				.catch(refused);
 			return {
-				content: text(`Started subagent ${number}.`),
+				content: text(`Started subagent ${number}: ${task.title}.`),
 				details: { numbers: [number] },
 			};
 		},

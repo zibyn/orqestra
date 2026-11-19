@@ -632,6 +632,8 @@ type SubagentTranscript = {
 	parentId?: string;
 	number?: number;
 	template?: string | null;
+	// null for those started before Subagents had a title
+	title?: string | null;
 	brief: string;
 	// only older ones carry their transcript; a row's loads when its panel opens
 	messages?: PiMessage[];
@@ -971,7 +973,7 @@ function SubagentView({ run }: { run: SubagentTranscript }) {
 					)}
 				</TraceIcon>
 				<TraceTitle>
-					{name} · {run.brief}
+					{name} · {run.title ?? run.brief}
 				</TraceTitle>
 				<TraceDescription className="min-w-0 shrink truncate">
 					{running ? (preview ?? m.generating()) : outcomeLabel(run.outcome)}

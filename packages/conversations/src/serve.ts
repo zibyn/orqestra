@@ -1,5 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
-import { GENERAL_WORKER, resolveTurn } from "@orqestra/agents";
+import { resolveTurn, subagentInstructions } from "@orqestra/agents";
 import { db, type Tx } from "@orqestra/db";
 import {
 	attachment,
@@ -223,7 +223,7 @@ export type RunHandle = {
 		 */
 		start(
 			toolCallId: string,
-			tasks: { brief: string; template?: string }[],
+			tasks: { brief: string; title: string; template?: string }[],
 			trace?: TraceCarrier,
 		): Promise<number[]>;
 		/** Gives a Subagent more instructions, or continues it once finished; throws NoSuchSubagent or BudgetExceeded. `trace`: the Tool call's, as for `start`. */
@@ -507,7 +507,10 @@ async function open(
 				...picked,
 				agent: {
 					...picked.agent,
-					instructions: picked.agent.instructions || GENERAL_WORKER,
+					instructions: subagentInstructions(
+						picked.agent.instructions,
+						!!cfg.sandboxProvider,
+					),
 				},
 			}
 		: picked;
@@ -750,6 +753,7 @@ function subagentsOf(
 				// a Subagent runs on its parent's Model and thinking level
 				return {
 					brief: t.brief,
+					title: t.title,
 					template,
 					model: parent.model,
 					thinking: parent.thinking,
@@ -772,6 +776,8 @@ function subagentsOf(
 							userId: conv.userId,
 							parentId,
 							agentId: t.template?.id ?? null,
+							// the parent's title, so the Subagent is not titled by a Model request
+							title: t.title,
 						})),
 					)
 					.returning({ id: conversation.id });

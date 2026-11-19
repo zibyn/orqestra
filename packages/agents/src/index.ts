@@ -87,16 +87,24 @@ const issueField = (issue: z.core.$ZodIssue) =>
 		...(issue.code === "unrecognized_keys" ? [issue.keys.join(", ")] : []),
 	].join(".");
 
-/** System prompt of the general worker. */
-export const GENERAL_WORKER =
-	"You carry out one task for another agent, starting without any prior context. Work through it with the tools you have, then reply with a complete, self-contained answer: it is all the other agent will see.";
+/**
+ * A Subagent's system prompt: its template's instructions, none for the general worker, then how it hands its work back,
+ * which its template, written for talking to Users, does not say.
+ */
+export const subagentInstructions = (instructions: string, sandbox: boolean) =>
+	[
+		instructions,
+		`You are working as a subagent: another agent gave you one task, and you start without its conversation. Your last reply is your whole result: the other agent sees nothing else you write or do, so make it complete and self-contained. Say what you did, what you found, and what you left undone or could not verify.${sandbox ? " Name every file you leave by its absolute path." : ""} If you need something from the user, say so in your reply: you cannot ask them. If you are continued later, your new last reply replaces your earlier result, so restate in it everything the other agent needs.`,
+	]
+		.filter(Boolean)
+		.join("\n\n");
 
 /** The built-in Agent a Subagent without a template runs as: Search and Scrape (not Parse), no MCP Server, no Skill. */
 const generalWorker: AgentDefinition = {
 	id: "",
 	name: "General worker",
 	description: "",
-	instructions: GENERAL_WORKER,
+	instructions: "",
 	tools: [...searchToolNames],
 	skills: [],
 	pickable: false,
