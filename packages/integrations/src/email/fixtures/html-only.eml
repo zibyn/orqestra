@@ -1,0 +1,9 @@
+From: Alice Liu <alice@example.com>
+To: agent@orqestra.test
+Subject: Deploy notes
+Date: Thu, 19 Nov 2026 13:00:00 +0000
+Message-ID: <m5@example.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<p>Please <b>summarise</b> the deploy.</p><blockquote>old</blockquote>

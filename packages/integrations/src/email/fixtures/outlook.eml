@@ -1,0 +1,18 @@
+From: Bob Stone <bob@example.com>
+To: agent@orqestra.test
+Subject: RE: Fix the login redirect
+Date: Thu, 19 Nov 2026 12:00:00 +0000
+Message-ID: <m4@example.com>
+In-Reply-To: <reply-1@orqestra.test>
+References: <m1:start@example.com> <reply-1@orqestra.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Seen it on staging too.
+
+-----Original Message-----
+From: Orqestra Agent <agent@orqestra.test>
+Sent: Thursday, November 19, 2026 9:30 AM
+Subject: Re: Fix the login redirect
+
+The session cookie is set on the wrong path.
