@@ -5,6 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./deepseek": "./src/deepseek/index.ts",
+    "./feishu": "./src/feishu/index.ts",
     "./firecrawl": "./src/firecrawl/index.ts",
     "./github": "./src/github/index.ts",
     "./linear": "./src/linear/index.ts",
@@ -19,6 +20,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.76.0",
     "@orqestra/db": "workspace:*",
     "bullmq": "^6.5.0",
     "drizzle-orm": "^0.45.4",
