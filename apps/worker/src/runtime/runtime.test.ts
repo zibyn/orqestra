@@ -1535,7 +1535,7 @@ describe("runAgent traces", () => {
 		script([
 			fauxAssistantMessage(
 				[
-					fauxToolCall("subagent", { tasks: [{ brief: "dig" }] }, { id: "s" }),
+					fauxToolCall("subagent", { brief: "dig" }, { id: "s" }),
 					fauxToolCall(
 						"subagent_message",
 						{ number: 1, message: "more" },

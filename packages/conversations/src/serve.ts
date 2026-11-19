@@ -71,8 +71,6 @@ import { fire } from "./tasks.ts";
 import { cancelTimer, ring, setTimer, TIMERS_QUEUE } from "./timers.ts";
 import { storeAttachment, sweepUnsentAttachments } from "./uploads.ts";
 
-/** Tasks one start of Subagents may hand out. */
-export const MAX_SUBAGENT_TASKS = 8;
 export class NoSuchSubagent extends Error {
 	override name = "NoSuchSubagent";
 	constructor(readonly number: number) {
