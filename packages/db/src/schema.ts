@@ -787,7 +787,7 @@ export const usage = pgTable(
 );
 
 /** The kinds of Integration (ADR 0018): each has its adapter in @orqestra/integrations. */
-export type IntegrationKind = "linear";
+export type IntegrationKind = "linear" | "feishu" | "wecom" | "github" | "email";
 
 // Orqestra's app installed by an Admin in /console/<kind> into one workspace of an outside tool (an Integration), acting as itself (actor=app); one per kind
 export const integrationInstallation = pgTable("integration_installation", {
