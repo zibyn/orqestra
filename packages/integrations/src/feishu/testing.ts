@@ -26,6 +26,8 @@ export function fakeFeishu({
 		bot,
 		users,
 		tenantTokens: new Set<string>(),
+		/** The reactions the bot added, to which message. */
+		reactions: [] as { messageId: string; emojiType: string }[],
 		messages: [] as {
 			receiveIdType?: string;
 			receiveId?: string;
@@ -67,6 +69,14 @@ export function fakeFeishu({
 							{ code: 41050, msg: "no user authority error" },
 							{ status: 400 },
 						);
+			}
+			const reaction = path.match(/^\/im\/v1\/messages\/([^/]+)\/reactions$/);
+			if (reaction) {
+				feishu.reactions.push({
+					messageId: decodeURIComponent(reaction[1] ?? ""),
+					emojiType: body.reaction_type?.emoji_type,
+				});
+				return ok({ data: { reaction_id: `r_${randomUUID()}` } });
 			}
 			const reply = path.match(/^\/im\/v1\/messages\/([^/]+)\/reply$/);
 			if (path === "/im/v1/messages" || reply) {

@@ -36,9 +36,23 @@ vi.mock("@larksuiteoapi/node-sdk", () => ({
 
 const { connect } = feishu.ingress as StreamIngress;
 
-async function connected(onEvent: (event: SessionEvent) => Promise<void>) {
+/** Connected to a fake Feishu, whose open API `fetch` may stand in front of. */
+async function connected(
+	onEvent: (event: SessionEvent) => Promise<void>,
+	fetch?: (
+		input: string | URL,
+		init: RequestInit | undefined,
+		feishu: ReturnType<typeof fakeFeishu>["fetch"],
+	) => Promise<Response>,
+) {
 	const fake = fakeFeishu();
-	vi.stubGlobal("fetch", fake.fetch);
+	vi.stubGlobal(
+		"fetch",
+		fetch
+			? (input: string | URL, init?: RequestInit) =>
+					fetch(input, init, fake.fetch)
+			: fake.fetch,
+	);
 	const credentials = { appId: fake.appId, appSecret: fake.appSecret };
 	const install = feishu.install as Required<CredentialsInstall>;
 	const auth = async () => ({
@@ -52,7 +66,7 @@ async function connected(onEvent: (event: SessionEvent) => Promise<void>) {
 		if (!ws.receive) throw new Error("not connected yet");
 		return ws.receive;
 	});
-	return { abort, done, receive };
+	return { abort, done, receive, fake };
 }
 
 afterEach(() => {
@@ -98,6 +112,72 @@ describe("feishu connect", () => {
 		);
 		await receive(messageEvent({ text: "after" }));
 		expect(seen).toEqual(["after"]);
+		abort.abort();
+		await done;
+	});
+
+	it("reacts OnIt to each message it acts on, and to none it ignores", async () => {
+		const { abort, done, receive, fake } = await connected(async () => {});
+		await receive(messageEvent({ messageId: "om_1" }));
+		await receive(messageEvent({ messageId: "om_bot", senderType: "app" }));
+		await vi.waitFor(() =>
+			expect(fake.reactions).toEqual([
+				{ messageId: "om_1", emojiType: "OnIt" },
+			]),
+		);
+		abort.abort();
+		await done;
+	});
+
+	it("answers Feishu well within its 3 s while the name and the reaction hang, the sender going by their open_id", async () => {
+		const seen: string[] = [];
+		const { abort, done, receive } = await connected(
+			async (event) => {
+				seen.push(event.from?.name ?? "");
+			},
+			(input, init, feishu) =>
+				/\/contact\/|\/reactions$/.test(String(input))
+					? new Promise<Response>(() => {})
+					: feishu(input, init),
+		);
+		const start = Date.now();
+		await Promise.all([
+			receive(messageEvent()),
+			receive(messageEvent()),
+			receive(messageEvent({ senderId: "ou_ann" })),
+		]);
+		expect(Date.now() - start).toBeLessThan(1000);
+		expect(seen).toEqual(["ou_uma", "ou_uma", "ou_ann"]);
+		abort.abort();
+		await done;
+	});
+
+	it("hands on the event when Feishu refuses the reaction, and logs it", async () => {
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const seen: string[] = [];
+		const { abort, done, receive } = await connected(
+			async (event) => {
+				seen.push(event.text ?? "");
+			},
+			(input, init, feishu) =>
+				String(input).endsWith("/reactions")
+					? Promise.resolve(
+							Response.json(
+								{ code: 231001, msg: "reaction type is invalid." },
+								{ status: 400 },
+							),
+						)
+					: feishu(input, init),
+		);
+		await receive(messageEvent({ text: "hi", messageId: "om_1" }));
+		expect(seen).toEqual(["hi"]);
+		await vi.waitFor(() =>
+			expect(error).toHaveBeenCalledWith(
+				"Feishu took no reaction to message om_1",
+				expect.any(Error),
+			),
+		);
+		error.mockRestore();
 		abort.abort();
 		await done;
 	});

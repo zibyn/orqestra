@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
 	Activity,
 	CredentialsInstall,
 	PrivateLinkProof,
 } from "../ports.ts";
-import { feishu, messageSessionEvent, named } from "./index.ts";
+import { feishu, messageSessionEvent, namer } from "./index.ts";
 import { fakeFeishu, messageEvent } from "./testing.ts";
 
 const install = feishu.install as Required<CredentialsInstall>;
@@ -170,19 +170,51 @@ describe("feishu events", () => {
 		expect(event?.text).toBe("Bug\nthis fails:\n\n```go\npanic()\n```");
 	});
 
-	it("names the sender when the app may read them, and keeps their open_id otherwise", async () => {
+	it("names the sender when the app may read them, once per person, and keeps their open_id otherwise", async () => {
 		const fake = fakeFeishu();
-		const { token } = await signedIn(fake);
+		const auth = await signedIn(fake);
+		const reads: string[] = [];
+		const named = namer(
+			async () => auth,
+			(input, init) => {
+				if (String(input).includes("/contact/")) reads.push(String(input));
+				return fake.fetch(input, init);
+			},
+		);
 		const uma = acted(messageEvent());
-		expect((await named(uma, token, fake.fetch)).from).toEqual({
-			id: "ou_uma",
-			name: "Uma",
-		});
+		expect((await named(uma)).from).toEqual({ id: "ou_uma", name: "Uma" });
+		expect((await named(uma)).from).toEqual({ id: "ou_uma", name: "Uma" });
 		const stranger = acted(messageEvent({ senderId: "ou_who" }));
-		expect((await named(stranger, token, fake.fetch)).from).toEqual({
+		expect((await named(stranger)).from).toEqual({
 			id: "ou_who",
 			name: "ou_who",
 		});
+		// one read for Uma, kept; the one that failed is tried again
+		await named(stranger);
+		expect(reads).toHaveLength(3);
+	});
+
+	it("waits well under a second for a name Feishu is slow to give, and has it for the next message", async () => {
+		const fake = fakeFeishu();
+		const auth = await signedIn(fake);
+		let answer = () => {};
+		const slow = new Promise<void>((r) => {
+			answer = r;
+		});
+		const named = namer(
+			async () => auth,
+			async (input, init) => {
+				if (String(input).includes("/contact/")) await slow;
+				return fake.fetch(input, init);
+			},
+		);
+		const start = Date.now();
+		expect((await named(acted(messageEvent()))).from?.name).toBe("ou_uma");
+		expect(Date.now() - start).toBeLessThan(1000);
+		answer();
+		await vi.waitFor(async () =>
+			expect((await named(acted(messageEvent()))).from?.name).toBe("Uma"),
+		);
 	});
 });
 

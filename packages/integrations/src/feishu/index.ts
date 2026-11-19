@@ -5,6 +5,7 @@
 // shortcut: open.feishu.cn only; Lark (open.larksuite.com) is the same API on another host, make the host a field if one asks for it.
 
 import { createHash } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
 	EventDispatcher,
 	LoggerLevel,
@@ -210,26 +211,51 @@ export function messageSessionEvent(
 			};
 }
 
-/** The event with its sender's name, when the app may read it (contact:user.base:readonly); as it was otherwise. */
-export async function named(
-	event: SessionEvent,
-	token: string,
-	fetch?: Fetch,
-): Promise<SessionEvent> {
-	if (!event.from) return event;
-	try {
-		const { data } = z
-			.object({ data: z.object({ user: z.object({ name: z.string() }) }) })
-			.parse(
-				await feishuApi(
-					`/contact/v3/users/${encodeURIComponent(event.from.id)}?user_id_type=open_id`,
-					{ token, method: "GET", fetch },
-				),
+/**
+ * How long an event waits for its sender's name: Feishu pushes an event again unless it is answered within 3 s, and the WSClient
+ * answers only once the handler resolves (larksuite node-sdk's ws-client/index.ts).
+ */
+const NAME_WAIT_MS = 500;
+
+/**
+ * Names an event's sender, when the app may read them (contact:user.base:readonly): each person's name is read once and kept, and
+ * an event waits at most NAME_WAIT_MS for it, going by the open_id otherwise; a read still going on names their next message.
+ * shortcut: a name is kept for the connection's life, so a rename shows once it reconnects; expire it (AstrBot keeps one 30 minutes)
+ * should that be seen.
+ */
+export function namer(auth: () => Promise<Auth>, fetch?: Fetch) {
+	const names = new Map<string, Promise<string>>();
+	const read = (openId: string) => {
+		let name = names.get(openId);
+		if (!name) {
+			name = auth().then(
+				async ({ token }) =>
+					z
+						.object({
+							data: z.object({ user: z.object({ name: z.string() }) }),
+						})
+						.parse(
+							await feishuApi(
+								`/contact/v3/users/${encodeURIComponent(openId)}?user_id_type=open_id`,
+								{ token, method: "GET", fetch },
+							),
+						).data.user.name,
 			);
-		return { ...event, from: { ...event.from, name: data.user.name } };
-	} catch {
-		return event;
-	}
+			names.set(openId, name);
+			// a read that failed is tried again with their next message
+			name.catch(() => names.delete(openId));
+		}
+		return name;
+	};
+	return async (event: SessionEvent): Promise<SessionEvent> => {
+		if (!event.from) return event;
+		const { id } = event.from;
+		const name = await Promise.race([
+			read(id).catch(() => id),
+			sleep(NAME_WAIT_MS, id, { ref: false }),
+		]);
+		return { ...event, from: { ...event.from, name } };
+	};
 }
 
 /** A post message's content showing `body` as Markdown, cut so the request carrying it stays within what Feishu takes. */
@@ -328,18 +354,33 @@ export const feishu: WorkSource = {
 			// refused credentials throw here: the WSClient retries an unknown app's as if Feishu were busy, and only logs a malformed id
 			const { token, credentials } = await auth();
 			const bot = await botInfo(token);
+			const name = namer(auth);
 			// the WSClient runs handlers as frames arrive; the port takes one event at a time
 			let last = Promise.resolve();
-			const receive = async (payload: unknown) => {
-				const event = messageSessionEvent(payload, bot.open_id);
-				if (event) await onEvent(await named(event, (await auth()).token));
-			};
 			const dispatcher = new EventDispatcher({
 				loggerLevel: LoggerLevel.warn,
 			}).register({
-				// a handler's rejection makes the WSClient answer 500, and Feishu delivers the event again
+				// Feishu pushes an event again unless answered within 3 s, as the WSClient does once this resolves: it waits only on the
+				// name (bounded) and onEvent, which queues. A rejection makes the WSClient answer 500, and Feishu delivers the event again
 				"im.message.receive_v1": (payload: unknown) => {
-					const done = last.then(() => receive(payload));
+					const event = messageSessionEvent(payload, bot.open_id);
+					if (!event) return;
+					// the person sees their message reached the bot, as with cc-connect and Qwen Code; only a sign, so never waited on
+					auth()
+						.then(({ token }) =>
+							feishuApi(
+								`/im/v1/messages/${encodeURIComponent(event.id)}/reactions`,
+								{ token, body: { reaction_type: { emoji_type: "OnIt" } } },
+							),
+						)
+						.catch((error) =>
+							console.error(
+								`Feishu took no reaction to message ${event.id}`,
+								error,
+							),
+						);
+					const named = name(event);
+					const done = last.then(async () => onEvent(await named));
 					last = done.catch(() => {});
 					return done;
 				},
@@ -377,7 +418,7 @@ export const feishu: WorkSource = {
 	},
 	sharedScopes: "listed",
 
-	// shortcut: a thought shows nothing; a reaction on the message that prompted it would, once a post knows that message's id
+	// a thought shows nothing: the OnIt reaction connect adds on receipt already says the bot is at work
 	async post(auth, sessionId, { type, body }: Activity, fetch) {
 		if (type === "thought") return;
 		const key = `${sessionId}:${type}`;
