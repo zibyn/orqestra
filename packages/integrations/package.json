@@ -11,13 +11,15 @@
     "./orrery": "./src/orrery/index.ts",
     "./s3": "./src/s3/index.ts",
     "./tavily": "./src/tavily/index.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./wecom": "./src/wecom/index.ts"
   },
   "scripts": {
     "test": "vitest run"
   },
   "dependencies": {
     "@orqestra/db": "workspace:*",
+    "@wecom/aibot-node-sdk": "1.0.7",
     "bullmq": "^6.5.0",
     "drizzle-orm": "^0.45.4",
     "zod": "^4.6.7"
