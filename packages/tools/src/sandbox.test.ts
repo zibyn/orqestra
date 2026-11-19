@@ -203,6 +203,25 @@ describe("runCommand", () => {
 		});
 	});
 
+	it("hands orrery the timeout, and cancels a command it has not ended soon after, keeping what it printed", async () => {
+		const o = memoryOrrery({
+			exec: () => ({ running: true, stdout: "half done\n" }),
+		});
+		const { id } = await readySandbox(o.client, provider, stored().claim);
+		const r = await runCommand(o.client, id, "sleep 1000", {
+			pollMs: 1,
+			graceMs: 0,
+			timeout: 0.01,
+		});
+		expect(r).toMatchObject({
+			stdout: "half done\n",
+			exit: null,
+			cause: "timed_out",
+		});
+		expect(o.execs.at(-1)?.timeout).toBe(0.01);
+		expect(o.calls.filter((c) => c.startsWith("cancelExec"))).toHaveLength(1);
+	});
+
 	it("cancels the command when aborted", async () => {
 		const o = memoryOrrery({ exec: () => ({ running: true }) });
 		const { id } = await readySandbox(o.client, provider, stored().claim);

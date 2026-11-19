@@ -202,7 +202,11 @@ describe("bash signed in to a Git Host", () => {
 		as.refreshTokens.clear();
 		expect(await output(bashOf(m.run), "true")).toContain("Exit code: 0");
 		expect((await stored())?.status).toBe("needs_reconnect");
-		expect(o.execs.at(-1)).toEqual({ argv: ["bash", "-lc", "true"] });
+		// signed in to nothing: no env and no Secret, only the time limit
+		expect(o.execs.at(-1)).toEqual({
+			argv: ["bash", "-lc", "true"],
+			timeout: 600,
+		});
 		expect(puts()).toHaveLength(0);
 	});
 
@@ -227,7 +231,11 @@ describe("bash signed in to a Git Host", () => {
 
 				await expireIn(-1);
 				await stdout(bash, "true");
-				expect(o.execs.at(-1)).toEqual({ argv: ["bash", "-lc", "true"] });
+				// signed in to nothing: no env and no Secret, only the time limit
+				expect(o.execs.at(-1)).toEqual({
+					argv: ["bash", "-lc", "true"],
+					timeout: 600,
+				});
 			} finally {
 				errors.mockRestore();
 			}
@@ -246,5 +254,41 @@ describe("bash signed in to a Git Host", () => {
 			(await stored())?.tokens?.access_token,
 		);
 		expect(puts()).toHaveLength(2);
+	});
+});
+
+describe("bash's time limit", () => {
+	const bashIn = (o: ReturnType<typeof memoryOrrery>) =>
+		sandboxTools(
+			memoryRun({
+				transcript: { messages: [] },
+				turn: {} as Turn,
+				orrery: o.client,
+			}).run,
+			[],
+			{ mcpServers: {} },
+		).find((t) => t.name === "bash") as AgentTool;
+	const text = (r: Awaited<ReturnType<AgentTool["execute"]>>) =>
+		r.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+
+	it("stops a command after 10 minutes unless the Agent names a longer timeout, up to an hour", async () => {
+		const o = memoryOrrery();
+		const bash = bashIn(o);
+		await bash.execute("1", { command: "ls" });
+		await bash.execute("2", { command: "make", timeout: 3600 });
+		expect(o.execs.map((e) => e.timeout)).toEqual([600, 3600]);
+		expect(
+			(bash.parameters as { properties: { timeout: { maximum: number } } })
+				.properties.timeout.maximum,
+		).toBe(3600);
+	});
+
+	it("tells the Agent a command ran out of time, with what it printed until then", async () => {
+		const o = memoryOrrery({
+			exec: () => ({ cause: "timed_out", stdout: "loaded 40000 rows\n" }),
+		});
+		const out = text(await bashIn(o).execute("1", { command: "load" }));
+		expect(out).toContain("stopped after 600 seconds");
+		expect(out).toContain("loaded 40000 rows");
 	});
 });

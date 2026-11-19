@@ -20,6 +20,8 @@ bun scripts/orchestration-trial/trial.ts
 
 如果 shell 里设置了 `HTTPS_PROXY`，而这个代理连不上 Provider，Run 会以 `Connection error.` 失败。这时先去掉代理再起实例：`env -u HTTPS_PROXY -u HTTP_PROXY .claude/skills/verify-orqestra/scripts/verify.sh up`。
 
+`SANDBOX=1` 会把开发库里的 Sandbox Provider（orrery）也配进实例，token 同样只在内存里解密。这样 Agent 有 Sandbox，会通过 `/workspace` 交接文件。结束时脚本会删除它开过的每个会话，从而删掉对应的 Sandbox，这些 Sandbox 是 orrery 上的真实机器。所以 Sandbox 测评不能用 `recollect` 重做，测到的东西都在 `runs.json` 里。每次的设置写在 `setup.json`。
+
 环境变量 `RUNS`（每个任务的次数，默认 5）、`ONLY`（只跑一个任务）、`TIMEOUT_MIN`（每次的超时，默认 10）可以调整规模。
 
 ## 评判
