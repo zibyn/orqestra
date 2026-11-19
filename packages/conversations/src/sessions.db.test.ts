@@ -631,6 +631,39 @@ describe.skipIf(!url)("a chat's sessions", () => {
 		expect(checked).toHaveLength(3);
 	});
 
+	it("lets nobody but its User stop a session or start it afresh", async () => {
+		await linkChat();
+		await db.insert(user).values({
+			id: "u2",
+			name: "Vic",
+			email: "vic@example.com",
+			lastActiveAt: new Date(),
+		});
+		await db.insert(integrationAccount).values({
+			kind: "email",
+			externalId: "chat-user-2",
+			userId: "u2",
+			name: "Vic",
+		});
+		await send({ text: "Fix the build" });
+		const vic = { id: "chat-user-2", name: "Vic" };
+		await send({ action: "reset", text: "/new", from: vic });
+		await send({ stop: true, text: "/stop", from: vic });
+
+		expect(posted().slice(-2)).toEqual([
+			{
+				type: "error",
+				body: "Only the person who started this session can direct it.",
+			},
+			{
+				type: "error",
+				body: "Only the person who started this session can direct it.",
+			},
+		]);
+		expect(await db.select().from(integrationSession)).toHaveLength(1);
+		expect((await conversationsOf("u1"))[0].status).not.toBe("idle");
+	});
+
 	it("starts afresh on a reset: stops the Conversation, keeps it, and opens another with the next message", async () => {
 		await linkChat();
 		await send({ text: "Fix the build" });

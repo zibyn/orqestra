@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type {
-	Activity,
-	CredentialsInstall,
-	PrivateLinkProof,
-} from "../ports.ts";
+import type { CredentialsInstall, PrivateLinkProof } from "../ports.ts";
 import { feishu, messageSessionEvent, namer } from "./index.ts";
 import { fakeFeishu, messageEvent } from "./testing.ts";
 
@@ -261,29 +257,6 @@ describe("feishu post", () => {
 				msgType: "post",
 				md: { tag: "md", text: "Which branch?" },
 			},
-		]);
-	});
-
-	it("shows a retried post once, and each other post anew", async () => {
-		const fake = fakeFeishu();
-		const auth = await signedIn(fake);
-		const posts: [string, Activity][] = [
-			["thread:om_root", { type: "response", body: "done" }],
-			["thread:om_root", { type: "response", body: "done" }],
-			["thread:om_root", { type: "error", body: "done" }],
-			["thread:om_other", { type: "response", body: "done" }],
-			["chat:oc_chat", { type: "response", body: "done" }],
-			["chat:oc_chat", { type: "response", body: "done" }],
-			["chat:oc_chat", { type: "response", body: "done, again" }],
-		];
-		for (const [sessionId, activity] of posts)
-			await feishu.post(auth, sessionId, activity, fake.fetch);
-		expect(fake.messages.map((m) => m.replyTo ?? m.receiveId)).toEqual([
-			"om_root",
-			"om_root",
-			"om_other",
-			"oc_chat",
-			"oc_chat",
 		]);
 	});
 

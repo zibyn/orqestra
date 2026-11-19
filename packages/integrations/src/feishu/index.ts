@@ -11,7 +11,6 @@
 // 5. Publishes a new version, so the event and any scope added since take effect.
 // shortcut: open.feishu.cn only; Lark (open.larksuite.com) is the same API on another host, make the host a field if one asks for it.
 
-import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
 	EventDispatcher,
@@ -285,35 +284,26 @@ function postContent(body: string): string {
 }
 
 /**
- * A post message's request fields showing `body`, its `uuid` derived from `key` and the body: Feishu sends one message per uuid an
- * hour, so a post retried after a lost answer is not shown twice.
- * shortcut: the same body posted again under the same key within the hour is taken for a retry and not shown; derive the uuid from
- * an Activity id instead, should the port give one.
+ * A post message's request fields showing `body`.
+ * shortcut: no `uuid`, so a post retried after a lost answer shows twice; one derived from the body would hide a second identical
+ * reply instead. Send Feishu a uuid from an Activity id, should the port give one.
  */
-function postMessage(key: string, body: string) {
-	return {
-		msg_type: "post",
-		content: postContent(body),
-		// Feishu takes a uuid of up to 50 characters
-		uuid: createHash("sha256")
-			.update(`${key}\0${body}`)
-			.digest("hex")
-			.slice(0, 32),
-	};
-}
+const postMessage = (body: string) => ({
+	msg_type: "post",
+	content: postContent(body),
+});
 
-/** Sends `body` as the bot to a chat or a person, by `receiveIdType`, `key` naming what it answers (see postMessage). */
+/** Sends `body` as the bot to a chat or a person, by `receiveIdType`. */
 function send(
 	{ token }: Auth,
 	receiveIdType: "chat_id" | "open_id",
 	receiveId: string,
-	key: string,
 	body: string,
 	fetch: Fetch,
 ) {
 	return feishuApi(`/im/v1/messages?receive_id_type=${receiveIdType}`, {
 		token,
-		body: { receive_id: receiveId, ...postMessage(key, body) },
+		body: { receive_id: receiveId, ...postMessage(body) },
 		fetch,
 	});
 }
@@ -356,6 +346,8 @@ export const feishu: WorkSource = {
 
 	ingress: {
 		mode: "stream",
+		// Feishu hands each event to one of up to 50 connections of an app, so every worker may hold one
+		exclusive: false,
 		async connect(auth, onEvent, signal) {
 			if (signal.aborted) return;
 			// refused credentials throw here: the WSClient retries an unknown app's as if Feishu were busy, and only logs a malformed id
@@ -420,7 +412,7 @@ export const feishu: WorkSource = {
 	proof: {
 		mode: "private-link",
 		async tell(auth, person, body, fetch) {
-			await send(auth, "open_id", person.id, `proof:${person.id}`, body, fetch);
+			await send(auth, "open_id", person.id, body, fetch);
 		},
 	},
 	sharedScopes: "listed",
@@ -428,16 +420,8 @@ export const feishu: WorkSource = {
 	// a thought shows nothing: the OnIt reaction connect adds on receipt already says the bot is at work
 	async post(auth, sessionId, { type, body }: Activity, fetch) {
 		if (type === "thought") return;
-		const key = `${sessionId}:${type}`;
 		if (sessionId.startsWith("chat:")) {
-			await send(
-				auth,
-				"chat_id",
-				sessionId.slice("chat:".length),
-				key,
-				body,
-				fetch,
-			);
+			await send(auth, "chat_id", sessionId.slice("chat:".length), body, fetch);
 			return;
 		}
 		// a group session's every answer quotes the message that opened it, a follow-up's too: the session is all post knows. Not
@@ -445,7 +429,7 @@ export const feishu: WorkSource = {
 		const root = sessionId.slice("thread:".length);
 		await feishuApi(`/im/v1/messages/${encodeURIComponent(root)}/reply`, {
 			token: auth.token,
-			body: postMessage(key, body),
+			body: postMessage(body),
 			fetch,
 		});
 	},

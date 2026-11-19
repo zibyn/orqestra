@@ -61,7 +61,10 @@ async function connected(
 	});
 	const abort = new AbortController();
 	ws.receive = undefined;
-	const done = connect(auth, onEvent, abort.signal);
+	const done = connect(auth, onEvent, abort.signal, {
+		load: async () => null,
+		save: async () => {},
+	});
 	const receive = await vi.waitFor(() => {
 		if (!ws.receive) throw new Error("not connected yet");
 		return ws.receive;

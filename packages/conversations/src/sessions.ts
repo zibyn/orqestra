@@ -108,7 +108,22 @@ export async function handleSessionEvent(
 			eq(conversation.id, integrationSession.conversationId),
 		)
 		.where(sessionIs);
+	// it is its User's Conversation: in a shared place, another person may neither stop it nor start it afresh
+	const ownerOnly = async () => {
+		if (
+			!session ||
+			!event.from ||
+			(await accountUser(source, event.from.id)) === session.userId
+		)
+			return false;
+		await post(
+			"error",
+			"Only the person who started this session can direct it.",
+		);
+		return true;
+	};
 	if (event.stop) {
+		if (await ownerOnly()) return;
 		const stopped =
 			session &&
 			(await conversations.stop(session.userId, session.conversationId));
@@ -127,6 +142,7 @@ export async function handleSessionEvent(
 		if (refused) return post("error", refused);
 	}
 	if (event.action === "reset") {
+		if (await ownerOnly()) return;
 		if (session) {
 			// detached first, so the Run it stops posts nothing here after this
 			await db.delete(integrationSession).where(sessionIs);
