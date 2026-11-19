@@ -17,10 +17,15 @@ export type SaveError =
 				| "default_not_pickable"
 				| "server_disabled"
 				| "connection_exists"
-				| "oauth_client_required";
+				| "oauth_client_required"
+				| "required"
+				| "link_invalid";
 	  }
 	| SkillError
-	| { code: "invalid" | "oauth_unavailable"; detail: string }
+	| {
+			code: "invalid" | "oauth_unavailable" | "credentials_refused";
+			detail: string;
+	  }
 	| { code: "token_env_taken"; server: string }
 	| {
 			code:

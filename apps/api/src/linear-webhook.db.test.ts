@@ -124,6 +124,7 @@ describe.skipIf(!url)("Linear's webhook", () => {
 					url: "https://linear.app/acme/issue/ENG-7",
 				},
 				scope: "ENG",
+				shared: true,
 				text: null,
 				stop: false,
 			},

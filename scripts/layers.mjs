@@ -20,7 +20,7 @@ const LAYERS = {
 	"@orqestra/worker": 5,
 };
 const WEB = "@orqestra/web";
-// the outside systems' clients (ADR 0018): below every capability, reached only through its entries, one per adapter directory
+// the outside systems' clients (ADR 0018): below every capability, reached only through its entries, one per adapter directory and one for the list of WorkSources
 const INTEGRATIONS = "@orqestra/integrations";
 // assembly only (ADR 0010): their tables are read and written by the capability packages, so their runtime code needs no drizzle-orm
 const APPS = ["@orqestra/api", "@orqestra/worker"];
@@ -75,7 +75,7 @@ function selfCheck() {
 		"@orqestra/worker": { dependencies: ["@orqestra/db"], imports: ["@orqestra/db", "bullmq"] },
 	};
 	const okImports = {
-		"@orqestra/tools": [INTEGRATIONS, `${INTEGRATIONS}/orrery`, `${INTEGRATIONS}/testing`],
+		"@orqestra/tools": [INTEGRATIONS, `${INTEGRATIONS}/orrery`, `${INTEGRATIONS}/testing`, `${INTEGRATIONS}/sources`],
 	};
 	assert.deepEqual(
 		violations(

@@ -1378,6 +1378,7 @@ describe.skipIf(!url)(
 							from: null,
 							issue: null,
 							scope: null,
+							shared: true,
 							text: "Stop",
 							stop: true,
 						},
