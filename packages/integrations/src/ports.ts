@@ -213,8 +213,8 @@ export type OAuthInstall = {
 /** The app installs by the Admin entering what the Integration gave them (an app id and secret, a mailbox's account). */
 export type CredentialsInstall = {
 	mode: "credentials";
-	/** What the Admin enters, in order; a secret one is never sent back to the browser. */
-	fields: { name: string; secret: boolean }[];
+	/** What the Admin enters, in order; a secret one is never sent back to the browser, an optional one may be left blank. */
+	fields: { name: string; secret: boolean; optional?: boolean }[];
 	/** An access token traded for the credentials, cached until `expiresAt` (ms since the epoch); none for a source that needs no token. */
 	token?(
 		credentials: Credentials,
@@ -236,6 +236,7 @@ export type WebhookIngress = {
 		headers: Headers,
 		webhookSecret: string,
 		now: number,
+		credentials: Credentials,
 	): SessionEvent | null | undefined;
 };
 
@@ -302,6 +303,15 @@ export interface WorkSource {
 		activity: Activity,
 		fetch: Fetch,
 	): Promise<void>;
+	/**
+	 * Checks, as the app, that the Integration lets the sender hand this work in (GitHub: write access to the repository) and acknowledges
+	 * it where it was asked (a 👀 reaction); a refusal's reason, posted as the session's error, else undefined.
+	 */
+	accept?(
+		auth: Auth,
+		event: SessionEvent,
+		fetch: Fetch,
+	): Promise<string | undefined>;
 	/** The first message of the Conversation a session opens, `repo` the repository the Admin mapped its scope to. */
 	firstMessage(event: SessionEvent, repo: string | undefined): string;
 }
