@@ -220,83 +220,35 @@ describe("connect", () => {
 });
 
 describe("post", () => {
-	it("streams the thought on the session's frame and finishes that reply with the answer", async () => {
+	it("answers a thought once on its message's frame, finished at once, and pushes the closing activity into the chat", async () => {
 		const { wecom, source, events, stop, done } = await connected();
-		wecom.deliver(messageFrame({ msgid: "m1" }));
+		wecom.deliver(messageFrame({ msgid: "m1", chatid: "chat-1" }));
 		await vi.waitFor(() => expect(events).toHaveLength(1));
 		const sessionId = events[0]?.sessionId ?? "";
-		await source.post(
-			auth,
-			sessionId,
-			{ type: "thought", body: "Working on this in Orqestra." },
-			noFetch,
-		);
+		const thought = { type: "thought" as const, body: "收到，正在处理…" };
+		await source.post(auth, sessionId, thought, noFetch);
+		await source.post(auth, sessionId, thought, noFetch);
 		await source.post(
 			auth,
 			sessionId,
 			{ type: "response", body: "Done: **fixed**." },
 			noFetch,
 		);
-		const [opened, finished] = wecom.streamed;
-		expect(opened).toMatchObject({
-			reqId: "req-m1",
-			content: "Working on this in Orqestra.",
-			finish: false,
-		});
-		expect(finished).toMatchObject({
-			reqId: "req-m1",
-			streamId: opened?.streamId,
-			content: "Done: **fixed**.",
-			finish: true,
-		});
-		expect(wecom.pushed).toEqual([]);
-		// the next answer has no open reply left to finish
-		await source.post(
-			auth,
-			sessionId,
-			{ type: "response", body: "Again." },
-			noFetch,
-		);
-		expect(wecom.pushed).toEqual([
+		expect(wecom.streamed).toEqual([
 			{
-				chatid: "zhangsan",
-				body: {
-					chat_type: 1,
-					msgtype: "markdown",
-					markdown: { content: "Again." },
-				},
+				reqId: "req-m1",
+				streamId: expect.any(String),
+				content: "收到，正在处理…",
+				finish: true,
 			},
 		]);
-		stop();
-		await done;
-	});
-
-	it("pushes an answer the streamed reply has outlived into the chat", async () => {
-		const { wecom, source, events, stop, done } = await connected();
-		wecom.deliver(messageFrame({ chatid: "chat-1", text: "@RobotA go" }));
-		await vi.waitFor(() => expect(events).toHaveLength(1));
-		const sessionId = events[0]?.sessionId ?? "";
-		await source.post(
-			auth,
-			sessionId,
-			{ type: "thought", body: "Working." },
-			noFetch,
-		);
-		vi.spyOn(Date, "now").mockReturnValue(Date.now() + 9 * 60_000);
-		await source.post(
-			auth,
-			sessionId,
-			{ type: "elicitation", body: "Which branch?" },
-			noFetch,
-		);
-		expect(wecom.streamed.map((s) => s.finish)).toEqual([false]);
 		expect(wecom.pushed).toEqual([
 			{
 				chatid: "chat-1",
 				body: {
 					chat_type: 2,
 					msgtype: "markdown",
-					markdown: { content: "Which branch?" },
+					markdown: { content: "Done: **fixed**." },
 				},
 			},
 		]);
@@ -304,25 +256,19 @@ describe("post", () => {
 		await done;
 	});
 
-	it("pushes the answer when WeCom takes no more of the streamed reply", async () => {
+	it("fails nothing on a thought WeCom no longer answers the frame of; throws a push it refuses", async () => {
 		const { wecom, source, events, stop, done } = await connected();
 		wecom.deliver(messageFrame());
 		await vi.waitFor(() => expect(events).toHaveLength(1));
 		const sessionId = events[0]?.sessionId ?? "";
+		wecom.refuse.push({ errcode: 846608, errmsg: "stream expired" });
 		await source.post(
 			auth,
 			sessionId,
 			{ type: "thought", body: "Working." },
 			noFetch,
 		);
-		wecom.refuse.push({ errcode: 846608, errmsg: "stream finished" });
-		await source.post(
-			auth,
-			sessionId,
-			{ type: "error", body: "It broke." },
-			noFetch,
-		);
-		expect(wecom.pushed.map((p) => p.chatid)).toEqual(["zhangsan"]);
+		expect(wecom.streamed).toEqual([]);
 		wecom.refuse.push({ errcode: 45009, errmsg: "api freq out of limit" });
 		await expect(
 			source.post(auth, sessionId, { type: "response", body: "x" }, noFetch),
@@ -333,19 +279,57 @@ describe("post", () => {
 		await done;
 	});
 
-	it("cuts a body longer than WeCom shows, at a whole character", async () => {
+	it("splits Markdown longer than WeCom takes into messages two seconds apart, a code block closed and opened again at a split", async () => {
 		const { wecom, source, stop, done } = await connected();
-		await source.post(
+		vi.useFakeTimers();
+		const line = "修".repeat(1_000);
+		const body = ["Intro", "```ts", ...Array(10).fill(line), "```", "End"].join(
+			"\n",
+		);
+		const posting = source.post(
 			auth,
 			"single:zhangsan",
-			{ type: "response", body: "修".repeat(10_000) },
+			{ type: "response", body },
 			noFetch,
 		);
-		const body = wecom.pushed[0]?.body;
-		const content = body?.msgtype === "markdown" ? body.markdown.content : "";
-		expect(Buffer.byteLength(content)).toBeLessThanOrEqual(20_480);
-		expect(content).not.toContain("�");
-		expect(content).toMatch(/^修+\n\n\[Cut short: longer than WeCom shows/);
+		await vi.advanceTimersByTimeAsync(1_999);
+		expect(wecom.pushed).toHaveLength(1);
+		await vi.advanceTimersByTimeAsync(1);
+		await posting;
+		const sent = wecom.pushed.map((p) =>
+			p.body.msgtype === "markdown" ? p.body.markdown.content : "",
+		);
+		expect(sent).toHaveLength(2);
+		for (const content of sent)
+			expect(Buffer.byteLength(content)).toBeLessThanOrEqual(20_480);
+		expect(sent[0]).toMatch(/修\n```$/);
+		expect(sent[1]).toMatch(/^```ts\n修/);
+		expect(
+			`${sent[0]?.slice(0, -"\n```".length)}\n${sent[1]?.slice("```ts\n".length)}`,
+		).toBe(body);
+		stop();
+		await done;
+	});
+
+	it("splits a line longer than one message between characters", async () => {
+		const { wecom, source, stop, done } = await connected();
+		vi.useFakeTimers();
+		const body = "修".repeat(10_000);
+		const posting = source.post(
+			auth,
+			"single:zhangsan",
+			{ type: "response", body },
+			noFetch,
+		);
+		await vi.advanceTimersByTimeAsync(2_000);
+		await posting;
+		const sent = wecom.pushed.map((p) =>
+			p.body.msgtype === "markdown" ? p.body.markdown.content : "",
+		);
+		expect(sent).toHaveLength(2);
+		for (const content of sent)
+			expect(Buffer.byteLength(content)).toBeLessThanOrEqual(20_480);
+		expect(sent.join("")).toBe(body);
 		stop();
 		await done;
 	});

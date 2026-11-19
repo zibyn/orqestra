@@ -17,13 +17,11 @@ import type {
 	WorkSource,
 } from "../ports.ts";
 
-/** The most WeCom takes in a markdown message or a streamed reply: 20480 bytes of UTF-8. */
+/** The most WeCom takes in a markdown message: 20480 bytes of UTF-8. */
 const MAX_BYTES = 20_480;
-const TRUNCATED =
-	"\n\n[Cut short: longer than WeCom shows. The whole of it is in the Conversation in Orqestra.]";
 
-/** WeCom ends a streamed reply by itself 10 minutes after it began; past this, the answer is pushed instead. */
-const STREAM_MS = 9 * 60_000;
+/** WeCom takes 30 pushes a minute into a chat: one each two seconds keeps within it. */
+const PUSH_GAP_MS = 2_000;
 
 /** How long proving the credentials waits for WeCom to answer the subscribe. */
 const PROVE_MS = 15_000;
@@ -98,15 +96,56 @@ function chatOf(sessionId: string): { chatid: string; chat_type: 1 | 2 } {
 	throw new Error(`Not a WeCom session: ${sessionId}`);
 }
 
-/** Cut to MAX_BYTES of UTF-8 with a note, leaving no half of a character at the cut. */
-function cut(body: string): string {
-	if (Buffer.byteLength(body) <= MAX_BYTES) return body;
-	return (
-		Buffer.from(body)
-			.subarray(0, MAX_BYTES - Buffer.byteLength(TRUNCATED))
-			.toString()
-			.replace(/\uFFFD$/, "") + TRUNCATED
-	);
+const bytes = (text: string) => Buffer.byteLength(text);
+const CLOSE_FENCE = "\n```";
+
+/** A line in parts of at most `max` bytes of UTF-8, cut between characters. */
+function* parts(line: string, max: number) {
+	if (bytes(line) <= max) {
+		yield line;
+		return;
+	}
+	let part = "";
+	let size = 0;
+	for (const char of line) {
+		if (size + bytes(char) > max) {
+			yield part;
+			part = "";
+			size = 0;
+		}
+		part += char;
+		size += bytes(char);
+	}
+	yield part;
+}
+
+/**
+ * Markdown in messages of at most MAX_BYTES of UTF-8, split between lines (a line too long for one, between characters); a code block
+ * open at a split is closed there and opened again in the next.
+ */
+export function split(body: string): string[] {
+	if (bytes(body) <= MAX_BYTES) return [body];
+	const room = MAX_BYTES - bytes(CLOSE_FENCE);
+	const pieces: string[] = [];
+	let piece: string | undefined;
+	let size = 0;
+	// the line that opened the code block the text so far ends in
+	let fence: string | undefined;
+	for (const line of body.split("\n")) {
+		for (const part of parts(line, room - bytes(fence ?? "") - 1)) {
+			const n = bytes(part);
+			if (piece !== undefined && size + 1 + n > room) {
+				pieces.push(fence ? piece + CLOSE_FENCE : piece);
+				piece = fence;
+				size = bytes(fence ?? "");
+			}
+			if (piece === undefined) [piece, size] = [part, n];
+			else [piece, size] = [`${piece}\n${part}`, size + 1 + n];
+		}
+		if (line.trimStart().startsWith("```")) fence = fence ? undefined : line;
+	}
+	if (piece !== undefined) pieces.push(piece);
+	return pieces;
 }
 
 /** Waits for WeCom's receipt; the SDK rejects a refused send with the receipt frame, not an Error. */
@@ -118,21 +157,6 @@ async function acked(sending: Promise<WsFrame>): Promise<void> {
 		const { errcode, errmsg } = error as WsFrame;
 		throw new Error(`WeCom refused the message: ${errmsg} (code ${errcode})`);
 	}
-}
-
-/** Pushes Markdown into a chat; `chat_type` is WeCom's own, which the SDK's type leaves out: a userid could equal a group's chatid. */
-function push(
-	client: WSClient,
-	chatid: string,
-	chat_type: 1 | 2,
-	content: string,
-): Promise<void> {
-	const body = {
-		chat_type,
-		msgtype: "markdown" as const,
-		markdown: { content },
-	};
-	return acked(client.sendMessage(chatid, body));
 }
 
 function options(credentials: Credentials): WSClientOptions {
@@ -167,11 +191,8 @@ export class ConnectedElsewhere extends Error {
 	}
 }
 
-/** The incoming frame a session was last written to through, and the reply streamed on it since its `thought`. */
-type Held = {
-	client: WSClient;
-	frames: Map<string, WsFrameHeaders & { stream?: { id: string; at: number } }>;
-};
+/** A connection WeCom acked the subscribe of, and the frame each session was last written to through until its `thought` answers it. */
+type Held = { client: WSClient; frames: Map<string, WsFrameHeaders> };
 
 /** WeCom as a WorkSource; `create` makes the SDK's client, a fake in tests. */
 export function wecomSource(
@@ -187,6 +208,35 @@ export function wecomSource(
 				`This process holds no connection to WeCom AI bot ${botId}: only the one that does can post as it`,
 			);
 		return connection;
+	}
+
+	// when each chat may next be pushed to, by bot, chat type and chat
+	const nextPush = new Map<string, number>();
+
+	/** Pushes Markdown into a chat in as many messages as it takes, spaced to keep within WeCom's 30 pushes a minute per chat. */
+	// shortcut: no cap on the messages, so a reply of hundreds of KB holds the chat for minutes; cap it with a note if one does
+	async function push(
+		client: WSClient,
+		botId: string,
+		chatid: string,
+		chat_type: 1 | 2,
+		body: string,
+	) {
+		const chat = `${botId}:${chat_type}:${chatid}`;
+		for (const content of split(body)) {
+			const now = Date.now();
+			for (const [key, at] of nextPush) if (at <= now) nextPush.delete(key);
+			const at = Math.max(now, nextPush.get(chat) ?? 0);
+			nextPush.set(chat, at + PUSH_GAP_MS);
+			if (at > now) await new Promise((wait) => setTimeout(wait, at - now));
+			// `chat_type` is WeCom's own, which the SDK's type leaves out: a userid could equal a group's chatid
+			const message = {
+				chat_type,
+				msgtype: "markdown" as const,
+				markdown: { content },
+			};
+			await acked(client.sendMessage(chatid, message));
+		}
 	}
 
 	const connect: StreamIngress["connect"] = async (auth, onEvent, signal) => {
@@ -285,42 +335,31 @@ export function wecomSource(
 		proof: {
 			mode: "private-link",
 			async tell({ credentials }, person, body) {
-				await push(held(credentials.botId).client, person.id, 1, cut(body));
+				const botId = credentials.botId ?? "";
+				await push(held(botId).client, botId, person.id, 1, body);
 			},
 		},
 		sharedScopes: "listed",
 
-		// A reply tied to the incoming frame must be streamed and finished within 10 minutes, and a Run takes minutes to hours: the
-		// `thought` opens a reply streamed on the session's last frame, which the closing activity finishes while it can, else it pushes
-		// the answer into the chat. WeCom pushes only into a chat the person wrote to the bot in, 30 a minute per chat.
-		// shortcut: post works only in a process holding the bot's connection, as the frames and the socket live there; route posts to
-		// that process once Runs end on other workers
+		// Pushed, as Qwen Code does: a reply on the incoming frame takes updates for 6 minutes (WeCom answers 846608 past it, not at the
+		// documented 10) and a Run takes minutes to hours. So the `thought` answers the frame at once with a finished line, leaving no
+		// loading bubble, and the closing activity is pushed into the chat. The core sends every post to the process holding the bot.
 		async post({ credentials }, sessionId, { type, body }) {
-			const content = cut(body);
+			const botId = credentials.botId ?? "";
 			if (type === "thought") {
-				// shown only on the frame the session was written to through: a process holding no connection shows none
-				const connection = live.get(credentials.botId ?? "");
+				// once per message, on its frame: one this process never got shows nothing
+				const connection = live.get(botId);
 				const frame = connection?.frames.get(sessionId);
-				if (!connection || !frame || frame.stream) return;
-				frame.stream = { id: generateReqId("stream"), at: Date.now() };
-				return acked(
-					connection.client.replyStream(frame, frame.stream.id, content),
-				);
-			}
-			const { client, frames } = held(credentials.botId);
-			const frame = frames.get(sessionId);
-			if (frame?.stream && Date.now() - frame.stream.at < STREAM_MS) {
-				frames.delete(sessionId);
-				try {
-					return await acked(
-						client.replyStream(frame, frame.stream.id, content, true),
-					);
-				} catch {
-					// pushed instead: a stream WeCom ended early takes nothing more
-				}
+				if (!connection || !frame) return;
+				connection.frames.delete(sessionId);
+				// only a sign of life: a frame WeCom no longer answers on fails nothing
+				await connection.client
+					.replyStream(frame, generateReqId("stream"), body, true)
+					.catch(() => {});
+				return;
 			}
 			const { chatid, chat_type } = chatOf(sessionId);
-			await push(client, chatid, chat_type, content);
+			await push(held(botId).client, botId, chatid, chat_type, body);
 		},
 
 		// who wrote, where, the repository the chat works in, and what they wrote
