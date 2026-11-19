@@ -162,8 +162,8 @@ export type SessionEvent = {
 	id: string;
 	sessionId: string;
 	action: "created" | "prompted";
-	/** Who started the session, or wrote the prompt; null for a session no person started. */
-	from: { email: string; name: string } | null;
+	/** Who started the session, or wrote the prompt, by the Integration's own user id (their Integration Account); null for a session no person started. */
+	from: { id: string; name: string } | null;
 	issue: {
 		identifier: string;
 		title: string;
@@ -200,6 +200,15 @@ export interface WorkSource {
 	tokenUrl: string;
 	/** The name of the workspace an access token is for. */
 	workspace(accessToken: string, fetch: Fetch): Promise<string>;
+	/** The scope a person authorizes as themselves with, through the same OAuth app, so Orqestra learns which of the tool's users they are. */
+	accountScope: string;
+	/** The user an access token a person authorized is for, by the id the tool's events name them with. */
+	account(
+		accessToken: string,
+		fetch: Fetch,
+	): Promise<{ id: string; name: string }>;
+	/** Revokes an access token, once its account is known: Orqestra keeps none of a person's. */
+	revoke(accessToken: string, fetch: Fetch): Promise<void>;
 	/**
 	 * A webhook request's event, when the webhook secret signed it and it is fresh at `now`: undefined otherwise, null for a genuine one
 	 * Orqestra does not act on.

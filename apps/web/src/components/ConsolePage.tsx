@@ -1,5 +1,11 @@
 import { Loader2Icon, type LucideIcon, Trash2Icon } from "lucide-react";
-import { type FormEvent, type ReactNode, useId, useState } from "react";
+import {
+	Children,
+	type FormEvent,
+	type ReactNode,
+	useId,
+	useState,
+} from "react";
 import { Button } from "#/components/ui/button";
 import {
 	Sheet,
@@ -45,9 +51,10 @@ export function ItemList({
 	children,
 }: {
 	empty?: { icon: LucideIcon; title: string; hint: string };
-	children: ReactNode[];
+	children: ReactNode;
 }) {
-	if (!children.length && empty)
+	// rows left out (`false`) are none
+	if (!Children.toArray(children).length && empty)
 		return (
 			<div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-12 text-center">
 				<empty.icon className="size-8 text-muted-foreground" />

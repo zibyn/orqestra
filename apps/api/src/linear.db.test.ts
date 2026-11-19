@@ -314,3 +314,99 @@ describe.skipIf(!url)("installing the Linear app through the api", () => {
 		expect((await call("GET", "/linear", { user: "nobody" })).status).toBe(401);
 	});
 });
+
+describe.skipIf(!url)("linking a User's Linear account through the api", () => {
+	const reset = async () => {
+		await db.execute(sql`truncate integration_installation, "user" cascade`);
+		linear = fakeLinear();
+	};
+	beforeEach(async () => {
+		await reset();
+		for (const { id, name } of Object.values(users))
+			await db.execute(
+				sql`insert into "user" (id, name, email, last_active_at) values (${id}, ${name}, ${`${id}@example.com`}, now())`,
+			);
+	});
+	afterAll(reset);
+
+	const install = async () => {
+		await callback(linear.authorize(await start()));
+	};
+	/** Starts linking as `user`: the Linear authorization URL. */
+	const startLink = async (user = "u1") => {
+		const { status, body } = await call("POST", "/linear/account", { user });
+		expect(status).toBe(200);
+		return body.url as string;
+	};
+	const linkBack = (query: URLSearchParams, user = "u1") =>
+		call("GET", `/linear/callback?${query}`, { user });
+	const accounts = async () =>
+		(
+			await db.execute<{ external_id: string; user_id: string }>(
+				sql`select external_id, user_id from integration_account order by user_id`,
+			)
+		).rows;
+
+	it("links the Linear user who authorized as themselves to the signed-in User, keeping none of their tokens", async () => {
+		expect((await call("GET", "/linear/account", { user: "u1" })).body).toEqual(
+			{ installed: false, account: null },
+		);
+		await install();
+		const url = new URL(await startLink());
+		expect(url.searchParams.get("actor")).toBeNull();
+		expect(url.searchParams.get("scope")).toBe("read");
+		expect(url.searchParams.get("redirect_uri")).toBe(
+			`${orqestraUrl}/api/linear/callback`,
+		);
+
+		const back = await linkBack(linear.authorize(url.href));
+		expect(back.status).toBe(302);
+		expect(back.location).toBe("/connections?linked=linear");
+		expect(await accounts()).toEqual([
+			{ external_id: "lin-user-1", user_id: "u1" },
+		]);
+		// the app's token from the install, and the person's, revoked once read
+		expect(linear.revoked).toEqual(["access-2"]);
+		const status = await call("GET", "/linear/account", { user: "u1" });
+		expect(status.body).toMatchObject({
+			installed: true,
+			account: { name: "Uma" },
+		});
+		expect(status.text).not.toContain("access-");
+
+		expect(
+			(await call("DELETE", "/linear/account", { user: "u1" })).status,
+		).toBe(200);
+		expect(await accounts()).toEqual([]);
+	});
+
+	it("never links on a state started by another User, or with none signed in, and tells the console's callback apart", async () => {
+		await install();
+		const query = linear.authorize(await startLink("u1"));
+		expect((await linkBack(query, "a1")).location).toBe(
+			"/connections?error=state_invalid",
+		);
+		expect((await linkBack(query, "nobody")).location).toBe(
+			"/connections?error=state_invalid",
+		);
+		expect(await accounts()).toEqual([]);
+		// an installation's state is still the Admin's
+		expect(
+			(await linkBack(new URLSearchParams({ code: "c", state: "s" }))).status,
+		).toBe(403);
+	});
+
+	it("gives the Linear user to whoever last authorized as them, one account per User", async () => {
+		await install();
+		await linkBack(linear.authorize(await startLink("u1")), "u1");
+		await linkBack(linear.authorize(await startLink("a1")), "a1");
+		expect(await accounts()).toEqual([
+			{ external_id: "lin-user-1", user_id: "a1" },
+		]);
+	});
+
+	it("starts no link before the app's credentials are saved", async () => {
+		const { status } = await call("POST", "/linear/account", { user: "u1" });
+		expect(status).toBe(404);
+	});
+});

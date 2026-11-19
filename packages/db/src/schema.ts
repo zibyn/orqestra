@@ -822,6 +822,26 @@ export const integrationInstallation = pgTable("integration_installation", {
 		.notNull(),
 });
 
+// An Integration Account: a person of an Integration's workspace (a Linear user), known by the Integration's own id, and the Orqestra User
+// who proved to be them by authorizing as them; an Integration Session they start runs as that User. One per User and kind
+export const integrationAccount = pgTable(
+	"integration_account",
+	{
+		kind: text("kind").$type<IntegrationKind>().notNull(),
+		externalId: text("external_id").notNull(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		// their name in the Integration, as the Connections page shows it
+		name: text("name").notNull(),
+		createdAt: timestamp("created_at").defaultNow().notNull(),
+	},
+	(table) => [
+		primaryKey({ columns: [table.kind, table.externalId] }),
+		unique().on(table.kind, table.userId),
+	],
+);
+
 // The Conversation an Integration Session (a Linear Agent Session) opened (ADR 0018): the session's later prompts go to it; gone with it
 export const integrationSession = pgTable(
 	"integration_session",

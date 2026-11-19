@@ -9,15 +9,24 @@ import { createHmac, randomUUID } from "node:crypto";
 export function fakeLinear({
 	workspace = "Acme",
 	clientSecret = "client-s3cret",
+	viewer = { id: "lin-user-1", name: "Uma" },
 }: {
 	workspace?: string;
 	clientSecret?: string;
+	/** Who authorizes as themselves (actor=user): `{ viewer }` answers with them for a token their authorization was given. */
+	viewer?: { id: string; name: string };
 } = {}) {
-	const codes = new Map<string, { clientId: string; redirectUri: string }>();
+	const codes = new Map<
+		string,
+		{ clientId: string; redirectUri: string; app: boolean }
+	>();
+	// a person's tokens: they are `viewer`; the app's are the app
+	const people = new Set<string>();
 	let n = 0;
-	const issue = () => {
+	const issue = (app = true) => {
 		n++;
 		linear.accessTokens.add(`access-${n}`);
+		if (!app) people.add(`access-${n}`);
 		linear.refreshTokens.add(`refresh-${n}`);
 		return Response.json({
 			access_token: `access-${n}`,
@@ -37,12 +46,15 @@ export function fakeLinear({
 		}[],
 		accessTokens: new Set<string>(),
 		refreshTokens: new Set<string>(),
+		/** The access tokens revoked. */
+		revoked: [] as string[],
 		authorize(url: string) {
 			const q = new URL(url).searchParams;
 			const code = `code-${codes.size + 1}`;
 			codes.set(code, {
 				clientId: q.get("client_id") ?? "",
 				redirectUri: q.get("redirect_uri") ?? "",
+				app: q.get("actor") === "app",
 			});
 			return new URLSearchParams({ code, state: q.get("state") ?? "" });
 		},
@@ -64,8 +76,17 @@ export function fakeLinear({
 						: form.grant_type === "refresh_token" &&
 							linear.refreshTokens.delete(form.refresh_token);
 				return ok
-					? issue()
+					? issue(granted?.app ?? true)
 					: Response.json({ error: "invalid_grant" }, { status: 400 });
+			}
+			if (url === "https://api.linear.app/oauth/revoke") {
+				const token = new Headers(init?.headers)
+					.get("authorization")
+					?.replace(/^Bearer /, "");
+				if (!token || !linear.accessTokens.delete(token))
+					return new Response(null, { status: 400 });
+				linear.revoked.push(token);
+				return new Response(null, { status: 200 });
 			}
 			if (url === "https://api.linear.app/graphql") {
 				const token = new Headers(init?.headers)
@@ -83,6 +104,13 @@ export function fakeLinear({
 						data: { agentActivityCreate: { success: true } },
 					});
 				}
+				if (String(query).includes("viewer"))
+					return people.has(token)
+						? Response.json({ data: { viewer } })
+						: Response.json(
+								{ errors: [{ message: "the app is no viewer here" }] },
+								{ status: 400 },
+							);
 				return Response.json({
 					data: { organization: { name: linear.workspace } },
 				});
@@ -96,18 +124,19 @@ export function fakeLinear({
 /** An AgentSessionEvent webhook's body as Linear sends it, with fewer fields; `prompt` makes it a `prompted` event. */
 export function agentSessionEvent({
 	sessionId = "session-1",
-	email = "uma@example.com",
+	userId = "lin-user-1",
 	prompt,
 	signal,
 	webhookTimestamp = Date.now(),
 }: {
 	sessionId?: string;
-	email?: string;
+	/** The Linear user who started the session, or wrote the prompt. */
+	userId?: string;
 	prompt?: string;
 	signal?: string;
 	webhookTimestamp?: number;
 } = {}) {
-	const user = { id: "lin-user-1", name: "Uma", email, url: "" };
+	const user = { id: userId, name: "Uma", email: "uma@example.com", url: "" };
 	return {
 		type: "AgentSessionEvent",
 		action: prompt === undefined ? "created" : "prompted",

@@ -13,7 +13,7 @@ const MAX_BODY = 250_000;
 const TRUNCATED =
 	"\n\n[Cut short: longer than Linear shows. The whole of it is in the Conversation in Orqestra.]";
 
-const person = z.object({ email: z.string(), name: z.string() });
+const person = z.object({ id: z.string(), name: z.string() });
 // only the fields Orqestra reads; the rest of the payload is ignored
 const agentSessionEvent = z.object({
 	type: z.literal("AgentSessionEvent"),
@@ -92,6 +92,28 @@ export const linear: WorkSource = {
 				}),
 			);
 		return organization.name;
+	},
+
+	// a person's own authorization (actor=user, the default) is only to learn who they are
+	accountScope: "read",
+
+	async account(accessToken, fetch) {
+		const { viewer } = z
+			.object({ viewer: z.object({ id: z.string(), name: z.string() }) })
+			.parse(
+				await linearGraphql(accessToken, "{ viewer { id name } }", { fetch }),
+			);
+		return viewer;
+	},
+
+	async revoke(accessToken, fetch) {
+		const response = await fetch("https://api.linear.app/oauth/revoke", {
+			method: "POST",
+			headers: { authorization: `Bearer ${accessToken}` },
+			signal: AbortSignal.timeout(30_000),
+		});
+		if (!response.ok)
+			throw new Error(`Linear's revoke endpoint answered ${response.status}`);
 	},
 
 	// `Linear-Signature` is the hex HMAC-SHA256 of the raw body with the webhook secret

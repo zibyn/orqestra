@@ -16,9 +16,15 @@ import { errorText } from "#/lib/save-errors";
 import { m } from "#/paraglide/messages";
 import { getLocale } from "#/paraglide/runtime";
 
-const getConnections = () => ok(api().api.connections.get());
+const getConnections = async () => {
+	const [rows, linear] = await Promise.all([
+		ok(api().api.connections.get()),
+		ok(api().api.linear.account.get()),
+	]);
+	return { rows, linear };
+};
 
-type Search = { connected?: string; error?: string };
+type Search = { connected?: string; linked?: string; error?: string };
 
 export const Route = createFileRoute("/_app/connections")({
 	// where the authorization popup lands, from the api's callback
@@ -26,6 +32,7 @@ export const Route = createFileRoute("/_app/connections")({
 		...(typeof search.connected === "string" && {
 			connected: search.connected,
 		}),
+		...(typeof search.linked === "string" && { linked: search.linked }),
 		...(typeof search.error === "string" && { error: search.error }),
 	}),
 	loader: getConnections,
@@ -44,9 +51,12 @@ const callbackErrors: Record<string, () => string> = {
 const callbackText = (error: string) =>
 	(callbackErrors[error] ?? callbackErrors.failed)();
 
-/** 「连接」: every per-User OAuth MCP Server, with the signed-in User's own Connection to it. */
+/** The Linear row's key in `busy`, apart from any MCP Server's id. */
+const LINEAR = "\0linear";
+
+/** 「连接」: every per-User OAuth MCP Server, with the signed-in User's own Connection to it; and their Linear account, once the app is installed. */
 function ConnectionsPage() {
-	const rows = Route.useLoaderData();
+	const { rows, linear } = Route.useLoaderData();
 	const search = Route.useSearch();
 	const navigate = Route.useNavigate();
 	const router = useRouter();
@@ -54,7 +64,7 @@ function ConnectionsPage() {
 	const [error, setError] = useState("");
 
 	useEffect(() => {
-		if (!search.connected && !search.error) return;
+		if (!search.connected && !search.linked && !search.error) return;
 		// in the popup: tell the page that opened it, and go
 		if (window.opener && window.opener !== window) {
 			window.opener.postMessage(
@@ -90,7 +100,10 @@ function ConnectionsPage() {
 		const popup = window.open("", MESSAGE, "popup,width=600,height=720");
 		setBusy(serverId);
 		try {
-			const { url } = await ok(api().api.connections({ serverId }).post());
+			const { url } =
+				serverId === LINEAR
+					? await ok(api().api.linear.account.post())
+					: await ok(api().api.connections({ serverId }).post());
 			setError("");
 			if (popup) popup.location.href = url;
 			else location.href = url;
@@ -105,7 +118,11 @@ function ConnectionsPage() {
 	async function disconnect(serverId: string) {
 		setBusy(serverId);
 		try {
-			await ok(api().api.connections({ serverId }).delete());
+			await ok(
+				serverId === LINEAR
+					? api().api.linear.account.delete()
+					: api().api.connections({ serverId }).delete(),
+			);
 			setError("");
 			await router.invalidate();
 		} catch (e) {
@@ -138,6 +155,59 @@ function ConnectionsPage() {
 						hint: m.connections_empty_hint(),
 					}}
 				>
+					{linear.installed && (
+						<Item
+							key={LINEAR}
+							title={
+								<>
+									Linear
+									{linear.account ? (
+										<Badge variant="outline">
+											<CheckCircle2Icon />
+											{m.connection_connected()}
+										</Badge>
+									) : (
+										<Badge variant="secondary">
+											<CircleDashedIcon />
+											{m.connection_none()}
+										</Badge>
+									)}
+								</>
+							}
+							description={
+								linear.account
+									? m.connections_linear_as({ name: linear.account.name }) +
+										m.connections_since({
+											date: date(linear.account.createdAt),
+										})
+									: m.connections_linear_hint()
+							}
+							actions={
+								linear.account ? (
+									<Button
+										size="sm"
+										variant="ghost"
+										disabled={!!busy}
+										onClick={() => {
+											if (confirm(m.connections_linear_unlink_confirm()))
+												void disconnect(LINEAR);
+										}}
+									>
+										{m.connections_disconnect()}
+									</Button>
+								) : (
+									<Button
+										size="sm"
+										disabled={!!busy}
+										onClick={() => void connect(LINEAR)}
+									>
+										<ExternalLinkIcon data-icon="inline-start" />
+										{m.connections_connect()}
+									</Button>
+								)
+							}
+						/>
+					)}
 					{rows.map((r) => (
 						<Item
 							key={r.id}

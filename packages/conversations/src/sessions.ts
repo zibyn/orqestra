@@ -6,10 +6,10 @@ import {
 	conversation,
 	type IntegrationKind,
 	integrationSession,
-	user,
 } from "@orqestra/db/schema";
 import {
 	type Activity,
+	accountUser,
 	conversationSettings,
 	type Fetch,
 	postActivity,
@@ -17,7 +17,7 @@ import {
 	type WorkSource,
 } from "@orqestra/integrations";
 import { linear } from "@orqestra/integrations/linear";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { ConversationError } from "./errors.ts";
 import type { Conversations } from "./index.ts";
 import { type RunHandler, RunTimedOut } from "./serve.ts";
@@ -64,17 +64,19 @@ const postClosing = (
 	);
 
 /**
- * Acts on a session's event: the first one from a session opens its Conversation, as the Orqestra User with the sender's email, and the
- * app says so in the session; a later prompt goes to that Conversation, a stop stops it and says so. Anything the session should hear
- * of instead is posted to it as an error. Converges when run again: a session opens one Conversation however often it is delivered.
+ * Acts on a session's event: the first one from a session opens its Conversation, as the Orqestra User the sender linked their
+ * Integration Account to, and the app says so in the session; a later prompt goes to that Conversation, a stop stops it and says so.
+ * A sender who linked none is asked to, at Orqestra's Connections page under `orqestraUrl`, and to reply once they have. Anything else
+ * the session should hear of is posted to it as an error. Converges when run again: a session opens one Conversation however often it
+ * is delivered.
  */
 export async function handleSessionEvent(
 	source: WorkSource,
 	event: SessionEvent,
 	conversations: Pick<Conversations, "send" | "stop">,
-	{ fetch }: { fetch?: Fetch } = {},
+	{ fetch, orqestraUrl }: { fetch?: Fetch; orqestraUrl?: string } = {},
 ) {
-	const post = (type: "thought" | "response" | "error", body: string) =>
+	const post = (type: Activity["type"], body: string) =>
 		postActivity(source, event.sessionId, { type, body }, { fetch });
 	const [session] = await db
 		.select({
@@ -104,20 +106,22 @@ export async function handleSessionEvent(
 			return;
 		return post("response", "Stopped.");
 	}
-	const email = event.from?.email;
-	const [sender] = email
-		? await db
-				.select({ id: user.id })
-				.from(user)
-				.where(sql`lower(${user.email}) = lower(${email})`)
-				.orderBy(desc(user.lastActiveAt))
-				.limit(1)
-		: [];
-	if (!sender)
+	if (!event.from)
 		return post(
 			"error",
-			`Sign in to Orqestra${email ? ` as ${email}` : ""} first, then reply here.`,
+			"Only a person can start this: nobody's Orqestra account is linked to it.",
 		);
+	const senderId = await accountUser(source, event.from.id);
+	if (!senderId) {
+		const page = orqestraUrl
+			? new URL("/connections", orqestraUrl).href
+			: "Orqestra's Connections page";
+		return post(
+			"elicitation",
+			`Connect your ${source.name} account to Orqestra first, at ${page}, then reply here.`,
+		);
+	}
+	const sender = { id: senderId };
 	// it runs as its User, with their Connections: nobody else may direct it
 	if (session && session.userId !== sender.id)
 		return post(

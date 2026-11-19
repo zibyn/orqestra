@@ -274,6 +274,13 @@
       "when": 1795036595846,
       "tag": "0038_integrations",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1795047471741,
+      "tag": "0039_integration_account",
+      "breakpoints": true
     }
   ]
 }

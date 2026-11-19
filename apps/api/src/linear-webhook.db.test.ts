@@ -116,7 +116,7 @@ describe.skipIf(!url)("Linear's webhook", () => {
 				id: `created-${sessionId}`,
 				sessionId,
 				action: "created",
-				from: { email: "uma@example.com", name: "Uma" },
+				from: { id: "lin-user-1", name: "Uma" },
 				issue: {
 					identifier: "ENG-7",
 					title: "Fix the login button",

@@ -15,6 +15,7 @@ const {
 	agent: agentRow,
 	conversation,
 	inbox,
+	integrationAccount,
 	integrationInstallation,
 	integrationSession,
 	user,
@@ -78,6 +79,7 @@ async function deliver(payload: ReturnType<typeof agentSessionEvent>) {
 	if (!event) throw new Error("not an event Orqestra acts on");
 	await handleSessionEvent(source, event, conversations, {
 		fetch: linear.fetch,
+		orqestraUrl: "https://orqestra.example.com",
 	});
 }
 
@@ -94,6 +96,12 @@ const inputsOf = async (conversationId: string) =>
 		text: (i.message as { content: string }).content,
 		origin: i.origin,
 	}));
+
+/** Links an Orqestra User to a Linear user, as their authorizing as themselves does. */
+const link = (userId: string, externalId: string) =>
+	db
+		.insert(integrationAccount)
+		.values({ kind: "linear", externalId, userId, name: userId });
 
 describe.skipIf(!url)("Linear Agent Session events", () => {
 	const reset = async () => {
@@ -128,11 +136,12 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 			email: "Uma@Example.com",
 			lastActiveAt: new Date(),
 		});
+		await link("u1", "lin-user-1");
 	});
 	afterAll(reset);
 
-	it("opens one Conversation for a session, as the User with the creator's email, however often its start is delivered", async () => {
-		const created = agentSessionEvent({ email: "uma@example.com" });
+	it("opens one Conversation for a session, as the User who linked the creator's Linear account, however often its start is delivered", async () => {
+		const created = agentSessionEvent();
 		await deliver(created);
 		await deliver(created);
 		await Promise.all([deliver(created), deliver(created)]);
@@ -167,8 +176,8 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		);
 	});
 
-	it("opens none when no User has the creator's email, and tells the session to sign in first", async () => {
-		await deliver(agentSessionEvent({ email: "stranger@example.com" }));
+	it("opens none when no User linked the creator's Linear account, whatever their email, and asks them to connect it", async () => {
+		await deliver(agentSessionEvent({ userId: "lin-stranger" }));
 
 		expect(await db.select().from(conversation)).toEqual([]);
 		expect(await db.select().from(integrationSession)).toEqual([]);
@@ -176,8 +185,8 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 			{
 				agentSessionId: "session-1",
 				content: {
-					type: "error",
-					body: "Sign in to Orqestra as stranger@example.com first, then reply here.",
+					type: "elicitation",
+					body: "Connect your Linear account to Orqestra first, at https://orqestra.example.com/connections, then reply here.",
 				},
 			},
 		]);
@@ -200,8 +209,9 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 			email: "ugo@example.com",
 			lastActiveAt: new Date(),
 		});
+		await link("u2", "lin-user-2");
 		await deliver(
-			agentSessionEvent({ prompt: "Delete it all.", email: "ugo@example.com" }),
+			agentSessionEvent({ prompt: "Delete it all.", userId: "lin-user-2" }),
 		);
 
 		const [opened, ...others] = await conversationsOf("u1");
@@ -216,10 +226,10 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		});
 	});
 
-	it("opens the Conversation of a session whose start found no User, once its creator has signed in and replies", async () => {
-		await db.update(user).set({ email: "later@example.com" });
+	it("opens the Conversation of a session whose start found no User, once its creator has linked their account and replies", async () => {
+		await db.delete(integrationAccount);
 		await deliver(agentSessionEvent());
-		await db.update(user).set({ email: "uma@example.com" });
+		await link("u1", "lin-user-1");
 		await deliver(agentSessionEvent({ prompt: "Signed in now." }));
 
 		const [opened] = await conversationsOf("u1");
@@ -229,7 +239,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 			),
 		).toBe(true);
 		expect(linear.activities.map((a) => a.content.type)).toEqual([
-			"error",
+			"elicitation",
 			"thought",
 		]);
 	});
@@ -253,28 +263,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 		});
 	});
 
-	it("names the User by the most recently active of those with the creator's email, ignoring case", async () => {
-		await db.insert(user).values({
-			id: "u-old",
-			name: "Old Uma",
-			email: "UMA@example.com",
-			lastActiveAt: new Date("2020-01-01"),
-		});
-		await deliver(agentSessionEvent());
-		await db.insert(user).values({
-			id: "u-new",
-			name: "New Uma",
-			email: "uma@EXAMPLE.com",
-			lastActiveAt: new Date(Date.now() + 60_000),
-		});
-		await deliver(agentSessionEvent({ sessionId: "session-2" }));
-
-		expect(await conversationsOf("u1")).toHaveLength(1);
-		expect(await conversationsOf("u-new")).toHaveLength(1);
-		expect(await conversationsOf("u-old")).toEqual([]);
-	});
-
-	it("tells a session no person started to sign in first, opening nothing", async () => {
+	it("tells a session no person started that only a person can, opening nothing", async () => {
 		await handleSessionEvent(
 			source,
 			{
@@ -295,7 +284,7 @@ describe.skipIf(!url)("Linear Agent Session events", () => {
 				agentSessionId: "session-1",
 				content: {
 					type: "error",
-					body: "Sign in to Orqestra first, then reply here.",
+					body: "Only a person can start this: nobody's Orqestra account is linked to it.",
 				},
 			},
 		]);

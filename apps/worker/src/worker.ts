@@ -27,6 +27,7 @@ export async function startAgentWorker(
 		connections,
 		telemetry,
 		captureContent,
+		orqestraUrl,
 		...options
 	}: Parameters<ReturnType<typeof createConversations>["serveRuns"]>[1] &
 		Omit<Deps, "capabilities"> & {
@@ -36,6 +37,8 @@ export async function startAgentWorker(
 			telemetry?: RuntimeDeps["telemetry"];
 			/** Run traces also carry what was said. */
 			captureContent?: boolean;
+			/** Where Orqestra is served, `ORQESTRA_URL`: a session's sender is sent to its Connections page to link their account. */
+			orqestraUrl?: string;
 		},
 ) {
 	const conversations = createConversations({
@@ -64,7 +67,7 @@ export async function startAgentWorker(
 		},
 	);
 	const events = await serveEvents(linear, (event) =>
-		handleSessionEvent(linear, event, conversations, { fetch }),
+		handleSessionEvent(linear, event, conversations, { fetch, orqestraUrl }),
 	);
 	const tokens = await serveTokenRefresh(linear, { fetch });
 	// a Run's title outlives it: closing waits for those under way, so none is cut off with its Usage unrecorded
