@@ -63,6 +63,10 @@ export const workdir = (
 /** Under SKILLS_DIR: each written Skill's version, by name. */
 const VERSIONS = ".versions.json";
 
+/** Seconds a bash command may run when the Agent names no timeout, and the most it may name. */
+export const DEFAULT_COMMAND_TIMEOUT = 600;
+export const MAX_COMMAND_TIMEOUT = 3600;
+
 /** `s` as one single-quoted bash word. */
 const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 
@@ -266,11 +270,18 @@ export function sandboxTools(
 		tool({
 			name: "bash",
 			label: "Bash",
-			description: `Run a bash command in your sandbox, with ${dir} as the working directory and internet access. It runs until it ends. Returns its exit code, stdout and stderr.${gitHint}${own}`,
+			description: `Run a bash command in your sandbox, with ${dir} as the working directory and internet access. It is stopped after ${DEFAULT_COMMAND_TIMEOUT / 60} minutes unless you give a longer timeout, up to ${MAX_COMMAND_TIMEOUT / 60} minutes; run longer work in the background (nohup … &) and check on it. Returns its exit code, stdout and stderr.${gitHint}${own}`,
 			parameters: Type.Object({
 				command: Type.String({ description: "The command" }),
+				timeout: Type.Optional(
+					Type.Integer({
+						minimum: 1,
+						maximum: MAX_COMMAND_TIMEOUT,
+						description: `Seconds; ${DEFAULT_COMMAND_TIMEOUT} if omitted`,
+					}),
+				),
 			}),
-			execute: async (_id, { command }) => {
+			execute: async (_id, { command, timeout = DEFAULT_COMMAND_TIMEOUT }) => {
 				const { id, client } = await ready();
 				const attempt = async () => {
 					const git = await gitCredentials(run, gitHosts, client, fetch);
@@ -280,7 +291,7 @@ export function sandboxTools(
 						run.isSubagent
 							? `mkdir -p ${quote(dir)} && cd ${quote(dir)} || exit 1; ${command}`
 							: command,
-						{ signal, ...git },
+						{ signal, timeout, ...git },
 					).catch((error) => {
 						if (missingSecret(error))
 							for (const name of Object.values(git.secrets ?? {}))
@@ -300,7 +311,9 @@ export function sandboxTools(
 				const lines = [
 					r.exit !== null
 						? `Exit code: ${r.exit}`
-						: `The command did not exit: ${r.cause}`,
+						: r.cause === "timed_out"
+							? `The command was stopped after ${timeout} seconds, its time limit; below is what it printed until then. Run longer work in the background (nohup … &) and check on it, or give a longer timeout.`
+							: `The command did not exit: ${r.cause}`,
 					...(r.truncated
 						? ["[The Sandbox dropped part of the output: it was too long.]"]
 						: []),

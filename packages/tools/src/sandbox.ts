@@ -135,8 +135,9 @@ export interface CommandResult {
 const MAX_STREAM_BYTES = 1024 * 1024;
 
 /**
- * Runs `command` with bash in the ready Sandbox and waits for it to finish, however long it takes, polling its
- * output as orrery's SDKs do. Aborting `signal` cancels it.
+ * Runs `command` with bash in the ready Sandbox and waits for it to finish, polling its output as orrery's SDKs do.
+ * Aborting `signal` cancels it. Past `timeout` seconds orrery ends it as `timed_out`; one orrery has not ended `graceMs`
+ * later, such as in a Sandbox that hangs, is cancelled here and ends so too, with the output it gave.
  */
 export async function runCommand(
 	client: SandboxClient,
@@ -145,18 +146,22 @@ export async function runCommand(
 	{
 		signal,
 		pollMs = 100,
+		graceMs = 30_000,
 		env,
 		secrets,
-	}: { signal?: AbortSignal; pollMs?: number } & Pick<
+		timeout,
+	}: { signal?: AbortSignal; pollMs?: number; graceMs?: number } & Pick<
 		ExecRequest,
-		"env" | "secrets"
+		"env" | "secrets" | "timeout"
 	> = {},
 ): Promise<CommandResult> {
 	const exec = await client.createExec(
 		sandbox,
-		{ argv: ["bash", "-lc", command], env, secrets },
+		{ argv: ["bash", "-lc", command], env, secrets, timeout },
 		{ signal },
 	);
+	const deadline =
+		timeout === undefined ? Infinity : Date.now() + timeout * 1000 + graceMs;
 	const out = { stdout: [] as Buffer[], stderr: [] as Buffer[] };
 	const size = { stdout: 0, stderr: 0 };
 	let truncated = false;
@@ -182,14 +187,22 @@ export async function runCommand(
 				page.forEach(keep);
 				after = frameEnd(page[page.length - 1]);
 			}
+			const ended = (exit: number | null, cause: string) => ({
+				stdout: Buffer.concat(out.stdout).toString("utf8"),
+				stderr: Buffer.concat(out.stderr).toString("utf8"),
+				exit,
+				cause,
+				truncated: truncated || state.log_truncated,
+			});
 			if (state.state === "finished")
-				return {
-					stdout: Buffer.concat(out.stdout).toString("utf8"),
-					stderr: Buffer.concat(out.stderr).toString("utf8"),
-					exit: state.result?.exit_code ?? null,
-					cause: state.result?.cause ?? "",
-					truncated: truncated || state.log_truncated,
-				};
+				return ended(
+					state.result?.exit_code ?? null,
+					state.result?.cause ?? "",
+				);
+			if (Date.now() >= deadline) {
+				await client.cancelExec(exec.id).catch(() => {});
+				return ended(null, "timed_out");
+			}
 			await new Promise((resolve) => setTimeout(resolve, pollMs));
 		}
 	} catch (error) {
