@@ -91,13 +91,13 @@ const issueField = (issue: z.core.$ZodIssue) =>
 	].join(".");
 
 /**
- * A Subagent's system prompt: its template's instructions, none for the general worker, then how it hands its work back,
- * which its template, written for talking to Users, does not say.
+ * A Subagent's system prompt: its template's instructions, none for the general worker, then whom it works for, which its
+ * template, written for talking to Users, does not say. What reaches that agent is the platform's to hand over, not the prompt's.
  */
-export const subagentInstructions = (instructions: string, sandbox: boolean) =>
+export const subagentInstructions = (instructions: string) =>
 	[
 		instructions,
-		`You are working as a subagent: another agent gave you one task, and you start without its conversation. Your last reply is your whole result: the other agent sees nothing else you write or do, so make it complete and self-contained. Say what you did, what you found, and what you left undone or could not verify.${sandbox ? " Name every file you leave by its absolute path." : ""} If you need something from the user, say so in your reply: you cannot ask them. If you are continued later, your new last reply replaces your earlier result, so restate in it everything the other agent needs.`,
+		"You are working as a subagent: another agent gave you one task, and your replies go to that agent.",
 	]
 		.filter(Boolean)
 		.join("\n\n");

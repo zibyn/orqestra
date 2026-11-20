@@ -228,7 +228,7 @@ export const STEP_LIMIT =
 	"You have reached your step limit and can no longer use tools. Reply now with your final answer from what you have so far, saying what is left undone.";
 
 const NOTIFIED =
-	"Each subagent's final answer comes to you by itself as a <task-notification>, once it finishes: do not poll. Until the results you need are in, you may tell the user what you are doing and end your reply. Tell the user only what a subagent's notification says it did or found, and which subagents are still working: never guess at a result that has not come in, and do not do a subagent's task yourself while it works.";
+	"Each subagent's final answer comes to you by itself as a <task-notification>, once it finishes: do not poll. Until the results you need are in, you may tell the user what you are doing and end your reply. Tell the user only what a subagent's notification says it did or found, and which subagents are still working: never guess at a result that has not come in.";
 
 /** What the model is told when its Subagent request or Background Call is refused. */
 export function refusal(error: unknown) {

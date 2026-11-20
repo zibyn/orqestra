@@ -14,7 +14,6 @@ import {
 	SpendingLimitReached,
 	type TraceCarrier,
 } from "@orqestra/conversations";
-import { messageText } from "@orqestra/conversations/shared";
 import { failureReason, type McpTool } from "@orqestra/mcp";
 import { inputContent, outputContent } from "../tracing.ts";
 import { prepareContext } from "./compaction.ts";
@@ -423,28 +422,17 @@ async function reply(
 				await run.save(event.message);
 		});
 
-		// how the Run ended, judged from its last reply
-		const ended = () => {
-			const replies = (agent.state.messages as Message[]).filter(
-				(m): m is AssistantMessage => m.role === "assistant",
-			);
-			const result =
-				replies
-					.map(messageText)
-					.filter((t) => t.trim())
-					.at(-1) ?? "";
+		// how the Run ended; what a Subagent hands back is read from its saved replies
+		const ended = () => ({
 			// out of time is no stop of the User's: what it has is a partial result
-			if (signal.aborted)
-				return {
-					outcome:
-						signal.reason instanceof RunTimedOut
-							? ("partial" as const)
-							: ("stopped" as const),
-					result,
-				};
-			if (steps >= maxSteps) return { outcome: "partial" as const, result };
-			return { outcome: "completed" as const, result };
-		};
+			outcome: signal.aborted
+				? signal.reason instanceof RunTimedOut
+					? ("partial" as const)
+					: ("stopped" as const)
+				: steps >= maxSteps
+					? ("partial" as const)
+					: ("completed" as const),
+		});
 
 		signal.throwIfAborted(); // stopped before the reply began
 		signal.addEventListener("abort", () => agent.abort());

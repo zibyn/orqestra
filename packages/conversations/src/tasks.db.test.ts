@@ -71,9 +71,7 @@ const soon = (ms = 300) => new Date(Date.now() + ms).toISOString();
 let handler: (run: RunHandle) => Promise<void>;
 const reply = async (run: RunHandle, text = "done") => {
 	await run.save(fauxAssistantMessage(text));
-	await run.finish(
-		run.unattended ? { outcome: "completed", result: text } : undefined,
-	);
+	await run.finish(run.unattended ? { outcome: "completed" } : undefined);
 };
 
 async function waitFor<T>(read: () => Promise<T>, ok: (v: T) => boolean) {
@@ -157,7 +155,7 @@ describe.skipIf(!url)(
 				await run.save(fauxAssistantMessage("done"));
 				if (step === "question")
 					await run.finish(undefined, { question: true });
-				else await run.finish({ outcome: "partial", result: "done" });
+				else await run.finish({ outcome: "partial" });
 			};
 		};
 		type Hold = { until: () => Promise<unknown>; end: "fail" | "partial" };
