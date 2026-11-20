@@ -174,6 +174,28 @@ export async function finishAccount(
 }
 
 /**
+ * Links the User to the person a token of their MCP Connection names, when the source's own OAuth client got it: GitHub's MCP Server
+ * takes the GitHub App's user token (ADR 0016), so connecting it is the proof and nobody authorizes that App twice. Only a token of
+ * that client is known to be one `account` can read at the Integration itself, such as Linear's MCP token may not be. True when it linked.
+ */
+export async function linkByConnection(
+	source: WorkSource,
+	userId: string,
+	{ clientId, accessToken }: { clientId: string; accessToken: string },
+	fetch: Fetch = globalThis.fetch,
+) {
+	const { proof } = source;
+	if (proof.mode !== "oauth" || (await oauthClient(source))?.id !== clientId)
+		return false;
+	await linkAccount(
+		source.kind,
+		userId,
+		await proof.account(accessToken, fetch),
+	);
+	return true;
+}
+
+/**
  * The link that proves whoever opens it, signed in to Orqestra within PENDING_TTL_MS, to be `person`: for the app to send where only
  * they read it. On Orqestra's Connections page, under `orqestraUrl` when given.
  */

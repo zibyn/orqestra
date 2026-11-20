@@ -111,6 +111,7 @@ export function createApp({
 					connectionRoutes(user, config.mcpServers, config.agents, {
 						orqestraUrl,
 						fetch,
+						sources,
 					}),
 				)
 				.use(integrationRoutes(user, { orqestraUrl, fetch, sources }))

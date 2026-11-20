@@ -1,4 +1,6 @@
 import type { Agents } from "@orqestra/agents/live";
+import { linkByConnection, type WorkSource } from "@orqestra/integrations";
+import { sources as served } from "@orqestra/integrations/sources";
 import {
 	clientMetadataDocument,
 	connectionStatus,
@@ -25,69 +27,94 @@ export const connectionRoutes = (
 	signedIn: SignedIn,
 	mcpServers: Pick<McpServersLive, "current">,
 	agents: Pick<Agents, "userConnections">,
-	{ orqestraUrl, fetch }: OrqestraReach & { orqestraUrl: string },
-) =>
-	new Elysia({ prefix: "/connections" })
-		.get("/client-metadata.json", () => clientMetadataDocument(orqestraUrl))
-		.use(signedIn)
-		// the popup lands here from the authorization server, then on the Connections page, which tells its opener
-		.get("/callback", async ({ user, request, redirect }) => {
-			const { serverId, error } = user
-				? await finishConnection(
-						{
-							userId: user.id,
-							store: connectionStore,
-							orqestraUrl,
-							fetch,
-							server: (id) =>
-								mcpServers.current().then((c) => c.allMcpServers[id]),
+	{
+		orqestraUrl,
+		fetch,
+		sources = served,
+	}: OrqestraReach & { orqestraUrl: string; sources?: WorkSource[] },
+) => {
+	// a Connection through a WorkSource's own OAuth client also proves its Integration Account, so the User authorizes once
+	async function linkAccounts(userId: string, serverId: string) {
+		const clientId = (await mcpServers.current()).allMcpServers[serverId]
+			?.oauthClient?.client_id;
+		const accessToken = (await connectionStore.connection(userId, serverId))
+			?.tokens?.access_token;
+		if (!clientId || !accessToken) return;
+		for (const source of sources)
+			await linkByConnection(source, userId, { clientId, accessToken }, fetch);
+	}
+	return (
+		new Elysia({ prefix: "/connections" })
+			.get("/client-metadata.json", () => clientMetadataDocument(orqestraUrl))
+			.use(signedIn)
+			// the popup lands here from the authorization server, then on the Connections page, which tells its opener
+			.get("/callback", async ({ user, request, redirect }) => {
+				const { serverId, error } = user
+					? await finishConnection(
+							{
+								userId: user.id,
+								store: connectionStore,
+								orqestraUrl,
+								fetch,
+								server: (id) =>
+									mcpServers.current().then((c) => c.allMcpServers[id]),
+							},
+							new URL(request.url).searchParams,
+						)
+					: { error: "state_invalid" as const };
+				if (user && serverId && !error)
+					await linkAccounts(user.id, serverId).catch((cause) =>
+						console.error(`Linking accounts by ${serverId} failed`, cause),
+					);
+				const to = new URLSearchParams(
+					error ? { error } : { connected: serverId ?? "" },
+				);
+				return redirect(`/connections?${to}`, 302);
+			})
+			.derive(signedInOnly)
+			.get("/", ({ user }) => agents.userConnections(user.id))
+			// the authorization URL, for the User to open in a popup
+			.post(
+				"/:serverId",
+				async ({ user, params: { serverId }, status }) => {
+					const current = await mcpServers.current();
+					const server = current.allMcpServers[serverId];
+					if (server?.auth !== "oauth")
+						return status(404, refused("not_found"));
+					if (!current.mcpServers[serverId])
+						return status(409, refused("server_disabled"));
+					// one per User and server: switching accounts is disconnecting first
+					const connection = await connectionStore.connection(
+						user.id,
+						serverId,
+					);
+					if (connection && connectionStatus(connection) === "connected")
+						return status(409, refused("connection_exists"));
+					const started = await startConnection({
+						userId: user.id,
+						serverId,
+						server,
+						store: connectionStore,
+						orqestraUrl,
+						fetch,
+					});
+					if ("url" in started) return started;
+					return status(started.error === "oauth_client_required" ? 422 : 502, {
+						errors: {
+							serverId: { code: started.error, detail: started.detail },
 						},
-						new URL(request.url).searchParams,
-					)
-				: { error: "state_invalid" as const };
-			const to = new URLSearchParams(
-				error ? { error } : { connected: serverId ?? "" },
-			);
-			return redirect(`/connections?${to}`, 302);
-		})
-		.derive(signedInOnly)
-		.get("/", ({ user }) => agents.userConnections(user.id))
-		// the authorization URL, for the User to open in a popup
-		.post(
-			"/:serverId",
-			async ({ user, params: { serverId }, status }) => {
-				const current = await mcpServers.current();
-				const server = current.allMcpServers[serverId];
-				if (server?.auth !== "oauth") return status(404, refused("not_found"));
-				if (!current.mcpServers[serverId])
-					return status(409, refused("server_disabled"));
-				// one per User and server: switching accounts is disconnecting first
-				const connection = await connectionStore.connection(user.id, serverId);
-				if (connection && connectionStatus(connection) === "connected")
-					return status(409, refused("connection_exists"));
-				const started = await startConnection({
-					userId: user.id,
-					serverId,
-					server,
-					store: connectionStore,
-					orqestraUrl,
-					fetch,
-				});
-				if ("url" in started) return started;
-				return status(started.error === "oauth_client_required" ? 422 : 502, {
-					errors: {
-						serverId: { code: started.error, detail: started.detail },
-					},
-				});
-			},
-			{ params: z.object({ serverId: mcpServerId }) },
-		)
-		// only the User's own, revoked as far as the authorization server lets it
-		.delete(
-			"/:serverId",
-			async ({ user, params: { serverId }, status }) => {
-				if (!(await deleteConnection(user.id, serverId, { fetch })))
-					return status(404, refused("not_found"));
-			},
-			{ params: z.object({ serverId: mcpServerId }) },
-		);
+					});
+				},
+				{ params: z.object({ serverId: mcpServerId }) },
+			)
+			// only the User's own, revoked as far as the authorization server lets it
+			.delete(
+				"/:serverId",
+				async ({ user, params: { serverId }, status }) => {
+					if (!(await deleteConnection(user.id, serverId, { fetch })))
+						return status(404, refused("not_found"));
+				},
+				{ params: z.object({ serverId: mcpServerId }) },
+			)
+	);
+};
