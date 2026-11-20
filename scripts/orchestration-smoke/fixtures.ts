@@ -1,6 +1,6 @@
-// The Agent Definitions and the prompts the trial sends. Edit the lead here to try a variant (after #180: its delegate list).
+// The Agent Definitions and the prompts the smoke test sends: a lead and its team, two tasks it delegates and one it may answer itself.
 
-export type Role = "lead" | "team" | "distractor";
+export type Role = "lead" | "team";
 
 const member = (name: string, description: string, instructions: string) => ({
 	name,
@@ -61,51 +61,6 @@ export const AGENTS: {
 			"你是技术文档工程师。写给工程师读的文档：准确、完整、有示例，缺失的信息明确列为待补充，不要编造。",
 		),
 	},
-	{
-		id: "translator",
-		role: "distractor",
-		definition: member(
-			"中英翻译",
-			"在中文和英文之间翻译文档、邮件和界面文案，保留术语和格式。",
-			"你是专业译者。忠实原文，术语统一，保留 Markdown 格式。",
-		),
-	},
-	{
-		id: "copywriter",
-		role: "distractor",
-		definition: member(
-			"营销文案",
-			"为产品发布、活动和社交媒体撰写营销文案和宣传语。",
-			"你是资深营销文案。文案简短有力，突出用户收益。",
-		),
-	},
-	{
-		id: "contract-reviewer",
-		role: "distractor",
-		definition: member(
-			"合同审阅",
-			"审阅商务合同和协议条款，指出法律风险并给出修改意见。",
-			"你是企业法务。逐条指出合同风险和修改建议。",
-		),
-	},
-	{
-		id: "recruiter",
-		role: "distractor",
-		definition: member(
-			"招聘助理",
-			"撰写职位描述、整理简历筛选要点、安排面试流程。",
-			"你是招聘助理。输出清晰的职位描述和面试安排。",
-		),
-	},
-	{
-		id: "support-writer",
-		role: "distractor",
-		definition: member(
-			"客服话术",
-			"为客服团队编写常见问题回复和安抚用户的话术。",
-			"你是客服培训师。话术礼貌、简洁、可直接使用。",
-		),
-	},
 ];
 
 const CODE = `\`\`\`ts
@@ -141,22 +96,22 @@ app.post("/orders/:id/export", (req, res) => {
 app.listen(3000);
 \`\`\``;
 
-/** One prompt per task, as a User would type it; `fits` are the team templates the task calls for. */
+/** One prompt per task, as a User would type it; `delegates`: the lead is expected to start Subagents for it. */
 export const TASKS = [
 	{
 		id: "review",
-		fits: ["security-reviewer", "perf-reviewer", "tech-writer"],
+		delegates: true,
 		prompt: `下面是订单服务里新加的两个接口，明天要合进主干。帮我从安全、性能、文档三个角度分别仔细过一遍，最后汇总成一份结论，按严重程度排一下先改什么。\n\n${CODE}`,
 	},
 	{
 		id: "writeup",
-		fits: ["security-reviewer", "perf-reviewer", "tech-writer"],
+		delegates: true,
 		prompt:
 			"我们下周要上线一个“批量导入用户”的接口：管理员上传一个最多 10 万行的 CSV（字段：邮箱、姓名、手机号、部门），后台解析后写进 users 表，接口返回导入结果。帮我准备三样东西：1）上线前要过的安全检查清单；2）性能方面的风险和压测方案；3）一份给前端同学看的接口说明（请求、响应、错误码）。最后把三份整理到一起发我。",
 	},
 	{
 		id: "optional",
-		fits: ["security-reviewer", "perf-reviewer"],
+		delegates: false,
 		prompt:
 			"我们用这个正则校验邮箱：`^([a-zA-Z0-9_.+-]+)+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$`，线上偶尔会把一个 CPU 核打满，是什么原因？怎么改比较稳？",
 	},
