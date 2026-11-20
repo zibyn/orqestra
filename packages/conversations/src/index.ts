@@ -143,7 +143,7 @@ export {
 	TimerDelayOutOfRange,
 	TimerLimitReached,
 } from "./timers.ts";
-export { UploadTooLarge } from "./uploads.ts";
+export { MAX_QUOTED_BYTES, UploadTooLarge } from "./uploads.ts";
 export { summarizeUsage, type UsageQuery } from "./usage.ts";
 export { listUsers, rememberUser, setSpendingLimit } from "./users.ts";
 

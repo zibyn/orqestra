@@ -321,14 +321,10 @@ describe("availableTools", () => {
 });
 
 describe("subagentInstructions", () => {
-	it("follows a template's instructions with how a Subagent hands its work back, naming files only with a Sandbox", () => {
-		const framed = subagentInstructions("You review code.", false);
-		expect(framed).toMatch(
-			/^You review code\.\n\nYou are working as a subagent/,
+	it("follows a template's instructions with whom a Subagent works for", () => {
+		expect(subagentInstructions("You review code.")).toBe(
+			"You review code.\n\nYou are working as a subagent: another agent gave you one task, and your replies go to that agent.",
 		);
-		expect(framed).not.toContain("file");
-		expect(subagentInstructions("", true)).toMatch(
-			/^You are working as a subagent.*absolute path/,
-		);
+		expect(subagentInstructions("")).toMatch(/^You are working as a subagent/);
 	});
 });

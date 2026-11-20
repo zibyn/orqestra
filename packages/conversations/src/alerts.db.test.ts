@@ -110,10 +110,7 @@ async function handle(run: RunHandle) {
 	if (end === "hold")
 		await new Promise((r) => run.signal.addEventListener("abort", r));
 	if (end === "question") await run.finish(undefined, { question: true });
-	else
-		await run.finish(
-			end === "partial" ? { outcome: "partial", result: "" } : undefined,
-		);
+	else await run.finish(end === "partial" ? { outcome: "partial" } : undefined);
 }
 
 async function waitFor<T>(read: () => Promise<T>, ok: (v: T) => boolean) {

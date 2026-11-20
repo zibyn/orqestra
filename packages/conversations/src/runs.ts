@@ -22,6 +22,7 @@ import {
 	desc,
 	eq,
 	exists,
+	gt,
 	inArray,
 	isNotNull,
 	isNull,
@@ -33,6 +34,7 @@ import { alertRun } from "./alerts.ts";
 import type { TraceCarrier } from "./serve.ts";
 import { messageText } from "./shared.ts";
 import { SpendingLimitReached } from "./spending.ts";
+import { MAX_QUOTED_BYTES } from "./uploads.ts";
 
 /** Locks the row of a Conversation's root, the top-level Conversation of its tree: every Run start and finish in the tree decides under it. */
 export const lockRoot = (tx: Tx, conversationId: string) =>
@@ -368,7 +370,7 @@ export async function ensureRun(conversationId: string) {
 				conversationId,
 				{
 					outcome: "failed",
-					result: `[The subagent could not be started: ${(error as Error).message}]`,
+					failure: `[The subagent could not be started: ${(error as Error).message}]`,
 				},
 				started.jobId,
 				true,
@@ -408,10 +410,10 @@ export async function lastModel(tx: Tx, conversationId: string) {
 	return last as { model: string; thinkingLevel: string } | undefined;
 }
 
-/** How a Subagent's Run ended, as its runtime judged it: its Outcome and result; a stop stands whatever is reported. */
+/** How a Subagent's Run ended, as its runtime judged it: its Outcome, and why one that could not start or crashed failed; a stop stands whatever is reported. */
 export type Ended = {
 	outcome: "completed" | "partial" | "failed" | "stopped";
-	result: string;
+	failure?: string;
 };
 
 // what a subagent or a service wrote reaches the Agent in a user message, though the User wrote none of it
@@ -437,22 +439,63 @@ export const notificationFrame = (
 export const linkTo = (trace: TraceCarrier | null) =>
 	trace ? { link: trace } : undefined;
 
-const notification = (
-	number: number,
-	title: string | null,
-	{ outcome, result }: Ended,
-) =>
-	notificationFrame(
-		{
-			subagent: String(number),
-			...(title ? { title } : {}),
-			status: outcome,
-		},
-		result,
-	);
+/** A file the `attach` Tool attached, as its result's details record it; `text` only for a small text file (see `storeAttachment`). */
+type Attached = { path: string; size: number; text?: string };
 
 /**
- * Under the parent's lock (which `tx` holds): saves how a Subagent ended, sets it idle and hands its result to the parent as a Notification.
+ * What a Subagent hands back for the parent's latest input to it, its brief or a message: the reply ending each step since that
+ * made no Tool call, in order, and the files it attached since, small text ones quoted up to MAX_QUOTED_BYTES in all.
+ * Nothing while that input still waits in its inbox: nothing it did answers it.
+ */
+async function handover(tx: Tx, conversationId: string) {
+	const [unread] = await tx
+		.select({ id: inbox.id })
+		.from(inbox)
+		.where(and(eq(inbox.conversationId, conversationId), notNotification))
+		.limit(1);
+	if (unread) return { replies: [], files: [] };
+	const [{ latest }] = await tx
+		.select({ latest: sql<number>`coalesce(max(${message.id}), 0)` })
+		.from(message)
+		.where(
+			and(
+				eq(message.conversationId, conversationId),
+				sql`${message.message}->>'role' = 'user'`,
+				isNull(message.subagentId),
+				isNull(message.backgroundCallId),
+			),
+		);
+	const rows = await tx
+		.select({ message: message.message, text: message.text })
+		.from(message)
+		.where(
+			and(
+				eq(message.conversationId, conversationId),
+				gt(message.id, latest),
+				sql`((${message.message}->>'role' = 'assistant' and not ${message.message}->'content' @> '[{"type":"toolCall"}]')
+					or (${message.message}->>'toolName' = 'attach' and ${message.message}->>'isError' = 'false'))`,
+			),
+		)
+		.orderBy(asc(message.id));
+	let left = MAX_QUOTED_BYTES;
+	return {
+		replies: rows.flatMap((r) => r.text?.trim() || []),
+		files: rows.flatMap(({ message: m }) => {
+			const a = (m as { details?: { attachment?: Attached } }).details
+				?.attachment;
+			if (!a) return [];
+			const quoted = a.text !== undefined && a.size <= left;
+			if (quoted) left -= a.size;
+			return quoted
+				? [`Attached ${a.path}:\n<file>\n${a.text}\n</file>`]
+				: [`Attached ${a.path} (${a.size} bytes)`];
+		}),
+	};
+}
+
+/**
+ * Under the parent's lock (which `tx` holds): saves how a Subagent ended, sets it idle and hands the parent a Notification of what it
+ * hands back (see `handover`), after its replies why it failed.
  * A stop stands even if the Run ended otherwise meanwhile, and a stopped Subagent does not wake the parent.
  * Inputs it left unread wait for the parent to continue it. Settles each Run once: a second call (a crash report after the end) does nothing.
  * Returns the parent's id, or undefined when the Subagent is gone or already settled.
@@ -475,9 +518,15 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 		row.outcome === "stopped"
 			? { ...ended, outcome: "stopped" as const }
 			: ended;
+	const { replies, files } = await handover(tx, conversationId);
+	const result = [
+		...replies,
+		...(end.failure ? [end.failure] : []),
+		...files,
+	].join("\n\n");
 	await tx
 		.update(subagent)
-		.set(end)
+		.set({ outcome: end.outcome, result })
 		.where(eq(subagent.conversationId, conversationId));
 	await tx
 		.update(conversation)
@@ -498,7 +547,14 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 		conversationId: parentId,
 		message: {
 			role: "user",
-			content: notification(row.number, conv.title, end),
+			content: notificationFrame(
+				{
+					subagent: String(row.number),
+					...(conv.title ? { title: conv.title } : {}),
+					status: end.outcome,
+				},
+				result,
+			),
 			timestamp: Date.now(),
 		},
 		model: last?.model ?? "",
@@ -510,7 +566,7 @@ async function settle(tx: Tx, conversationId: string, ended: Ended) {
 	return parentId;
 }
 
-/** A Subagent's latest reply, which one stopped while it waits for its own passes on: none for one still queued. */
+/** A Conversation's latest reply: none before its first. */
 async function lastAnswer(tx: Db | Tx, conversationId: string) {
 	const [last] = await tx
 		.select({ message: message.message })
@@ -954,7 +1010,7 @@ export async function drain(
 
 /**
  * Stops a parent's Subagents (those `numbers`, else all) that are queued or running, and every Subagent under them.
- * Those without a Run end at once, one waiting for its own Subagents with its last answer; running ones are marked stopped,
+ * Those without a Run end at once, one waiting for its own Subagents with what it hands back; running ones are marked stopped,
  * which their Run sees when it starts or the stop request reaches it, and keep their slot until it ends.
  * Their Notifications wake nobody, except a parent waiting for its Subagents, which sums up once the last has ended, stopped ones' Runs included.
  * `cancelCalls` then cancels each stopped one's Background Calls, so none wakes it: `cancelStoppedCalls`.
@@ -999,10 +1055,7 @@ export async function stopSubagents(
 				.where(inArray(subagent.conversationId, running));
 		for (const r of rows)
 			if (r.status !== "running")
-				await settle(tx, r.id, {
-					outcome: "stopped",
-					result: await lastAnswer(tx, r.id),
-				});
+				await settle(tx, r.id, { outcome: "stopped" });
 		return { targets, running, stopped: rows.map((r) => r.id) };
 	});
 	if (!targets.length) return [];

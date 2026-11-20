@@ -297,9 +297,7 @@ describe("runAgent", () => {
 		// nor draft a Scheduled Task
 		expect(offered).not.toContain("draft_scheduled_task");
 		expect(JSON.stringify(last?.messages)).not.toContain("step limit");
-		expect(m.outcomes).toEqual([
-			{ outcome: "completed", result: "what I found" },
-		]);
+		expect(m.outcomes).toEqual([{ outcome: "completed" }]);
 		expect(m.titles).toEqual([]);
 	});
 
@@ -363,9 +361,7 @@ describe("runAgent", () => {
 
 			expect(JSON.stringify(last?.messages)).toContain("step limit");
 			expect(last?.tools ?? []).toEqual([]);
-			expect(m.outcomes).toEqual([
-				{ outcome: "partial", result: "what I found" },
-			]);
+			expect(m.outcomes).toEqual([{ outcome: "partial" }]);
 			expect(m.over).toBe(true);
 		});
 
@@ -384,10 +380,11 @@ describe("runAgent", () => {
 			};
 			await runAgent(m.run, limited);
 
-			expect((m.saved[0] as AssistantMessage).stopReason).toBe("aborted");
-			expect(m.outcomes).toEqual([
-				{ outcome: "partial", result: expect.stringContaining("word") },
-			]);
+			expect(m.saved[0]).toMatchObject({
+				stopReason: "aborted",
+				content: [{ text: expect.stringContaining("word") }],
+			});
+			expect(m.outcomes).toEqual([{ outcome: "partial" }]);
 		});
 
 		it("is no limit on an attended Run", async () => {

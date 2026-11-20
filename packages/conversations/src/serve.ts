@@ -148,12 +148,13 @@ export type RunHandle = {
 	save(message: Message): Promise<void>;
 	/**
 	 * Keeps a file the Agent attaches as an Attachment of the Conversation, a snapshot in object storage under a free name, which it returns
-	 * with its size; throws UploadTooLarge past MAX_UPLOAD_BYTES. The `attach` Tool result naming it ties it to that message once saved.
+	 * with its size, and its text when it is small text; throws UploadTooLarge past MAX_UPLOAD_BYTES. The `attach` Tool result naming it,
+	 * whose details keep all three, ties it to that message once saved, and a Subagent's Notification lists or quotes it from there.
 	 */
 	attach(
 		name: string,
 		body: ReadableStream<Uint8Array>,
-	): Promise<{ name: string; size: number }>;
+	): Promise<{ name: string; size: number; text?: string }>;
 	stream(event: StreamEvent): Promise<void>;
 	/** Saves a compaction: the model now sees `summary` and the messages from `firstKeptId` on. */
 	compacted(
@@ -164,6 +165,7 @@ export type RunHandle = {
 	/**
 	 * Ends the reply: returns the inputs that arrived meanwhile, to reply to next, or none, and the Run is over.
 	 * A Subagent reports its `outcome`, and so does an Unattended Run; a stopped Run is over whatever it reports, a timed-out Subagent ending partial.
+	 * Save the reply first: a Subagent's Notification carries its saved replies.
 	 * A reply that asked the User a `question` waits for them: only a message of theirs goes on, Notifications wait with it.
 	 * A `quiet` one, an Unattended Run with nothing to report, ends completed without making the Conversation Unread, so without an Alert.
 	 * Throws once the Run is no longer its job's: a stalled worker's, whose job failed, and another Run may have started since.
@@ -294,7 +296,6 @@ const active = new Map<string, AbortController>();
 async function stopped(
 	conv: { id: string; parentId: string | null },
 	jobId: string | undefined,
-	result: string,
 	signal: AbortSignal,
 	config: () => Promise<Snapshots>,
 	mcp?: McpAccess,
@@ -308,7 +309,7 @@ async function stopped(
 	if (conv.parentId)
 		return endSubagent(
 			conv.id,
-			{ outcome: timedOut ? "partial" : "stopped", result },
+			{ outcome: timedOut ? "partial" : "stopped" },
 			jobId ?? "",
 		);
 	await endRun(conv.id, "idle", undefined, !timedOut, jobId ?? "");
@@ -348,7 +349,7 @@ async function failed(
 		conversationId,
 		{
 			outcome: "failed",
-			result: `[The subagent failed, or the worker running it crashed: ${error.message}]`,
+			failure: `[The subagent failed, or the worker running it crashed: ${error.message}]`,
 		},
 		jobId ?? "",
 	);
@@ -442,11 +443,11 @@ async function execute(
 		await handler(run, cfg);
 		if (!over && !stop.signal.aborted)
 			throw new Error("The Run ended without finishing");
-		if (!over) await stopped(conv, jobId, "", stop.signal, config, mcp);
+		if (!over) await stopped(conv, jobId, stop.signal, config, mcp);
 	} catch (error) {
 		// stopped before the reply was saved (while compacting, say): nothing to save
 		if (stop.signal.aborted && !over)
-			return stopped(conv, jobId, "", stop.signal, config, mcp);
+			return stopped(conv, jobId, stop.signal, config, mcp);
 		// the failed reply's live copy goes
 		await emit({ type: "end", subagent: sub });
 		throw error;
@@ -514,10 +515,7 @@ async function open(
 				...picked,
 				agent: {
 					...picked.agent,
-					instructions: subagentInstructions(
-						picked.agent.instructions,
-						!!cfg.sandboxProvider,
-					),
+					instructions: subagentInstructions(picked.agent.instructions),
 				},
 			}
 		: picked;
@@ -616,14 +614,7 @@ async function open(
 		async finish(outcome, { question = false, quiet = false } = {}) {
 			if (signal.aborted) {
 				end();
-				await stopped(
-					conv,
-					jobId,
-					outcome?.result ?? "",
-					signal,
-					async () => cfg,
-					mcp,
-				);
+				await stopped(conv, jobId, signal, async () => cfg, mcp);
 				return [];
 			}
 			// an Unattended Run cut off at its step cap ends partial
@@ -635,7 +626,7 @@ async function open(
 			const next = (await drain(
 				conversationId,
 				sub
-					? () => outcome ?? { outcome: "completed", result: "" }
+					? () => outcome ?? { outcome: "completed" }
 					: status === "completed"
 						? quiet
 							? "quiet"

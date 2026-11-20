@@ -54,9 +54,13 @@ function freeName(name: string, taken: Set<string>) {
 	return free;
 }
 
+/** Bytes of the files a Subagent attached that its Notification quotes, in all, about 5k tokens: a larger file is only named. */
+export const MAX_QUOTED_BYTES = 20_000;
+
 /**
  * Streams one file into object storage, refusing it once it passes MAX_UPLOAD_BYTES, and records it as an unsent
- * Attachment of the Conversation under a free name. A refused or broken file leaves nothing.
+ * Attachment of the Conversation under a free name; returns it with its text when it is UTF-8 text of MAX_QUOTED_BYTES at most.
+ * A refused or broken file leaves nothing.
  */
 export async function storeAttachment(
 	store: ObjectStore,
@@ -68,6 +72,7 @@ export async function storeAttachment(
 	// under the top-level Conversation's id, so deleting it deletes its Subagents' objects too
 	const key = `${conv.rootId}/${conv.id}/${crypto.randomUUID()}`;
 	let size = 0;
+	const head: Uint8Array[] = [];
 	try {
 		await store.put(
 			key,
@@ -75,6 +80,8 @@ export async function storeAttachment(
 				new TransformStream<Uint8Array, Uint8Array>({
 					transform(chunk, controller) {
 						size += chunk.byteLength;
+						// a copy: what the store does with the chunk leaves it alone
+						if (size <= MAX_QUOTED_BYTES) head.push(chunk.slice());
 						if (size > MAX_UPLOAD_BYTES) controller.error(new UploadTooLarge());
 						else controller.enqueue(chunk);
 					},
@@ -104,11 +111,27 @@ export async function storeAttachment(
 				})
 				.onConflictDoNothing()
 				.returning({ name: attachment.name, size: attachment.size });
-			if (row) return row;
+			if (row)
+				return {
+					...row,
+					text: size <= MAX_QUOTED_BYTES ? textOf(head) : undefined,
+				};
 		}
 	} catch (error) {
 		await store.deletePrefix(key);
 		throw error;
+	}
+}
+
+/** The chunks' text when they are UTF-8 without a NUL, as a binary file is not. */
+function textOf(chunks: Uint8Array[]) {
+	try {
+		const text = new TextDecoder("utf-8", { fatal: true }).decode(
+			Buffer.concat(chunks),
+		);
+		return text.includes("\0") ? undefined : text;
+	} catch {
+		return undefined;
 	}
 }
 
